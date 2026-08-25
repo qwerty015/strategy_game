@@ -1,0 +1,11 @@
+# Build artifacts
+/game
+/game.exe
+/game.wasm
+
+# Local save files
+/saves/
+
+# Go
+*.test
+*.out
