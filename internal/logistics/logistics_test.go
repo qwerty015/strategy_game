@@ -22,7 +22,7 @@ func TestController_CollectsFromProducerToWarehouse(t *testing.T) {
 	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}           // (5,0)-(6,1)
 	farm.AddOutput(resource.Wheat, 5)
 
-	buildings := append([]*building.Building{warehouse, farm}, straightRoad(2, 5, 0)...)
+	buildings := append([]*building.Building{warehouse, farm}, straightRoad(1, 5, 0)...)
 
 	c := NewController(warehouse, 1)
 	stock := resource.NewStockpile(100)
@@ -46,7 +46,7 @@ func TestController_SuppliesConsumerFromWarehouse(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	mill := &building.Building{Kind: building.Mill, X: 5, Y: 0}
 
-	buildings := append([]*building.Building{warehouse, mill}, straightRoad(2, 5, 0)...)
+	buildings := append([]*building.Building{warehouse, mill}, straightRoad(1, 5, 0)...)
 
 	c := NewController(warehouse, 1)
 	stock := resource.NewStockpile(100)

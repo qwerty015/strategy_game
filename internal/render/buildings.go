@@ -6,31 +6,31 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
+	"strategy_game/internal/assets"
 	"strategy_game/internal/building"
 )
 
-// buildingColor returns a flat placeholder color per building kind,
-// distinct from the terrain colors in draw.go. Replaced by real sprites
-// once art is added (see AGENTS.md); nothing else changes when it is.
-func buildingColor(k building.Kind) color.RGBA {
-	switch k {
-	case building.Farm:
-		return ripeWheatColor // overridden per-tick by growth color below; kept as a sane fallback
-	case building.Mill:
-		return color.RGBA{R: 200, G: 200, B: 205, A: 255} // stone grey
-	case building.Bakery:
-		return color.RGBA{R: 170, G: 96, B: 56, A: 255} // brick brown
-	case building.Warehouse:
-		return color.RGBA{R: 140, G: 60, B: 50, A: 255} // dark red, unmistakable hub
-	case building.Road:
-		return color.RGBA{R: 196, G: 172, B: 132, A: 255} // packed dirt path
-	default:
-		return color.RGBA{R: 200, G: 40, B: 200, A: 255} // unmistakable placeholder
-	}
+// buildingHeight is how tall (in tiles) a standing building sprite is
+// drawn -- deliberately more than 1, so it rises above its single-tile
+// footprint the way the source art (see AGENTS.md) is meant to be used,
+// rather than being squashed to fit exactly on its tile.
+const buildingHeight = 1.7
+
+// animFrame drives simple pseudo-animation (the mill's rotating sails,
+// serfs' walk poses): a slowly-advancing counter shared by everything
+// drawn this frame. Good enough for a handful of small looping
+// animations; a per-entity clock would only matter if they needed to be
+// out of sync with each other, which nothing here does.
+var animFrame int
+
+// Tick advances the shared animation clock by one render frame. Call
+// once per Draw.
+func Tick() {
+	animFrame++
 }
 
 var (
-	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}   // freshly tilled earth
+	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}   // freshly tilled earth (tints assets.Fertile)
 	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255} // golden, ready to harvest
 )
 
@@ -48,31 +48,55 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 	return color.RGBA{R: lerp(a.R, b.R), G: lerp(a.G, b.G), B: lerp(a.B, b.B), A: 255}
 }
 
-// DrawBuildings renders every placed building as a flat-colored square
-// covering its footprint, plus a thin bar showing production progress.
-// A Farm's color instead sweeps from bare soil to golden wheat as its
-// crop matures, so the player can actually see it ripening.
+// DrawBuildings renders every placed building.
+//
+// A Farm is drawn as four fertile-ground tiles whose color sweeps from
+// bare earth to golden wheat as its crop matures (see AGENTS.md), so the
+// field itself shows the growth the player asked to be able to see. A
+// Road is one path tile. Mill/Bakery/Warehouse each stand on their
+// single tile taller than the tile itself (see buildingHeight), with a
+// production-progress bar underneath. The Mill's sails rotate through
+// three frames.
 func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
 	for _, b := range buildings {
 		bt := building.Types[b.Kind]
 		sx, sy := cam.TileToScreen(b.X, b.Y)
-		size := float32(bt.Footprint * TileSize)
 
-		c := buildingColor(b.Kind)
-		if b.Kind == building.Farm && bt.Recipe.TicksToProduce > 0 {
-			growth := float32(b.ProgressTicks) / float32(bt.Recipe.TicksToProduce)
-			c = lerpColor(soilColor, ripeWheatColor, growth)
+		switch b.Kind {
+		case building.Road:
+			drawStanding(screen, assets.Road, sx, sy, 1)
+			continue
+
+		case building.Farm:
+			growth := float32(1)
+			if bt.Recipe.TicksToProduce > 0 {
+				growth = float32(b.ProgressTicks) / float32(bt.Recipe.TicksToProduce)
+			}
+			tint := lerpColor(soilColor, ripeWheatColor, growth)
+			for dy := range bt.Footprint {
+				for dx := range bt.Footprint {
+					drawStandingTinted(screen, assets.Fertile, sx+float64(dx*TileSize), sy+float64(dy*TileSize), 1, tint)
+				}
+			}
+
+		case building.Mill:
+			drawStanding(screen, assets.MillFrames[(animFrame/12)%len(assets.MillFrames)], sx, sy, buildingHeight)
+
+		case building.Bakery:
+			drawStanding(screen, assets.Bakery, sx, sy, buildingHeight)
+
+		case building.Warehouse:
+			drawStanding(screen, assets.Warehouse, sx, sy, buildingHeight)
 		}
-
-		vector.FillRect(screen, float32(sx), float32(sy), size-1, size-1, c, false)
 
 		if bt.Recipe.TicksToProduce > 0 {
 			progress := float32(b.ProgressTicks) / float32(bt.Recipe.TicksToProduce)
 			if progress > 1 {
 				progress = 1
 			}
-			barY := float32(sy) + size - 3
-			vector.FillRect(screen, float32(sx), barY, size*progress, 3, color.RGBA{R: 255, G: 255, B: 0, A: 220}, false)
+			barWidth := float32(bt.Footprint) * TileSize
+			barY := float32(sy) + float32(bt.Footprint)*TileSize - 3
+			vector.FillRect(screen, float32(sx), barY, barWidth*progress, 3, color.RGBA{R: 255, G: 255, B: 0, A: 220}, false)
 		}
 	}
 }

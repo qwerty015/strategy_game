@@ -27,17 +27,17 @@ func TestCanPlace(t *testing.T) {
 		{"farm on fertile land", Farm, 2, 2, nil, true},
 		{"farm on plain grass", Farm, 0, 0, nil, false}, // Farm requires Fertile
 		{"mill on plain grass", Mill, 0, 0, nil, true},  // Mill has no terrain restriction
-		{"out of bounds", Mill, 9, 9, nil, false},       // 2x2 footprint runs off the 10x10 grid
+		{"out of bounds", Mill, 10, 10, nil, false},     // off the 10x10 grid entirely
 		{"on water", Mill, 8, 8, nil, false},
 		{
 			name: "overlaps existing building",
-			kind: Mill, x: 1, y: 0,
+			kind: Mill, x: 0, y: 0,
 			existing:  []*Building{{Kind: Mill, X: 0, Y: 0}},
 			wantValid: false,
 		},
 		{
 			name: "adjacent, no overlap",
-			kind: Mill, x: 2, y: 0,
+			kind: Mill, x: 1, y: 0,
 			existing:  []*Building{{Kind: Mill, X: 0, Y: 0}},
 			wantValid: true,
 		},

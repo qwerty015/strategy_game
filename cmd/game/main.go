@@ -5,7 +5,6 @@ import (
 	"log"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	"strategy_game/internal/building"
@@ -58,7 +57,7 @@ type Game struct {
 
 func NewGame() *Game {
 	warehouse := &building.Building{Kind: building.Warehouse, X: warehouseX, Y: warehouseY}
-	initialRoad := &building.Building{Kind: building.Road, X: warehouseX, Y: warehouseY + 2}
+	initialRoad := &building.Building{Kind: building.Road, X: warehouseX, Y: warehouseY + 1}
 
 	buildings := []*building.Building{warehouse, initialRoad}
 
@@ -218,6 +217,7 @@ func referenceBuildings(in []building.Building) []*building.Building {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
+	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawBuildings(screen, g.buildings, g.camera)
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
@@ -231,9 +231,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	ui.DrawResourceBar(screen, g.stock, g.pop)
 	ui.DrawPalette(screen, g.palette)
 
-	ebitenutil.DebugPrintAt(screen, i18n.T().Help, 8, screenHeight-20)
+	ui.DrawText(screen, i18n.T().Help, 8, float64(screenHeight-20))
 	if g.statusMsg != "" {
-		ebitenutil.DebugPrintAt(screen, g.statusMsg, 8, screenHeight-36)
+		ui.DrawText(screen, g.statusMsg, 8, float64(screenHeight-36))
 	}
 }
 

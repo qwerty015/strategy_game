@@ -4,29 +4,32 @@ import (
 	"image/color"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/vector"
 
+	"strategy_game/internal/assets"
 	"strategy_game/internal/logistics"
 )
 
-var (
-	serfIdleColor = color.RGBA{R: 190, G: 190, B: 195, A: 255} // grey: waiting for a job
-	serfBusyColor = color.RGBA{R: 240, G: 200, B: 60, A: 255}  // gold: carrying/travelling
-)
+// serfHeight: less than a full tile, since these are small figures, not
+// buildings -- see buildingHeight in buildings.go for the same idea
+// applied to buildings.
+const serfHeight = 0.85
 
-// DrawSerfs renders every serf as a small dot at its current tile, so
+// DrawSerfs renders every serf as a small figure at its current tile, so
 // the player can actually see goods being hauled along the road network
-// instead of resources just teleporting between buildings.
+// instead of resources just teleporting between buildings. A busy serf
+// cycles through the pose frames in assets.Serf (see animFrame in
+// buildings.go) for a walking look; an idle one holds a single pose and
+// is dimmed.
 func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 	for _, s := range serfs {
 		sx, sy := cam.TileToScreen(s.X, s.Y)
-		cx := float32(sx) + float32(TileSize)/2
-		cy := float32(sy) + float32(TileSize)/2
 
-		c := serfIdleColor
+		frame := 0
+		tint := color.Color(color.RGBA{R: 200, G: 200, B: 200, A: 180})
 		if s.Busy() {
-			c = serfBusyColor
+			frame = (animFrame / 10) % len(assets.Serf)
+			tint = color.White
 		}
-		vector.FillCircle(screen, cx, cy, float32(TileSize)/4, c, false)
+		drawStandingTinted(screen, assets.Serf[frame], sx, sy, serfHeight, tint)
 	}
 }

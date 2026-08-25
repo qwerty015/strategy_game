@@ -5,7 +5,6 @@ import (
 	"image/color"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"strategy_game/internal/building"
@@ -27,7 +26,7 @@ func DrawResourceBar(screen *ebiten.Image, stock *resource.Stockpile, pop *econo
 		t.ResourceName[resource.Flour], stock.Amount(resource.Flour),
 		t.ResourceName[resource.Bread], stock.Amount(resource.Bread),
 	)
-	ebitenutil.DebugPrintAt(screen, line, 8, 8)
+	DrawText(screen, line, 8, 8)
 }
 
 // DrawPalette prints the building selection hotkeys, highlighting the
@@ -40,7 +39,7 @@ func DrawPalette(screen *ebiten.Image, p *Palette) {
 			marker = "> "
 		}
 		line := fmt.Sprintf("%s[%d] %s", marker, i+1, names[kind])
-		ebitenutil.DebugPrintAt(screen, line, 8, 28+i*16)
+		DrawText(screen, line, 8, float64(28+i*16))
 	}
 }
 

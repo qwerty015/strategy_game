@@ -25,7 +25,7 @@ var Types = map[Kind]Type{
 	Mill: {
 		Kind:      Mill,
 		Name:      "Mill",
-		Footprint: 2,
+		Footprint: 1,
 		Recipe: Recipe{
 			Inputs:         map[resource.Type]int{resource.Wheat: 5},
 			Output:         resource.Flour,
@@ -36,7 +36,7 @@ var Types = map[Kind]Type{
 	Bakery: {
 		Kind:      Bakery,
 		Name:      "Bakery",
-		Footprint: 2,
+		Footprint: 1,
 		Recipe: Recipe{
 			Inputs:         map[resource.Type]int{resource.Flour: 5},
 			Output:         resource.Bread,
@@ -47,7 +47,7 @@ var Types = map[Kind]Type{
 	Warehouse: {
 		Kind:      Warehouse,
 		Name:      "Warehouse",
-		Footprint: 2,
+		Footprint: 1,
 		// No Recipe: it produces nothing, it's the logistics hub serfs
 		// move goods through. See Building's doc comment.
 	},
