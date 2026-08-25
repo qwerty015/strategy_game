@@ -21,6 +21,20 @@ func drawStanding(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall flo
 	drawStandingTinted(screen, img, sx, sy, tilesTall, color.White)
 }
 
+// unitBob returns a four-step one-pixel gait offset. It is intentionally
+// subtle: at 24 pixels per tile, a small vertical weight shift reads better
+// than large sprite jumps until directional walk frames are available.
+func unitBob() float64 {
+	switch (animFrame / 6) % 4 {
+	case 1:
+		return -1
+	case 3:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // drawStandingTinted is drawStanding with a color multiplied over the
 // sprite -- used to sweep a Farm's fertile tiles from bare soil to
 // golden wheat as its crop matures (see render/buildings.go).

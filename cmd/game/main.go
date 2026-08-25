@@ -12,6 +12,7 @@ import (
 	"strategy_game/internal/economy"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
+	"strategy_game/internal/pathfind"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
@@ -88,10 +89,11 @@ func (g *Game) Update() error {
 	g.handleCameraPan()
 	g.handlePaletteSelect()
 	g.handleMouse()
+	g.handleUnitActions()
 	g.handleSaveLoad()
 
 	for range g.sim.Advance() {
-		economy.Tick(g.buildings, g.starvingBuildings())
+		economy.TickWithConnectivity(g.buildings, g.starvingBuildings(), g.disconnectedBuildings())
 		g.logi.Tick(g.buildings, g.stock)
 		g.vills.Tick(g.buildings)
 		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers)
@@ -117,6 +119,20 @@ func (g *Game) starvingBuildings() map[*building.Building]bool {
 	for _, v := range g.vills.Villagers {
 		if !v.Working() {
 			m[v.Home] = true
+		}
+	}
+	return m
+}
+
+// disconnectedBuildings reports production buildings whose access tile is
+// not connected to the Warehouse by a continuous road network. The map is
+// recalculated at the simulation boundary, so a newly completed road starts
+// the next production tick without requiring any extra state in building.
+func (g *Game) disconnectedBuildings() map[*building.Building]bool {
+	m := make(map[*building.Building]bool)
+	for _, b := range g.buildings {
+		if building.Types[b.Kind].Recipe.TicksToProduce > 0 && !g.buildingConnected(b) {
+			m[b] = true
 		}
 	}
 	return m
@@ -177,6 +193,10 @@ func (g *Game) handleMouse() {
 		g.sim.SetSpeed(speed)
 		return
 	}
+	if g.layout.HireAt(mx, my) {
+		g.hireSerf()
+		return
+	}
 	point := image.Pt(mx, my)
 	if point.In(g.layout.LeftPanel()) ||
 		point.In(g.layout.RightPanel()) ||
@@ -206,6 +226,47 @@ func (g *Game) handleMouse() {
 	g.statusMsg = ""
 }
 
+func (g *Game) handleUnitActions() {
+	if inpututil.IsKeyJustPressed(ebiten.KeyH) {
+		g.hireSerf()
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyDelete) {
+		g.deleteSelectedBuilding()
+	}
+}
+
+func (g *Game) hireSerf() {
+	g.logi.Hire()
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers)
+	g.statusMsg = ""
+}
+
+// deleteSelectedBuilding removes the selected building and invalidates all
+// active routes before the slice is changed. The Warehouse is the town's
+// mandatory logistics root and cannot be deleted.
+func (g *Game) deleteSelectedBuilding() {
+	if g.selection.Kind != ui.SelectionBuilding || g.selection.Building == nil {
+		return
+	}
+	b := g.selection.Building
+	if b.Kind == building.Warehouse {
+		g.statusMsg = i18n.T().CannotDeleteWarehouse
+		return
+	}
+
+	g.logi.CancelAllJobs(g.stock)
+	g.vills.RemoveHome(b)
+	for i, candidate := range g.buildings {
+		if candidate != b {
+			continue
+		}
+		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+		g.selection.Clear()
+		g.statusMsg = i18n.T().Deleted
+		return
+	}
+}
+
 // selectionAt resolves map coordinates to a live game object. Units have
 // priority over buildings because a worker standing beside a building is the
 // more useful thing to inspect on a click.
@@ -231,6 +292,18 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		}
 	}
 	return ui.Selection{}
+}
+
+func (g *Game) buildingConnected(b *building.Building) bool {
+	if b == nil || b.Kind == building.Warehouse {
+		return true
+	}
+	warehouse := findWarehouse(g.buildings)
+	if warehouse == nil {
+		return false
+	}
+	_, ok := pathfind.FindPath(g.buildings, warehouse, b)
+	return ok
 }
 
 // spawnVillagerFor gives a newly placed Farm or Bakery its worker. Other
@@ -346,10 +419,23 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 
 	ui.DrawBufferLevels(screen, g.buildings, g.camera)
+	// Every non-road building exposes its access tile. This keeps the road
+	// connection rule visible without requiring the player to click buildings
+	// one by one; the inspector still explains the selected building in detail.
+	for _, b := range g.buildings {
+		if b.Kind != building.Road {
+			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
+		}
+	}
 	ui.DrawSelectionMarker(screen, g.camera, g.selection)
+	connected := false
+	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil {
+		connected = g.buildingConnected(g.selection.Building)
+	}
 	ui.DrawResourceBarAt(screen, g.stock, g.pop, float64(g.layout.LeftWidth+16), 10)
 	ui.DrawBuildPanel(screen, g.layout, g.palette)
-	ui.DrawInspectorPanel(screen, g.layout, g.selection)
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected)
+	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
 	ui.DrawSpeedPanel(screen, g.layout, g.sim.Speed())
 
 	ui.DrawText(screen, i18n.T().Help, float64(g.layout.LeftWidth+16), float64(screenHeight-20))

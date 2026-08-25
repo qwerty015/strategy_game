@@ -78,6 +78,13 @@ func (l Layout) SpeedAt(x, y int) (economy.Speed, bool) {
 	return economy.Speed(index), true
 }
 
+// HireAt reports whether the cursor is over the serf hiring button in the
+// bottom panel.
+func (l Layout) HireAt(x, y int) bool {
+	r := image.Rect(l.LeftWidth+16, l.Height-l.BottomHeight+20, l.LeftWidth+196, l.Height-l.BottomHeight+54)
+	return image.Pt(x, y).In(r)
+}
+
 func (l Layout) speedStartX() int {
 	return l.Width - 5*62 - 12
 }

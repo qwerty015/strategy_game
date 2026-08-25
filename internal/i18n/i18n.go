@@ -38,26 +38,32 @@ type Catalog struct {
 	SpeedDouble    string
 	SpeedQuadruple string
 
-	StateLabel      string
-	CargoLabel      string
-	RouteLabel      string
-	HungerLabel     string
-	ProfessionLabel string
-	HomeLabel       string
-	BuildingLabel   string
-	InputLabel      string
-	OutputLabel     string
-	NoCargo         string
-	NoRoute         string
-	StateIdle       string
-	StateWorking    string
-	StateWalking    string
-	StateDelivering string
-	StateEating     string
-	StateStarving   string
-	UnitSerf        string
-	UnitFarmer      string
-	UnitBaker       string
+	StateLabel            string
+	CargoLabel            string
+	RouteLabel            string
+	HungerLabel           string
+	ProfessionLabel       string
+	HomeLabel             string
+	BuildingLabel         string
+	InputLabel            string
+	OutputLabel           string
+	RoadLabel             string
+	Connected             string
+	Disconnected          string
+	NoCargo               string
+	NoRoute               string
+	StateIdle             string
+	StateWorking          string
+	StateWalking          string
+	StateDelivering       string
+	StateEating           string
+	StateStarving         string
+	UnitSerf              string
+	UnitFarmer            string
+	UnitBaker             string
+	HireSerf              string
+	Deleted               string
+	CannotDeleteWarehouse string
 
 	Help                  string
 	CantBuildHere         string

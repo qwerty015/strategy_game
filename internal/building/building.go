@@ -51,6 +51,9 @@ type Recipe struct {
 	TicksToProduce int
 }
 
+// Point is a world-grid coordinate used for building access points.
+type Point struct{ X, Y int }
+
 // Type describes a kind of building: how big it is, what terrain it can
 // sit on, and what it produces.
 type Type struct {
@@ -58,11 +61,24 @@ type Type struct {
 	Name      string
 	Footprint int // buildings are Footprint x Footprint tiles
 
+	// AccessX and AccessY identify the single tile where a road must meet
+	// the building. For a Farm this is the farmhouse tile; for a 1x1
+	// building it is (0, 0).
+	AccessX, AccessY int
+
 	// AllowedTerrain lists the terrain types this building may be placed
 	// on. An empty slice means "any buildable (non-water) terrain".
 	AllowedTerrain []world.TerrainType
 
 	Recipe Recipe
+}
+
+// AccessPoint returns the world tile that serves as this building's door or
+// loading point. Roads connected to another part of a multi-tile building do
+// not make that building reachable.
+func (b *Building) AccessPoint() Point {
+	bt := Types[b.Kind]
+	return Point{X: b.X + bt.AccessX, Y: b.Y + bt.AccessY}
 }
 
 // CanBuildOn reports whether a single tile satisfies this building

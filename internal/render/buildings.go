@@ -16,11 +16,9 @@ import (
 // rather than being squashed to fit exactly on its tile.
 const buildingHeight = 1.7
 
-// animFrame drives simple pseudo-animation (the mill's rotating sails,
-// serfs' walk poses): a slowly-advancing counter shared by everything
-// drawn this frame. Good enough for a handful of small looping
-// animations; a per-entity clock would only matter if they needed to be
-// out of sync with each other, which nothing here does.
+// animFrame is a shared optional animation clock. The current generated art
+// uses consistent single poses, but keeping the clock avoids changing the
+// render API when directional or mill-blade frames are added later.
 var animFrame int
 
 // Tick advances the shared animation clock by one render frame. Call
@@ -56,8 +54,9 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // field itself shows the growth the player asked to be able to see. A
 // Road is one path tile. Mill/Bakery/Warehouse/Tavern each stand on
 // their single tile taller than the tile itself (see buildingHeight),
-// with a production-progress bar underneath. The Mill's sails rotate
-// through three frames.
+// with a production-progress bar underneath. MillFrames keeps the animation
+// hook available while the current generated windmill uses one finished
+// sprite in all three frames.
 func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
 	for _, b := range buildings {
 		bt := building.Types[b.Kind]
@@ -79,7 +78,10 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 					if dx == 0 && dy == 0 {
 						continue // this corner is the farmhouse, drawn below
 					}
-					drawStandingTinted(screen, assets.Fertile, sx+float64(dx*TileSize), sy+float64(dy*TileSize), 1, tint)
+					fieldX := sx + float64(dx*TileSize)
+					fieldY := sy + float64(dy*TileSize)
+					drawStandingTinted(screen, assets.Fertile, fieldX, fieldY, 1, tint)
+					drawCropGrowth(screen, fieldX, fieldY, growth, dx, dy)
 				}
 			}
 			drawStanding(screen, assets.FarmHouse, sx, sy, buildingHeight)
@@ -89,6 +91,7 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 
 		case building.Bakery:
 			drawStanding(screen, assets.Bakery, sx, sy, buildingHeight)
+			drawFire(screen, sx+17, sy+4)
 
 		case building.Warehouse:
 			drawStanding(screen, assets.Warehouse, sx, sy, buildingHeight)

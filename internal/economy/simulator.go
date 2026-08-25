@@ -96,11 +96,21 @@ func (s *Simulator) ShouldTick() bool {
 // starving marks buildings whose worker (package villagers) is off
 // finding a meal and hasn't come back yet -- production pauses for
 // those, same as it would if the building were simply short on raw
-// materials. nil is fine (nothing is starving).
+// materials. nil is fine (nothing is starving). This compatibility wrapper
+// treats all buildings as connected; the game loop should use
+// TickWithConnectivity.
 func Tick(buildings []*building.Building, starving map[*building.Building]bool) {
+	TickWithConnectivity(buildings, starving, nil)
+}
+
+// TickWithConnectivity is Tick plus the town-network rule: entries in
+// disconnected are not allowed to start a production cycle. Existing output
+// and input buffers remain intact, so reconnecting the road network resumes
+// the building instead of destroying its progress.
+func TickWithConnectivity(buildings []*building.Building, starving, disconnected map[*building.Building]bool) {
 	for _, b := range buildings {
 		recipe := building.Types[b.Kind].Recipe
-		if recipe.TicksToProduce <= 0 || starving[b] {
+		if recipe.TicksToProduce <= 0 || starving[b] || disconnected[b] {
 			continue
 		}
 

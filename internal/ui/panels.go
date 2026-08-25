@@ -57,7 +57,7 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette) {
 // DrawInspectorPanel renders the currently selected object. It reads only
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -67,7 +67,7 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 
 	switch selection.Kind {
 	case SelectionBuilding:
-		drawBuildingInspector(screen, r.Min.X+18, 62, selection.Building)
+		drawBuildingInspector(screen, r.Min.X+18, 62, selection.Building, connected)
 	case SelectionSerf:
 		drawSerfInspector(screen, r.Min.X+18, 62, selection.Serf)
 	case SelectionVillager:
@@ -75,7 +75,7 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	}
 }
 
-func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building) {
+func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool) {
 	t := i18n.T()
 	bt := building.Types[b.Kind]
 	DrawText(screen, t.BuildingName[b.Kind], float64(x), float64(y))
@@ -90,7 +90,13 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building)
 	}
 	if bt.Recipe.TicksToProduce > 0 {
 		DrawText(screen, fmt.Sprintf("%s: %d", t.OutputLabel, bufferTotal(b.OutputBuffer)), float64(x), float64(y))
+		y += 20
 	}
+	roadState := t.Disconnected
+	if connected || b.Kind == building.Warehouse {
+		roadState = t.Connected
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, roadState), float64(x), float64(y))
 }
 
 func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
@@ -187,6 +193,41 @@ func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Sel
 	vector.FillRect(screen, float32(x+float64(size)-2), float32(y), thickness, float32(size), line, false)
 }
 
+// DrawAccessMarker marks the only tile where a road can serve a building.
+// Green means a road path to the Warehouse exists; red means the building is
+// currently disconnected from the town.
+func DrawAccessMarker(screen *ebiten.Image, cam *render.Camera, b *building.Building, connected bool) {
+	p := b.AccessPoint()
+	DrawAccessMarkerAt(screen, cam, p.X, p.Y, connected)
+}
+
+// DrawAccessMarkerAt is the placement-preview variant of DrawAccessMarker.
+func DrawAccessMarkerAt(screen *ebiten.Image, cam *render.Camera, x, y int, connected bool) {
+	marker := color.RGBA{R: 214, G: 63, B: 55, A: 230}
+	if connected {
+		marker = color.RGBA{R: 76, G: 205, B: 112, A: 230}
+	}
+	drawAccessMarker(screen, cam, x, y, marker)
+}
+
+// DrawPlacementAccessMarker marks the door/access tile of a building preview.
+// Yellow means the location is legal, red means the footprint itself is
+// invalid. A legal preview is intentionally not green: it is not connected
+// to the road network until the player builds a road there.
+func DrawPlacementAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y int, valid bool) {
+	marker := color.RGBA{R: 235, G: 181, B: 54, A: 235}
+	if !valid {
+		marker = color.RGBA{R: 214, G: 63, B: 55, A: 230}
+	}
+	drawAccessMarker(screen, cam, x, y, marker)
+}
+
+func drawAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y int, marker color.RGBA) {
+	sx, sy := cam.TileToScreen(x, y)
+	vector.FillRect(screen, float32(sx+7), float32(sy+7), 10, 10, marker, false)
+	vector.FillRect(screen, float32(sx+10), float32(sy+3), 4, 18, marker, false)
+}
+
 func DrawSpeedPanel(screen *ebiten.Image, layout Layout, speed economy.Speed) {
 	r := layout.BottomPanel()
 	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), panelColor, false)
@@ -204,6 +245,18 @@ func DrawSpeedPanel(screen *ebiten.Image, layout Layout, speed economy.Speed) {
 		vector.FillRect(screen, float32(x), float32(y), 58, 30, fill, false)
 		DrawText(screen, label, float64(x+8), float64(y+8))
 	}
+}
+
+// DrawUnitControls renders the small population action area beside the
+// speed controls. Hiring currently has no resource cost; the visible button
+// gives the action a discoverable mouse target while H remains a shortcut.
+func DrawUnitControls(screen *ebiten.Image, layout Layout, serfCount int) {
+	x := layout.LeftWidth + 16
+	y := layout.Height - layout.BottomHeight + 20
+	vector.FillRect(screen, float32(x), float32(y), 180, 34, panelInnerColor, false)
+	vector.FillRect(screen, float32(x), float32(y+31), 180, 3, panelEdgeColor, false)
+	DrawText(screen, i18n.T().HireSerf, float64(x+8), float64(y+8))
+	DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().UnitSerf, serfCount), float64(x+8), float64(y+22))
 }
 
 func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) {

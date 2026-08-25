@@ -114,6 +114,20 @@ func (c *Controller) Spawn(profession Profession, home *building.Building) {
 	c.Villagers = append(c.Villagers, NewVillager(profession, home))
 }
 
+// RemoveHome removes the worker assigned to a building that was deleted.
+// Workers are tied to their workplace in the current economy, so keeping a
+// villager with a dangling Home pointer would make it continue working at a
+// building that no longer exists.
+func (c *Controller) RemoveHome(home *building.Building) {
+	kept := c.Villagers[:0]
+	for _, v := range c.Villagers {
+		if v.Home != home {
+			kept = append(kept, v)
+		}
+	}
+	c.Villagers = kept
+}
+
 // Tick advances hunger and movement for every villager. Call once per
 // simulation tick.
 func (c *Controller) Tick(buildings []*building.Building) {

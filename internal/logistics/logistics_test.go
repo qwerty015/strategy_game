@@ -148,3 +148,29 @@ func TestController_DisconnectedBuildingIsNeverServiced(t *testing.T) {
 		t.Fatalf("farm OutputBuffer[Wheat] = %d, want 5 (still sitting there, uncollected)", got)
 	}
 }
+
+func TestController_HireAndCancelJobs(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 3, Y: 4}
+	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+
+	if got := c.Hire(); got == nil || len(c.Serfs) != 2 {
+		t.Fatalf("Hire() produced %v serfs, want 2", len(c.Serfs))
+	}
+
+	s := c.Serfs[0]
+	s.ph = toDropoff
+	s.pickup = farm
+	s.resource = resource.Wheat
+	s.amount = 2
+	s.X, s.Y = 1, 1
+	c.CancelAllJobs(stock)
+
+	if got := stock.Amount(resource.Wheat); got != 2 {
+		t.Fatalf("stock Wheat after CancelAllJobs = %d, want 2", got)
+	}
+	if s.ph != idle || s.X != warehouse.X || s.Y != warehouse.Y {
+		t.Fatalf("serf after CancelAllJobs = phase %v at (%d,%d), want idle at warehouse", s.ph, s.X, s.Y)
+	}
+}

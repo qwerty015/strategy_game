@@ -68,3 +68,17 @@ func TestVillager_StarvingWhenNoTavernReachable(t *testing.T) {
 		t.Fatal("villager left its post with nowhere to actually go, want it to stay put")
 	}
 }
+
+func TestController_RemoveHome(t *testing.T) {
+	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
+	bakery := &building.Building{Kind: building.Bakery, X: 3, Y: 0}
+	c := NewController()
+	c.Spawn(Farmer, farm)
+	c.Spawn(Baker, bakery)
+
+	c.RemoveHome(farm)
+
+	if len(c.Villagers) != 1 || c.Villagers[0].Home != bakery {
+		t.Fatalf("villagers after RemoveHome = %+v, want only bakery worker", c.Villagers)
+	}
+}

@@ -2,7 +2,6 @@ package building
 
 import (
 	"strategy_game/internal/resource"
-	"strategy_game/internal/world"
 )
 
 // Types is the registry of every building kind in the game. This is the
@@ -11,10 +10,9 @@ import (
 // needs to change.
 var Types = map[Kind]Type{
 	Farm: {
-		Kind:           Farm,
-		Name:           "Farm",
-		Footprint:      3, // one tile is the farmhouse, the rest is tilled field around it -- see render/buildings.go
-		AllowedTerrain: []world.TerrainType{world.Fertile},
+		Kind:      Farm,
+		Name:      "Farm",
+		Footprint: 3, // one tile is the farmhouse, the rest is tilled field around it -- see render/buildings.go
 		Recipe: Recipe{
 			// No Inputs: a Farm gathers Wheat from the land itself.
 			Output:         resource.Wheat,

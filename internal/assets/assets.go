@@ -1,12 +1,8 @@
-// Package assets embeds the game's placeholder art and decodes it into
-// ready-to-draw *ebiten.Image values once at startup. Source: Kenney's
-// "Medieval RTS" pack (CC0, see assets/CREDITS.md) -- picked per the
-// project's stated approach of using free asset packs rather than
-// custom-drawn or commissioned art (see AGENTS.md). Every sprite in this
-// pack shares one convention: a uniform 64x64 canvas with the art
-// positioned consistently within it, which is what lets multi-part
-// sprites (e.g. the mill's base + rotating blades, see MillFrames) be
-// composited by simply overlaying them with no offset math.
+// Package assets embeds the game's terrain, building and unit art and
+// decodes it into ready-to-draw *ebiten.Image values once at startup. The
+// generated sprites are deliberately small 64x64 pixel-art assets, so they
+// stay readable at the game's 24-pixel tile scale without turning this pet
+// project into a large art pipeline. See assets/CREDITS.md for provenance.
 package assets
 
 import (
@@ -19,7 +15,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
-//go:embed tiles/*.png units/*.png
+//go:embed tiles/*.png units/*.png generated/*.png
 var files embed.FS
 
 // TileSize is the pixel width/height of every source sprite's canvas in
@@ -28,49 +24,44 @@ var files embed.FS
 const TileSize = 64
 
 var (
-	Grass   = mustLoad("tiles/grass.png")
-	Fertile = mustLoad("tiles/fertile.png") // tilled farmland
-	Forest  = mustLoad("tiles/forest.png")  // grass + trees, one combined tile
-	Stone   = mustLoad("tiles/stone.png")
-	Water   = mustLoad("tiles/water.png")
-	Road    = mustLoad("tiles/road.png")
+	Grass   = mustLoad("generated/terrain_grass.png")
+	Fertile = mustLoad("generated/terrain_fertile.png") // tilled farmland
+	Forest  = mustLoad("generated/terrain_forest.png")  // grass + trees, one tile
+	Stone   = mustLoad("generated/terrain_stone.png")
+	Water   = mustLoad("generated/terrain_water.png")
+	Road    = mustLoad("generated/terrain_road_stone.png") // cobblestone path
 
-	// MillFrames are the windmill's sail-rotation animation frames, each
-	// the base tower with one blade-angle sprite pre-composited on top
-	// at load time (see mustComposite) rather than drawn as two separate
-	// ebiten.DrawImage calls every frame -- cheaper, and it sidesteps
-	// the blade sprite's baked-in drop shadow washing out the base
-	// underneath it (see mustComposite's doc comment).
+	// MillFrames keeps the renderer's animation interface stable. The current
+	// generated windmill is a finished sprite, so the three frames are
+	// identical until a dedicated blade animation set is added.
 	MillFrames = [3]*ebiten.Image{
-		mustComposite("tiles/mill_base.png", "tiles/mill_blades1.png"),
-		mustComposite("tiles/mill_base.png", "tiles/mill_blades2.png"),
-		mustComposite("tiles/mill_base.png", "tiles/mill_blades3.png"),
+		mustLoad("generated/building_mill.png"),
+		mustLoad("generated/building_mill.png"),
+		mustLoad("generated/building_mill.png"),
 	}
 
-	Bakery    = mustLoad("tiles/bakery.png")
-	Warehouse = mustLoad("tiles/warehouse.png")
-	FarmHouse = mustLoad("tiles/farm_house.png") // stands on one corner of the Farm's field, see render/buildings.go
-	Tavern    = mustLoad("tiles/tavern.png")
+	Bakery    = mustLoad("generated/building_bakery.png")
+	Warehouse = mustLoad("generated/building_warehouse.png")
+	FarmHouse = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
+	Tavern    = mustLoad("generated/building_tavern.png")
 
-	// Serf/Farmer/Baker each hold 3 walk-pose frames -- not a real walk
-	// cycle (the source pack has directional poses, not leg animation),
-	// but cycling between them while a unit is moving reads fine as
-	// motion at this sprite size. Different profession, different
-	// recolor of the same pack, so they're distinguishable at a glance.
+	// There is one purpose-built silhouette per profession for now. The
+	// renderer still exposes frame arrays so directional/walking variants can
+	// be added without changing the simulation packages.
 	Serf = [3]*ebiten.Image{
-		mustLoad("units/serf_a.png"),
-		mustLoad("units/serf_b.png"),
-		mustLoad("units/serf_c.png"),
+		mustLoad("generated/unit_serf.png"),
+		mustLoad("generated/unit_serf.png"),
+		mustLoad("generated/unit_serf.png"),
 	}
 	Farmer = [3]*ebiten.Image{
-		mustLoad("units/farmer_a.png"),
-		mustLoad("units/farmer_b.png"),
-		mustLoad("units/farmer_c.png"),
+		mustLoad("generated/unit_farmer.png"),
+		mustLoad("generated/unit_farmer.png"),
+		mustLoad("generated/unit_farmer.png"),
 	}
 	Baker = [3]*ebiten.Image{
-		mustLoad("units/baker_a.png"),
-		mustLoad("units/baker_b.png"),
-		mustLoad("units/baker_c.png"),
+		mustLoad("generated/unit_baker.png"),
+		mustLoad("generated/unit_baker.png"),
+		mustLoad("generated/unit_baker.png"),
 	}
 )
 

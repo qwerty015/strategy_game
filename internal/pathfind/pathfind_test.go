@@ -7,11 +7,11 @@ import (
 )
 
 func TestFindPath_ConnectedViaRoad(t *testing.T) {
-	from := &building.Building{Kind: building.Farm, X: 0, Y: 0} // footprint (0,0)-(1,1)
-	to := &building.Building{Kind: building.Mill, X: 5, Y: 0}   // footprint (5,0)-(6,1)
+	from := &building.Building{Kind: building.Farm, X: 0, Y: 0}
+	to := &building.Building{Kind: building.Mill, X: 5, Y: 0}
 
 	buildings := []*building.Building{from, to}
-	for x := 2; x <= 4; x++ {
+	for x := 1; x <= 4; x++ {
 		buildings = append(buildings, &building.Building{Kind: building.Road, X: x, Y: 0})
 	}
 
@@ -19,11 +19,11 @@ func TestFindPath_ConnectedViaRoad(t *testing.T) {
 	if !ok {
 		t.Fatal("FindPath() = not found, want a path along the road")
 	}
-	if last := path[len(path)-1]; !footprintSet(to)[last] {
-		t.Errorf("path ends at %v, want a tile in to's footprint", last)
+	if last := path[len(path)-1]; last != (Point{X: to.X, Y: to.Y}) {
+		t.Errorf("path ends at %v, want target access point (%d,%d)", last, to.X, to.Y)
 	}
-	if first := path[0]; !footprintSet(from)[first] {
-		t.Errorf("path starts at %v, want a tile in from's footprint", first)
+	if first := path[0]; first != (Point{X: from.X, Y: from.Y}) {
+		t.Errorf("path starts at %v, want source access point (%d,%d)", first, from.X, from.Y)
 	}
 }
 
@@ -49,5 +49,28 @@ func TestFindPath_BrokenRoadIsNotFound(t *testing.T) {
 
 	if _, ok := FindPath(buildings, from, to); ok {
 		t.Fatal("FindPath() across a broken road = found, want not found")
+	}
+}
+
+func TestFindPath_RoadMustMeetBuildingAccessPoint(t *testing.T) {
+	from := &building.Building{Kind: building.Farm, X: 0, Y: 0}
+	to := &building.Building{Kind: building.Mill, X: 5, Y: 0}
+	buildings := []*building.Building{from, to}
+	for x := 1; x <= 5; x++ {
+		// This road reaches the Farm's field, but not its farmhouse/access tile.
+		buildings = append(buildings, &building.Building{Kind: building.Road, X: x, Y: 1})
+	}
+
+	if _, ok := FindPath(buildings, from, to); ok {
+		t.Fatal("FindPath() through a road touching only the farm field = found, want not found")
+	}
+}
+
+func TestFindPath_AdjacentBuildingsNeedRoad(t *testing.T) {
+	from := &building.Building{Kind: building.Mill, X: 0, Y: 0}
+	to := &building.Building{Kind: building.Bakery, X: 1, Y: 0}
+
+	if _, ok := FindPath([]*building.Building{from, to}, from, to); ok {
+		t.Fatal("FindPath() between adjacent buildings without Road = found, want not found")
 	}
 }

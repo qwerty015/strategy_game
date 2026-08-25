@@ -144,9 +144,33 @@ type Controller struct {
 func NewController(warehouse *building.Building, count int) *Controller {
 	c := &Controller{Warehouse: warehouse}
 	for range count {
-		c.Serfs = append(c.Serfs, &Serf{X: warehouse.X, Y: warehouse.Y, atBuilding: warehouse})
+		c.Hire()
 	}
 	return c
+}
+
+// Hire creates one additional serf at the Warehouse. The current MVP does
+// not charge a resource cost; the method is kept on the controller so a cost
+// and a population limit can be added later without changing the UI wiring.
+func (c *Controller) Hire() *Serf {
+	s := &Serf{X: c.Warehouse.X, Y: c.Warehouse.Y, atBuilding: c.Warehouse}
+	c.Serfs = append(c.Serfs, s)
+	return s
+}
+
+// CancelAllJobs safely interrupts every active route after the map changes
+// (for example, when a road or building is deleted). A serf that already
+// picked up a load returns it to the shared stockpile, then all serfs are
+// re-anchored at the Warehouse. This prevents stale routes and lost cargo.
+func (c *Controller) CancelAllJobs(stock *resource.Stockpile) {
+	for _, s := range c.Serfs {
+		if s.ph == toDropoff && !s.eating && s.amount > 0 {
+			stock.Add(s.resource, s.amount)
+		}
+		s.reset()
+		s.atBuilding = c.Warehouse
+		s.X, s.Y = c.Warehouse.X, c.Warehouse.Y
+	}
 }
 
 // Tick assigns jobs to idle serfs and advances every serf by one

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/resource"
 )
 
 func TestTick_FarmProducesIntoOwnOutputBuffer(t *testing.T) {
@@ -119,5 +120,25 @@ func TestTick_SkipsStarvingBuildings(t *testing.T) {
 	}
 	if got := farm.OutputBuffer[recipe.Output]; got != recipe.OutputAmount {
 		t.Fatalf("after worker returned: OutputBuffer[%s] = %d, want %d", recipe.Output, got, recipe.OutputAmount)
+	}
+}
+
+func TestTickWithConnectivity_SkipsDisconnectedProduction(t *testing.T) {
+	farm := &building.Building{Kind: building.Farm}
+	disconnected := map[*building.Building]bool{farm: true}
+
+	for range 10 {
+		TickWithConnectivity([]*building.Building{farm}, nil, disconnected)
+	}
+
+	if farm.ProgressTicks != 0 || farm.OutputBuffer[resource.Wheat] != 0 {
+		t.Fatalf("disconnected farm progressed to %d with output %d, want no production", farm.ProgressTicks, farm.OutputBuffer[resource.Wheat])
+	}
+
+	for range building.Types[building.Farm].Recipe.TicksToProduce {
+		TickWithConnectivity([]*building.Building{farm}, nil, nil)
+	}
+	if got := farm.OutputBuffer[resource.Wheat]; got != building.Types[building.Farm].Recipe.OutputAmount {
+		t.Fatalf("reconnected farm output = %d, want %d", got, building.Types[building.Farm].Recipe.OutputAmount)
 	}
 }

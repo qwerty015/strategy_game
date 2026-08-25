@@ -8,21 +8,25 @@ import "strategy_game/internal/building"
 // Point is a tile coordinate.
 type Point struct{ X, Y int }
 
-// FindPath returns a shortest tile-by-tile path connecting any tile of
-// from's footprint to any tile of to's footprint, moving only across
-// Road buildings and the two endpoint buildings' own footprints (so a
-// serf can stand "inside" either building to load/unload). It reports
-// false if no such route exists, which is exactly what should happen
-// when a building isn't connected to the road network yet.
+// FindPath returns a shortest tile-by-tile path connecting the access points
+// of from and to. The path may use Road tiles and the two endpoint access
+// tiles, but not the rest of either footprint or any third building. At
+// least one Road tile must be used, so two buildings touching edge-to-edge
+// are not considered connected without an actual road.
 func FindPath(buildings []*building.Building, from, to *building.Building) ([]Point, bool) {
+	if from == to {
+		return []Point{accessPoint(from)}, true
+	}
+
 	walkable := walkableSet(buildings, from, to)
-	goals := footprintSet(to)
+	goals := map[Point]bool{accessPoint(to): true}
+	roads := roadSet(buildings)
 
 	// Breadth-first search over the walkable tile graph. visited maps
-	// each reached tile to the tile it was reached from; a tile that
-	// maps to itself is one of the search roots (from's footprint).
+	// each reached tile to the tile it was reached from; the root maps to
+	// itself.
 	visited := map[Point]Point{}
-	queue := footprintPoints(from)
+	queue := []Point{accessPoint(from)}
 	for _, p := range queue {
 		visited[p] = p
 	}
@@ -57,30 +61,19 @@ func FindPath(buildings []*building.Building, from, to *building.Building) ([]Po
 		cur = parent
 	}
 	reverse(path)
+	if !containsRoad(path, roads) {
+		return nil, false
+	}
 	return path, true
 }
 
-func footprintPoints(b *building.Building) []Point {
-	size := building.Types[b.Kind].Footprint
-	pts := make([]Point, 0, size*size)
-	for dy := range size {
-		for dx := range size {
-			pts = append(pts, Point{b.X + dx, b.Y + dy})
-		}
-	}
-	return pts
+func accessPoint(b *building.Building) Point {
+	p := b.AccessPoint()
+	return Point{X: p.X, Y: p.Y}
 }
 
-func footprintSet(b *building.Building) map[Point]bool {
-	set := make(map[Point]bool)
-	for _, p := range footprintPoints(b) {
-		set[p] = true
-	}
-	return set
-}
-
-// walkableSet is every tile a serf may step on for a trip between from
-// and to: all Road tiles, plus both endpoint buildings' own footprints.
+// walkableSet is every tile a serf may step on for a trip between from and
+// to: all Road tiles, plus the access points of the two endpoint buildings.
 func walkableSet(buildings []*building.Building, from, to *building.Building) map[Point]bool {
 	set := make(map[Point]bool)
 	for _, b := range buildings {
@@ -88,13 +81,28 @@ func walkableSet(buildings []*building.Building, from, to *building.Building) ma
 			set[Point{b.X, b.Y}] = true
 		}
 	}
-	for p := range footprintSet(from) {
-		set[p] = true
-	}
-	for p := range footprintSet(to) {
-		set[p] = true
+	set[accessPoint(from)] = true
+	set[accessPoint(to)] = true
+	return set
+}
+
+func roadSet(buildings []*building.Building) map[Point]bool {
+	set := make(map[Point]bool)
+	for _, b := range buildings {
+		if b.Kind == building.Road {
+			set[Point{b.X, b.Y}] = true
+		}
 	}
 	return set
+}
+
+func containsRoad(path []Point, roads map[Point]bool) bool {
+	for _, p := range path {
+		if roads[p] {
+			return true
+		}
+	}
+	return false
 }
 
 func neighbors(p Point) [4]Point {

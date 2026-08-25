@@ -26,10 +26,11 @@ func TestCanPlace(t *testing.T) {
 		wantValid bool
 	}{
 		{"farm on fertile land", Farm, 2, 2, nil, true},
-		{"farm on plain grass", Farm, 0, 0, nil, false}, // Farm requires Fertile
-		{"mill on plain grass", Mill, 0, 0, nil, true},  // Mill has no terrain restriction
-		{"out of bounds", Mill, 10, 10, nil, false},     // off the 10x10 grid entirely
+		{"farm on plain grass", Farm, 0, 0, nil, true}, // Farm can be placed on any non-water land
+		{"mill on plain grass", Mill, 0, 0, nil, true}, // Mill has no terrain restriction
+		{"out of bounds", Mill, 10, 10, nil, false},    // off the 10x10 grid entirely
 		{"on water", Mill, 8, 8, nil, false},
+		{"farm on water", Farm, 8, 8, nil, false},
 		{
 			name: "overlaps existing building",
 			kind: Mill, x: 0, y: 0,
