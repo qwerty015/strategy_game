@@ -2,10 +2,7 @@
 package main
 
 import (
-	"image"
-	"image/png"
 	"log"
-	"os"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -64,26 +61,7 @@ func NewGame() *Game {
 
 	buildings := []*building.Building{warehouse, initialRoad}
 
-	// TEMP debug preview scene.
-	mill := &building.Building{Kind: building.Mill, X: 20, Y: 10}
-	bakery := &building.Building{Kind: building.Bakery, X: 16, Y: 10}
-	tavern := &building.Building{Kind: building.Tavern, X: 14, Y: 10}
-	farm := &building.Building{Kind: building.Farm, X: 4, Y: 4, ProgressTicks: 2}
-	buildings = append(buildings, mill, bakery, tavern, farm)
-	buildings = append(buildings, &building.Building{Kind: building.Road, X: 18, Y: 12})
-	for x := 4; x <= 20; x++ {
-		buildings = append(buildings, &building.Building{Kind: building.Road, X: x, Y: 12})
-	}
-	for _, x := range []int{14, 16, 20} {
-		for y := 11; y <= 11; y++ {
-			buildings = append(buildings, &building.Building{Kind: building.Road, X: x, Y: y})
-		}
-	}
-	for y := 7; y <= 11; y++ {
-		buildings = append(buildings, &building.Building{Kind: building.Road, X: 4, Y: y})
-	}
-
-	g := &Game{
+	return &Game{
 		grid:      world.NewTestGrid(),
 		buildings: buildings,
 		stock:     resource.NewStockpile(stockpileCapacity),
@@ -94,9 +72,6 @@ func NewGame() *Game {
 		camera:    render.NewCamera(),
 		palette:   ui.NewPalette(),
 	}
-	g.vills.Spawn(villagers.Farmer, farm)
-	g.vills.Spawn(villagers.Baker, bakery)
-	return g
 }
 
 func (g *Game) Update() error {
@@ -304,21 +279,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.statusMsg != "" {
 		ui.DrawText(screen, g.statusMsg, 8, float64(screenHeight-36))
 	}
-
-	debugFrame++
-	if debugFrame == 1500 {
-		b := screen.Bounds()
-		pix := make([]byte, 4*b.Dx()*b.Dy())
-		screen.ReadPixels(pix)
-		img := &image.RGBA{Pix: pix, Stride: 4 * b.Dx(), Rect: b}
-		if f, err := os.Create("debug_screenshot.png"); err == nil {
-			png.Encode(f, img)
-			f.Close()
-		}
-	}
 }
-
-var debugFrame int
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return screenWidth, screenHeight
