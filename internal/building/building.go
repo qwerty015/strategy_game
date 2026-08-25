@@ -18,9 +18,10 @@ const (
 	Mill
 	Bakery
 
-	// Warehouse is the town's single logistics hub: serfs (see package
-	// logistics) deposit collected goods here and draw from it to supply
-	// other buildings. It has no Recipe -- it produces nothing itself.
+	// Warehouse is a logistics hub: serfs (see package logistics) deposit
+	// collected goods here and draw from it to supply other buildings. The
+	// first warehouse is the serf spawn point; additional warehouses share the
+	// same town stockpile. It has no Recipe -- it produces nothing itself.
 	Warehouse
 
 	// Road is not really a "building" gameplay-wise, but reusing the

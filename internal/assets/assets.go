@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
+	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
@@ -24,20 +25,20 @@ var files embed.FS
 const TileSize = 64
 
 var (
-	Grass   = mustLoad("generated/terrain_grass.png")
-	Fertile = mustLoad("generated/terrain_fertile.png") // tilled farmland
-	Forest  = mustLoad("generated/terrain_forest.png")  // grass + trees, one tile
-	Stone   = mustLoad("generated/terrain_stone.png")
+	Grass   = mustLoadGround("generated/terrain_grass.png")
+	Fertile = mustLoadGround("generated/terrain_fertile.png") // tilled farmland
+	Forest  = mustLoadGround("generated/terrain_forest.png")  // grass + trees, one tile
+	Stone   = mustLoadGround("generated/terrain_stone.png")
 	Water   = mustLoad("generated/terrain_water.png")
 	Road    = mustLoad("generated/terrain_road_stone.png") // cobblestone path
 
-	// MillFrames keeps the renderer's animation interface stable. The current
-	// generated windmill is a finished sprite, so the three frames are
-	// identical until a dedicated blade animation set is added.
+	// MillFrames are flattened once on the CPU from the mill body and three
+	// blade positions. The render loop only switches the finished images, so
+	// rotating the sails does not require two layered draws every frame.
 	MillFrames = [3]*ebiten.Image{
-		mustLoad("generated/building_mill.png"),
-		mustLoad("generated/building_mill.png"),
-		mustLoad("generated/building_mill.png"),
+		mustCompositeScaled("tiles/mill_base.png", "tiles/mill_blades1.png", 0.72),
+		mustCompositeScaled("tiles/mill_base.png", "tiles/mill_blades2.png", 0.72),
+		mustCompositeScaled("tiles/mill_base.png", "tiles/mill_blades3.png", 0.72),
 	}
 
 	Bakery    = mustLoad("generated/building_bakery.png")
@@ -81,6 +82,27 @@ func mustLoad(name string) *ebiten.Image {
 	return ebiten.NewImageFromImage(mustDecode(name))
 }
 
+// mustLoadGround repairs a one-pixel white export fringe present in a few of
+// the generated terrain PNGs. It is fixed once at startup rather than hidden
+// by a larger tile overlap, because the fringe otherwise becomes a bright
+// grid line whenever the camera is zoomed.
+func mustLoadGround(name string) *ebiten.Image {
+	src := mustDecode(name)
+	b := src.Bounds()
+	out := image.NewNRGBA(b)
+	draw.Draw(out, b, src, b.Min, draw.Src)
+	if b.Dy() > 1 {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			_, _, _, a := out.At(x, b.Min.Y).RGBA()
+			r, g, bl, _ := out.At(x, b.Min.Y).RGBA()
+			if a > 0 && r > 0xe800 && g > 0xe800 && bl > 0xe800 {
+				out.Set(x, b.Min.Y, out.At(x, b.Min.Y+1))
+			}
+		}
+	}
+	return ebiten.NewImageFromImage(out)
+}
+
 // mustComposite flattens overlay onto base (both same-sized canvases) on
 // the CPU and returns the result as one ebiten.Image. It intentionally
 // does not use ordinary alpha-over compositing -- see the comment
@@ -90,6 +112,41 @@ func mustLoad(name string) *ebiten.Image {
 func mustComposite(base, overlay string) *ebiten.Image {
 	baseImg := mustDecode(base)
 	overlayImg := mustDecode(overlay)
+	return compositeImages(baseImg, overlayImg)
+}
+
+// mustCompositeScaled shrinks an oversized pixel-art overlay around the
+// canvas centre before compositing it. The source mill sails nearly fill the
+// 64x64 canvas; at the game's tall-building scale that reads as a giant X, so
+// a smaller sail silhouette keeps the mill body and hub readable.
+func mustCompositeScaled(base, overlay string, scale float64) *ebiten.Image {
+	baseImg := mustDecode(base)
+	overlayImg := mustDecode(overlay)
+	return compositeImages(baseImg, scaleImageNearest(overlayImg, scale))
+}
+
+func scaleImageNearest(src image.Image, scale float64) image.Image {
+	b := src.Bounds()
+	out := image.NewNRGBA(b)
+	if scale <= 0 {
+		return out
+	}
+	cx := float64(b.Min.X+b.Max.X-1) / 2
+	cy := float64(b.Min.Y+b.Max.Y-1) / 2
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			srcX := int(math.Round((float64(x)-cx)/scale + cx))
+			srcY := int(math.Round((float64(y)-cy)/scale + cy))
+			if srcX < b.Min.X || srcX >= b.Max.X || srcY < b.Min.Y || srcY >= b.Max.Y {
+				continue
+			}
+			out.Set(x, y, src.At(srcX, srcY))
+		}
+	}
+	return out
+}
+
+func compositeImages(baseImg image.Image, overlayImg image.Image) *ebiten.Image {
 
 	out := image.NewNRGBA(baseImg.Bounds())
 	draw.Draw(out, out.Bounds(), baseImg, image.Point{}, draw.Src)

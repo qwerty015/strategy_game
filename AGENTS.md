@@ -91,9 +91,10 @@ strategy_game/
 - `Road` — это просто ещё один `building.Kind` (footprint 1×1, без рецепта).
   Переиспользует всю систему `CanPlace`/пересечений/сохранения бесплатно —
   отдельного поля/слоя для дорог в `world.Tile` нет и не нужно.
-- `Warehouse` — единственный на карту, ставится автоматически в `NewGame`
-  (координаты `warehouseX/warehouseY` в `cmd/game/main.go`), не через палитру
-  игрока. Его инвентарь — это и есть общий `resource.Stockpile` (безлимитный).
+- `Warehouse` — первый склад ставится автоматически в `NewGame` (координаты
+  `warehouseX/warehouseY` в `cmd/game/main.go`), дополнительные склады можно
+  выбрать в палитре. Все склады используют общий `resource.Stockpile`, который
+  безлимитен; первый склад также остаётся точкой появления новых слуг.
 - Обычные постройки (Farm/Mill/Bakery/Tavern) **не трогают** общий Stockpile
   напрямую — только свои `InputBuffer`/`OutputBuffer` (см. `building.Building`,
   `BufferCapacity = 6` — лимит на любой ресурс в любом здании, кроме склада;

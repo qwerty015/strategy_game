@@ -69,6 +69,27 @@ func TestVillager_StarvingWhenNoTavernReachable(t *testing.T) {
 	}
 }
 
+func TestFarmerWalksAcrossItsFieldWhileWorking(t *testing.T) {
+	farm := &building.Building{Kind: building.Farm, X: 4, Y: 6}
+	c := NewController()
+	c.Spawn(Farmer, farm)
+	v := c.Villagers[0]
+
+	for range FarmWorkStepTicks + 1 {
+		c.Tick([]*building.Building{farm})
+	}
+
+	if !v.Working() {
+		t.Fatal("farmer left work without a reachable tavern")
+	}
+	if v.X == farm.X && v.Y == farm.Y {
+		t.Fatalf("farmer stayed on farmhouse tile at (%d,%d), want a field tile", v.X, v.Y)
+	}
+	if v.X < farm.X || v.X >= farm.X+3 || v.Y < farm.Y || v.Y >= farm.Y+3 {
+		t.Fatalf("farmer position = (%d,%d), want inside farm footprint", v.X, v.Y)
+	}
+}
+
 func TestController_RemoveHome(t *testing.T) {
 	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
 	bakery := &building.Building{Kind: building.Bakery, X: 3, Y: 0}

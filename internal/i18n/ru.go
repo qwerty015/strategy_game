@@ -48,6 +48,7 @@ func init() {
 		InputLabel:            "Вход",
 		OutputLabel:           "Выход",
 		ContentsLabel:         "Внутри",
+		UnlimitedLabel:        "без лимита",
 		GrowthLabel:           "Рост",
 		IndestructibleLabel:   "Неубираемое",
 		RoadLabel:             "Дорога",
@@ -69,7 +70,7 @@ func init() {
 		CannotDeleteWarehouse: "Склад нельзя удалить",
 		CannotDeleteTree:      "Дерево пока нельзя убрать",
 
-		Help:                  "Стрелки: камера | Колесо +/-: масштаб | 1-5: выбор | Клик: построить/выбрать | H: нанять слугу | Delete: удалить | S/L: сохранение/загрузка | Esc: выход",
+		Help:                  "Стрелки/СКМ: камера | Колесо +/-: масштаб | 1-6: выбор | Клик: построить/выбрать | H: нанять слугу | Delete: удалить | S/L: сохранение/загрузка | Esc: выход",
 		CantBuildHere:         "Здесь нельзя строить",
 		SaveFailedPrefix:      "Не удалось сохранить: ",
 		LoadFailedPrefix:      "Не удалось загрузить: ",

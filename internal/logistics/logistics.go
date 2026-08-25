@@ -136,17 +136,43 @@ func (s *Serf) reset() {
 
 // Controller owns every serf and the warehouse they work out of.
 type Controller struct {
-	Warehouse *building.Building
-	Serfs     []*Serf
+	Warehouse  *building.Building // primary spawn/root warehouse
+	Warehouses []*building.Building
+	Serfs      []*Serf
 }
 
 // NewController spawns count serfs standing at the warehouse.
 func NewController(warehouse *building.Building, count int) *Controller {
-	c := &Controller{Warehouse: warehouse}
+	c := &Controller{Warehouse: warehouse, Warehouses: []*building.Building{warehouse}}
 	for range count {
 		c.Hire()
 	}
 	return c
+}
+
+// AddWarehouse registers another physical warehouse as a valid logistics
+// endpoint. All warehouses share the same unlimited town stockpile, while the
+// primary warehouse remains the spawn point for newly hired serfs.
+func (c *Controller) AddWarehouse(warehouse *building.Building) {
+	if warehouse == nil || warehouse.Kind != building.Warehouse {
+		return
+	}
+	for _, existing := range c.Warehouses {
+		if existing == warehouse {
+			return
+		}
+	}
+	c.Warehouses = append(c.Warehouses, warehouse)
+}
+
+func (c *Controller) warehouses() []*building.Building {
+	if len(c.Warehouses) > 0 {
+		return c.Warehouses
+	}
+	if c.Warehouse != nil {
+		return []*building.Building{c.Warehouse}
+	}
+	return nil
 }
 
 // Hire creates one additional serf at the Warehouse. The current MVP does
@@ -234,9 +260,11 @@ func (c *Controller) tryStartMeal(s *Serf, tavern *building.Building, buildings 
 // producer->consumer haul, then drain leftover OutputBuffer to the Warehouse,
 // then pull from the Warehouse to cover a shortage no producer can.
 func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *resource.Stockpile) {
-	if pickup, dropoff, t, n, ok := findTavernSupplyJob(buildings, c.Warehouse, stock); ok {
-		if c.startLeg(s, pickup, dropoff, t, n, buildings) {
-			return
+	for _, warehouse := range c.warehouses() {
+		if pickup, dropoff, t, n, ok := findTavernSupplyJob(buildings, warehouse, stock); ok {
+			if c.startLeg(s, pickup, dropoff, t, n, buildings) {
+				return
+			}
 		}
 	}
 	if pickup, dropoff, t, n, ok := findDirectJob(buildings, c.Warehouse); ok {
@@ -245,12 +273,18 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 		}
 	}
 	if b, t, n, ok := findCollectJob(buildings, c.Warehouse); ok {
-		if c.startLeg(s, b, c.Warehouse, t, n, buildings) {
-			return
+		for _, warehouse := range c.warehouses() {
+			if c.startLeg(s, b, warehouse, t, n, buildings) {
+				return
+			}
 		}
 	}
 	if b, t, n, ok := findSupplyJob(buildings, c.Warehouse, stock); ok {
-		c.startLeg(s, c.Warehouse, b, t, n, buildings)
+		for _, warehouse := range c.warehouses() {
+			if c.startLeg(s, warehouse, b, t, n, buildings) {
+				return
+			}
+		}
 	}
 }
 
@@ -280,7 +314,7 @@ func findTavernSupplyJob(buildings []*building.Building, warehouse *building.Bui
 			continue
 		}
 		for _, producer := range buildings {
-			if producer == warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
+			if producer.Kind == building.Warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
 				continue
 			}
 			if have := producer.OutputBuffer[rt]; have > 0 {
@@ -414,7 +448,7 @@ func (c *Controller) arriveAtPickup(s *Serf, buildings []*building.Building, sto
 	}
 
 	var ok bool
-	if s.pickup == c.Warehouse {
+	if s.pickup.Kind == building.Warehouse {
 		ok = stock.Remove(s.resource, s.amount)
 	} else {
 		ok = s.pickup.TakeOutput(s.resource, s.amount)
@@ -430,7 +464,7 @@ func (c *Controller) arriveAtPickup(s *Serf, buildings []*building.Building, sto
 	if !found {
 		// Road got cut after the job was assigned. Return the goods
 		// rather than lose them, then give up on the job.
-		if s.pickup == c.Warehouse {
+		if s.pickup.Kind == building.Warehouse {
 			stock.Add(s.resource, s.amount)
 		} else {
 			s.pickup.AddOutput(s.resource, s.amount)
@@ -444,7 +478,7 @@ func (c *Controller) arriveAtPickup(s *Serf, buildings []*building.Building, sto
 
 func (c *Controller) arriveAtDropoff(s *Serf, stock *resource.Stockpile) {
 	s.atBuilding = s.dropoff
-	if s.dropoff == c.Warehouse {
+	if s.dropoff.Kind == building.Warehouse {
 		stock.Add(s.resource, s.amount)
 	} else {
 		s.dropoff.AddInput(s.resource, s.amount)

@@ -91,7 +91,11 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
 		for _, rt := range resource.AllTypes() {
-			DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], stock.Amount(rt), stock.Capacity), float64(x), float64(y))
+			capacity := fmt.Sprintf("%d", stock.Capacity)
+			if stock.Capacity <= 0 {
+				capacity = t.UnlimitedLabel
+			}
+			DrawText(screen, fmt.Sprintf("%s: %d/%s", t.ResourceName[rt], stock.Amount(rt), capacity), float64(x), float64(y))
 			y += 18
 		}
 	}
@@ -263,8 +267,16 @@ func DrawPlacementAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y in
 func drawAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y int, marker color.RGBA) {
 	sx, sy := cam.TileToScreen(x, y)
 	scale := cam.TilePixels() / render.TileSize
-	vector.FillRect(screen, float32(sx+7*scale), float32(sy+7*scale), float32(10*scale), float32(10*scale), marker, false)
-	vector.FillRect(screen, float32(sx+10*scale), float32(sy+3*scale), float32(4*scale), float32(18*scale), marker, false)
+	radius := float32(3 * scale)
+	if radius < 2 {
+		radius = 2
+	}
+	if radius > 5 {
+		radius = 5
+	}
+	// A small door/connection dot is intentionally distinct from the worker
+	// +/- marker. The old large plus looked like a green person on roofs.
+	vector.FillCircle(screen, float32(sx+cam.TilePixels()/2), float32(sy+cam.TilePixels()-6*scale), radius, marker, false)
 }
 
 func DrawSpeedPanel(screen *ebiten.Image, layout Layout, speed economy.Speed) {
@@ -311,6 +323,8 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.Tavern
 	case building.Road:
 		img = assets.Road
+	case building.Warehouse:
+		img = assets.Warehouse
 	}
 	if img == nil {
 		return

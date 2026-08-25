@@ -10,14 +10,14 @@ import (
 	"strategy_game/internal/villagers"
 )
 
-// DrawWorkerMarkers shows whether a staffed production building currently
-// has its worker inside. A green plus means the Farmer/Baker is at the post;
-// a red minus means the worker is absent (usually walking to eat), so the
-// player can understand why production is temporarily paused.
+// DrawWorkerMarkers shows whether a Farm or Bakery currently has its worker
+// on duty. A green plus means the worker is present; a red minus means the
+// worker is away eating. Mills have no resident worker, so they do not get
+// this marker.
 func DrawWorkerMarkers(screen *ebiten.Image, buildings []*building.Building, vills []*villagers.Villager, cam *Camera) {
 	tilePixels := cam.TilePixels()
 	for _, b := range buildings {
-		if building.Types[b.Kind].Recipe.TicksToProduce <= 0 {
+		if b.Kind != building.Farm && b.Kind != building.Bakery {
 			continue
 		}
 		present := false
@@ -29,10 +29,13 @@ func DrawWorkerMarkers(screen *ebiten.Image, buildings []*building.Building, vil
 		}
 		p := b.AccessPoint()
 		sx, sy := cam.TileToScreen(p.X, p.Y)
-		centerX := sx + tilePixels*0.5
-		centerY := sy + tilePixels*0.22
-		arm := float32(4 * tilePixels / TileSize)
-		thickness := float32(2 * tilePixels / TileSize)
+		centerX := sx + tilePixels*0.80
+		centerY := sy + tilePixels*0.18
+		arm := float32(2.5 * tilePixels / TileSize)
+		if arm > 4 {
+			arm = 4
+		}
+		thickness := float32(1.5 * tilePixels / TileSize)
 		if thickness < 1 {
 			thickness = 1
 		}

@@ -30,7 +30,27 @@ const (
 	// TicksPerTile is how many simulation ticks it takes a villager to
 	// cross one tile of road, walking to/from the Tavern.
 	TicksPerTile = 2
+
+	// FarmWorkStepTicks controls the deliberately slow visible work loop.
+	// A farmer changes field cells every four seconds at normal speed, so the
+	// unit looks like it is tending the crop instead of teleporting around it.
+	FarmWorkStepTicks = 8
 )
+
+// farmWorkRoute is the loop the farmer walks through while tending the eight
+// field cells around the farmhouse. It is visual feedback only: production
+// still advances through economy.Simulator, while the route makes sowing and
+// harvesting readable on the map.
+var farmWorkRoute = [...]building.Point{
+	{X: 1, Y: 0},
+	{X: 2, Y: 0},
+	{X: 2, Y: 1},
+	{X: 2, Y: 2},
+	{X: 1, Y: 2},
+	{X: 0, Y: 2},
+	{X: 0, Y: 1},
+	{X: 1, Y: 1},
+}
 
 type phase int
 
@@ -53,6 +73,7 @@ type Villager struct {
 	tileTicks int
 
 	ticksSinceMeal int
+	workTicks      int
 
 	// Starving is true once HungerInterval has passed and there was
 	// nowhere to actually go eat (no Tavern built yet, no road to one,
@@ -96,6 +117,14 @@ func NewVillager(profession Profession, home *building.Building) *Villager {
 // opposed to out walking to/from a meal.
 func (v *Villager) Working() bool {
 	return v.ph == working
+}
+
+// VisibleOnMap reports whether the unit should be drawn as a person. Farmers
+// remain visible while they tend their field; bakers still use the compact
+// worker marker while working inside their bakery. Both professions appear
+// as units when walking to or from the Tavern.
+func (v *Villager) VisibleOnMap() bool {
+	return !v.Working() || (v.Profession == Farmer && v.Home != nil && v.Home.Kind == building.Farm)
 }
 
 // Controller owns every Farmer/Baker in town.
@@ -159,22 +188,39 @@ func tick(v *Villager, buildings []*building.Building, tavern *building.Building
 func tickWorking(v *Villager, buildings []*building.Building, tavern *building.Building) {
 	if v.ticksSinceMeal < HungerInterval {
 		v.ticksSinceMeal++
+		v.animateFarmWork()
 		return
 	}
 
 	// Hungry enough to need a meal now.
 	if tavern == nil || tavern.InputBuffer[resource.Bread] <= 0 {
 		v.Starving = true
+		v.animateFarmWork()
 		return
 	}
 	path, ok := pathfind.FindPath(buildings, v.Home, tavern)
 	if !ok {
 		v.Starving = true
+		v.animateFarmWork()
 		return
 	}
 	v.Starving = false
+	// The road network starts at the farmhouse access tile. The farmer has
+	// just finished the current field pass, so visually return to that tile
+	// before starting the meal route.
+	v.X, v.Y = v.Home.X, v.Home.Y
 	v.path, v.pathIdx, v.tileTicks = path, 0, 0
 	v.ph = toTavern
+}
+
+func (v *Villager) animateFarmWork() {
+	if v.Profession != Farmer || v.Home == nil || v.Home.Kind != building.Farm {
+		return
+	}
+	v.workTicks++
+	step := (v.workTicks / FarmWorkStepTicks) % len(farmWorkRoute)
+	p := farmWorkRoute[step]
+	v.X, v.Y = v.Home.X+p.X, v.Home.Y+p.Y
 }
 
 func tickWalking(v *Villager, buildings []*building.Building, tavern *building.Building) {
@@ -209,4 +255,5 @@ func tickWalking(v *Villager, buildings []*building.Building, tavern *building.B
 
 	v.X, v.Y = v.Home.X, v.Home.Y
 	v.ph = working
+	v.workTicks = 0
 }

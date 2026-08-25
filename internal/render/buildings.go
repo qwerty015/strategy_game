@@ -54,9 +54,8 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // field itself shows the growth the player asked to be able to see. A
 // Road is one path tile. Mill/Bakery/Warehouse/Tavern each stand on
 // their single tile taller than the tile itself (see buildingHeight),
-// with a production-progress bar underneath. MillFrames keeps the animation
-// hook available while the current generated windmill uses one finished
-// sprite in all three frames.
+// with a production-progress bar underneath. MillFrames contains three
+// compact sail positions, switched periodically to animate the windmill.
 func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
 	tilePixels := cam.TilePixels()
 	for _, b := range buildings {

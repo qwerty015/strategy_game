@@ -14,10 +14,10 @@ type Palette struct {
 
 // NewPalette creates the default palette: every player-placeable
 // building kind, in the order they should appear (and be bound to
-// number keys) in the HUD. Warehouse is deliberately excluded -- the
-// town has exactly one, auto-placed at game start.
+// number keys) in the HUD. The first warehouse is provided at game start;
+// additional warehouses can be built later.
 func NewPalette() *Palette {
-	return &Palette{Kinds: []building.Kind{building.Farm, building.Mill, building.Bakery, building.Tavern, building.Road}}
+	return &Palette{Kinds: []building.Kind{building.Farm, building.Mill, building.Bakery, building.Tavern, building.Road, building.Warehouse}}
 }
 
 // SelectedKind returns the building kind currently chosen for placement.

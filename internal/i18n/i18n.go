@@ -48,6 +48,7 @@ type Catalog struct {
 	InputLabel            string
 	OutputLabel           string
 	ContentsLabel         string
+	UnlimitedLabel        string
 	GrowthLabel           string
 	IndestructibleLabel   string
 	RoadLabel             string

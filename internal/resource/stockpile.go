@@ -1,9 +1,8 @@
 package resource
 
-// Stockpile is a capacity-limited store of resources shared by every
-// building in town. The MVP has no worker/hauling simulation: buildings
-// pull inputs from and push outputs to this single shared store directly
-// (see AGENTS.md for why that's a deliberate simplification).
+// Stockpile is the shared warehouse inventory. A positive Capacity keeps the
+// small logic-package tests useful for bounded stores; Capacity <= 0 means
+// the actual town warehouse is unlimited.
 type Stockpile struct {
 	Capacity int // max units of any single resource type
 	Amounts  map[Type]int
@@ -20,20 +19,23 @@ func (s *Stockpile) Amount(t Type) int {
 	return s.Amounts[t]
 }
 
-// Add deposits up to n units of t, capped by Capacity, and returns how
-// many units were actually added (less than n if the stockpile was
-// nearly full). Excess beyond capacity is simply lost -- there's no
-// overflow/waste tracking in the MVP.
+// Add deposits n units of t. Positive Capacity caps the amount; Capacity <= 0
+// is unlimited and is used by the town warehouse.
 func (s *Stockpile) Add(t Type, n int) int {
 	if n <= 0 {
 		return 0
 	}
-	room := s.Capacity - s.Amounts[t]
-	if room <= 0 {
-		return 0
+	if s.Amounts == nil {
+		s.Amounts = make(map[Type]int)
 	}
-	if n > room {
-		n = room
+	if s.Capacity > 0 {
+		room := s.Capacity - s.Amounts[t]
+		if room <= 0 {
+			return 0
+		}
+		if n > room {
+			n = room
+		}
 	}
 	s.Amounts[t] += n
 	return n

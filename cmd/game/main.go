@@ -28,13 +28,16 @@ const (
 
 	framesPerSimTick = 30 // simulation ticks run at 2/sec on a 60fps display
 
-	stockpileCapacity = 200
+	// A warehouse is intentionally unlimited. A positive capacity is still
+	// supported by resource.Stockpile for isolated tests and future stores.
+	stockpileCapacity = 0
 	startingSerfs     = 3
 
-	// Fixed spot for the town's one Warehouse, chosen to sit on plain
+	// Fixed spot for the town's primary Warehouse, chosen to sit on plain
 	// grass in world.NewTestGrid (away from the fertile/forest/water/
 	// stone patches). A single Road tile just south of it gives the
-	// player something to extend from immediately.
+	// player something to extend from immediately; more warehouses can be
+	// placed later and share the same stockpile.
 	warehouseX, warehouseY = 18, 10
 
 	savePath = "saves/slot1.json"
@@ -51,11 +54,14 @@ type Game struct {
 	logi      *logistics.Controller
 	vills     *villagers.Controller
 
-	camera    *render.Camera
-	palette   *ui.Palette
-	layout    ui.Layout
-	buildMode bool
-	selection ui.Selection
+	camera        *render.Camera
+	palette       *ui.Palette
+	layout        ui.Layout
+	buildMode     bool
+	selection     ui.Selection
+	middlePanning bool
+	lastMouseX    int
+	lastMouseY    int
 
 	statusMsg string
 }
@@ -184,6 +190,24 @@ func (g *Game) handleCameraPan() {
 		mapRect := g.layout.MapRect()
 		g.camera.Pan(dx, dy, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
 	}
+
+	mx, my := ebiten.CursorPosition()
+	mapPoint := image.Pt(mx, my)
+	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle) {
+		if !g.middlePanning {
+			if !mapPoint.In(g.layout.MapRect()) {
+				return
+			}
+			g.middlePanning = true
+			g.lastMouseX, g.lastMouseY = mx, my
+		} else {
+			mapRect := g.layout.MapRect()
+			g.camera.Pan(float64(g.lastMouseX-mx), float64(g.lastMouseY-my), g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
+			g.lastMouseX, g.lastMouseY = mx, my
+		}
+	} else {
+		g.middlePanning = false
+	}
 }
 
 // handleCameraZoom accepts both the mouse wheel and keyboard shortcuts.
@@ -273,6 +297,9 @@ func (g *Game) handleMouse() {
 	}
 	placed := &building.Building{Kind: kind, X: tx, Y: ty}
 	g.buildings = append(g.buildings, placed)
+	if kind == building.Warehouse {
+		g.logi.AddWarehouse(placed)
+	}
 	g.spawnVillagerFor(placed)
 	g.statusMsg = ""
 }
@@ -415,6 +442,9 @@ func (g *Game) handleSaveLoad() {
 		g.grid = grid
 		g.buildings = buildings
 		stock := state.Stockpile
+		// Older saves carried the temporary 200-unit limit. The town rule is
+		// now explicit: every warehouse shares an unlimited stockpile.
+		stock.Capacity = 0
 		g.stock = &stock
 		pop := state.Population
 		g.pop = &pop
@@ -432,6 +462,11 @@ func (g *Game) handleSaveLoad() {
 		// save.GameState docs) -- respawn a fresh crew instead, one
 		// villager per Farm/Bakery that was actually saved.
 		g.logi = logistics.NewController(warehouse, startingSerfs)
+		for _, b := range buildings {
+			if b.Kind == building.Warehouse && b != warehouse {
+				g.logi.AddWarehouse(b)
+			}
+		}
 		g.vills = villagers.NewController()
 		for _, b := range buildings {
 			g.spawnVillagerFor(b)
@@ -486,7 +521,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// connection rule visible without requiring the player to click buildings
 	// one by one; the inspector still explains the selected building in detail.
 	for _, b := range g.buildings {
-		if b.Kind != building.Road && b.Kind != building.Tree {
+		if b.Kind != building.Road && b.Kind != building.Tree && b.Kind != building.Warehouse {
 			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
 		}
 	}

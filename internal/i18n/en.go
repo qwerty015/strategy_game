@@ -48,6 +48,7 @@ func init() {
 		InputLabel:            "Input",
 		OutputLabel:           "Output",
 		ContentsLabel:         "Contents",
+		UnlimitedLabel:        "unlimited",
 		GrowthLabel:           "Growth",
 		IndestructibleLabel:   "Indestructible",
 		RoadLabel:             "Road",
@@ -69,7 +70,7 @@ func init() {
 		CannotDeleteWarehouse: "The warehouse cannot be deleted",
 		CannotDeleteTree:      "The tree cannot be removed yet",
 
-		Help:                  "Arrows: pan | Wheel +/-: zoom | 1-5: select | Click: place/select | H: hire serf | Delete: remove | S/L: save/load | Esc: quit",
+		Help:                  "Arrows/Middle drag: pan | Wheel +/-: zoom | 1-6: select | Click: place/select | H: hire serf | Delete: remove | S/L: save/load | Esc: quit",
 		CantBuildHere:         "Can't build there",
 		SaveFailedPrefix:      "Save failed: ",
 		LoadFailedPrefix:      "Load failed: ",

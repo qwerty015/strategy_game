@@ -2,6 +2,7 @@ package render
 
 import (
 	"image/color"
+	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -26,12 +27,31 @@ func DrawGrid(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 			sx, sy := cam.TileToScreen(tx, ty)
 			terrain := g.At(tx, ty).Terrain
 			tilePixels := cam.TilePixels()
-			drawStandingAtScale(screen, terrainImage(terrain), sx, sy, 1, tilePixels)
+			drawGround(screen, terrainImage(terrain), sx, sy, tilePixels)
 			if terrain == world.Grass {
 				drawGrassSway(screen, sx, sy, tx, ty, tilePixels)
 			}
 		}
 	}
+}
+
+// drawGround uses integer destination edges and a tiny one-pixel overlap.
+// Fractional camera zoom otherwise lets independently scaled PNG tiles leave
+// bright hairline seams between them due to rounding/filtering.
+func drawGround(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels float64) {
+	b := img.Bounds()
+	x0 := math.Floor(sx)
+	y0 := math.Floor(sy)
+	x1 := math.Ceil(sx+tilePixels) + 1
+	y1 := math.Ceil(sy+tilePixels) + 1
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale((x1-x0)/float64(b.Dx()), (y1-y0)/float64(b.Dy()))
+	op.GeoM.Translate(x0, y0)
+	op.Blend = ebiten.BlendSourceOver
+	screen.DrawImage(img, op)
 }
 
 // drawGrassSway is a tiny two-frame ambient animation. Only a deterministic
