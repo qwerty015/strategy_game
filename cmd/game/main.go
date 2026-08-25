@@ -2,7 +2,10 @@
 package main
 
 import (
+	"image"
+	"image/png"
 	"log"
+	"os"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -15,6 +18,7 @@ import (
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
 	"strategy_game/internal/ui"
+	"strategy_game/internal/villagers"
 	"strategy_game/internal/world"
 )
 
@@ -26,8 +30,6 @@ const (
 	framesPerSimTick = 30 // simulation ticks run at 2/sec on a 60fps display
 
 	stockpileCapacity = 200
-	startPopulation   = 5
-	ticksPerMeal      = 6
 	startingSerfs     = 3
 
 	// Fixed spot for the town's one Warehouse, chosen to sit on plain
@@ -48,6 +50,7 @@ type Game struct {
 	pop       *economy.Population
 	sim       *economy.Simulator
 	logi      *logistics.Controller
+	vills     *villagers.Controller
 
 	camera  *render.Camera
 	palette *ui.Palette
@@ -61,16 +64,39 @@ func NewGame() *Game {
 
 	buildings := []*building.Building{warehouse, initialRoad}
 
-	return &Game{
+	// TEMP debug preview scene.
+	mill := &building.Building{Kind: building.Mill, X: 20, Y: 10}
+	bakery := &building.Building{Kind: building.Bakery, X: 16, Y: 10}
+	tavern := &building.Building{Kind: building.Tavern, X: 14, Y: 10}
+	farm := &building.Building{Kind: building.Farm, X: 4, Y: 4, ProgressTicks: 2}
+	buildings = append(buildings, mill, bakery, tavern, farm)
+	buildings = append(buildings, &building.Building{Kind: building.Road, X: 18, Y: 12})
+	for x := 4; x <= 20; x++ {
+		buildings = append(buildings, &building.Building{Kind: building.Road, X: x, Y: 12})
+	}
+	for _, x := range []int{14, 16, 20} {
+		for y := 11; y <= 11; y++ {
+			buildings = append(buildings, &building.Building{Kind: building.Road, X: x, Y: y})
+		}
+	}
+	for y := 7; y <= 11; y++ {
+		buildings = append(buildings, &building.Building{Kind: building.Road, X: 4, Y: y})
+	}
+
+	g := &Game{
 		grid:      world.NewTestGrid(),
 		buildings: buildings,
 		stock:     resource.NewStockpile(stockpileCapacity),
-		pop:       economy.NewPopulation(startPopulation, ticksPerMeal),
+		pop:       &economy.Population{},
 		sim:       economy.NewSimulator(framesPerSimTick),
 		logi:      logistics.NewController(warehouse, startingSerfs),
+		vills:     villagers.NewController(),
 		camera:    render.NewCamera(),
 		palette:   ui.NewPalette(),
 	}
+	g.vills.Spawn(villagers.Farmer, farm)
+	g.vills.Spawn(villagers.Baker, bakery)
+	return g
 }
 
 func (g *Game) Update() error {
@@ -80,14 +106,35 @@ func (g *Game) Update() error {
 	g.handleSaveLoad()
 
 	if g.sim.ShouldTick() {
-		economy.Tick(g.buildings, g.pop, g.stock)
+		economy.Tick(g.buildings, g.starvingBuildings())
 		g.logi.Tick(g.buildings, g.stock)
+		g.vills.Tick(g.buildings)
+		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers)
 	}
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		return ebiten.Termination
 	}
 	return nil
+}
+
+// starvingBuildings reports which buildings currently have no worker
+// physically at their post -- so economy.Tick can pause their
+// production instead of quietly progressing an empty building. This is
+// deliberately NOT the same as Villager.Starving: a worker who's merely
+// hungry but still standing at home (e.g. because the Tavern has no
+// Bread yet) keeps working. Gating production on Starving too would
+// deadlock a fresh town's very first production cycle -- the Tavern
+// can't get Bread until the Bakery makes some, and the Bakery can't
+// work while "starving".
+func (g *Game) starvingBuildings() map[*building.Building]bool {
+	m := make(map[*building.Building]bool, len(g.vills.Villagers))
+	for _, v := range g.vills.Villagers {
+		if !v.Working() {
+			m[v.Home] = true
+		}
+	}
+	return m
 }
 
 func (g *Game) handleCameraPan() {
@@ -134,8 +181,23 @@ func (g *Game) handlePlacement() {
 		g.statusMsg = i18n.T().CantBuildHere
 		return
 	}
-	g.buildings = append(g.buildings, &building.Building{Kind: kind, X: tx, Y: ty})
+	placed := &building.Building{Kind: kind, X: tx, Y: ty}
+	g.buildings = append(g.buildings, placed)
+	g.spawnVillagerFor(placed)
 	g.statusMsg = ""
+}
+
+// spawnVillagerFor gives a newly placed Farm or Bakery its worker. Other
+// building kinds don't get a villagers.Villager -- Warehouse/Road/Tavern
+// have no production to tend, and serfs (package logistics) are a
+// separate, town-wide pool rather than tied to one building.
+func (g *Game) spawnVillagerFor(b *building.Building) {
+	switch b.Kind {
+	case building.Farm:
+		g.vills.Spawn(villagers.Farmer, b)
+	case building.Bakery:
+		g.vills.Spawn(villagers.Baker, b)
+	}
 }
 
 func (g *Game) handleSaveLoad() {
@@ -183,9 +245,14 @@ func (g *Game) handleSaveLoad() {
 		g.pop = &pop
 		g.camera.X, g.camera.Y = state.CameraX, state.CameraY
 
-		// Serf positions/jobs aren't persisted (see save.GameState docs)
-		// -- respawn a fresh crew at the warehouse instead.
+		// Serf/villager positions and jobs aren't persisted (see
+		// save.GameState docs) -- respawn a fresh crew instead, one
+		// villager per Farm/Bakery that was actually saved.
 		g.logi = logistics.NewController(warehouse, startingSerfs)
+		g.vills = villagers.NewController()
+		for _, b := range buildings {
+			g.spawnVillagerFor(b)
+		}
 
 		g.statusMsg = i18n.T().Loaded
 	}
@@ -221,6 +288,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawBuildings(screen, g.buildings, g.camera)
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
+	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
 
 	mx, my := ebiten.CursorPosition()
 	tx, ty := g.camera.ScreenToTile(mx, my)
@@ -228,6 +296,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	valid := building.CanPlace(g.grid, g.buildings, kind, tx, ty)
 	ui.DrawPlacementPreview(screen, g.camera, kind, tx, ty, valid)
 
+	ui.DrawBufferLevels(screen, g.buildings, g.camera)
 	ui.DrawResourceBar(screen, g.stock, g.pop)
 	ui.DrawPalette(screen, g.palette)
 
@@ -235,7 +304,21 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.statusMsg != "" {
 		ui.DrawText(screen, g.statusMsg, 8, float64(screenHeight-36))
 	}
+
+	debugFrame++
+	if debugFrame == 1500 {
+		b := screen.Bounds()
+		pix := make([]byte, 4*b.Dx()*b.Dy())
+		screen.ReadPixels(pix)
+		img := &image.RGBA{Pix: pix, Stride: 4 * b.Dx(), Rect: b}
+		if f, err := os.Create("debug_screenshot.png"); err == nil {
+			png.Encode(f, img)
+			f.Close()
+		}
+	}
 }
+
+var debugFrame int
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return screenWidth, screenHeight

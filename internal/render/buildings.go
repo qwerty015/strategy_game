@@ -50,13 +50,14 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 
 // DrawBuildings renders every placed building.
 //
-// A Farm is drawn as four fertile-ground tiles whose color sweeps from
-// bare earth to golden wheat as its crop matures (see AGENTS.md), so the
+// A Farm is its house sprite standing on one corner of its footprint,
+// with tilled field on the rest of it -- the field's color sweeps from
+// bare earth to golden wheat as the crop matures (see AGENTS.md), so the
 // field itself shows the growth the player asked to be able to see. A
-// Road is one path tile. Mill/Bakery/Warehouse each stand on their
-// single tile taller than the tile itself (see buildingHeight), with a
-// production-progress bar underneath. The Mill's sails rotate through
-// three frames.
+// Road is one path tile. Mill/Bakery/Warehouse/Tavern each stand on
+// their single tile taller than the tile itself (see buildingHeight),
+// with a production-progress bar underneath. The Mill's sails rotate
+// through three frames.
 func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
 	for _, b := range buildings {
 		bt := building.Types[b.Kind]
@@ -75,9 +76,13 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 			tint := lerpColor(soilColor, ripeWheatColor, growth)
 			for dy := range bt.Footprint {
 				for dx := range bt.Footprint {
+					if dx == 0 && dy == 0 {
+						continue // this corner is the farmhouse, drawn below
+					}
 					drawStandingTinted(screen, assets.Fertile, sx+float64(dx*TileSize), sy+float64(dy*TileSize), 1, tint)
 				}
 			}
+			drawStanding(screen, assets.FarmHouse, sx, sy, buildingHeight)
 
 		case building.Mill:
 			drawStanding(screen, assets.MillFrames[(animFrame/12)%len(assets.MillFrames)], sx, sy, buildingHeight)
@@ -87,6 +92,9 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 
 		case building.Warehouse:
 			drawStanding(screen, assets.Warehouse, sx, sy, buildingHeight)
+
+		case building.Tavern:
+			drawStanding(screen, assets.Tavern, sx, sy, buildingHeight)
 		}
 
 		if bt.Recipe.TicksToProduce > 0 {

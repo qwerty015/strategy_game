@@ -49,15 +49,28 @@ var (
 
 	Bakery    = mustLoad("tiles/bakery.png")
 	Warehouse = mustLoad("tiles/warehouse.png")
+	FarmHouse = mustLoad("tiles/farm_house.png") // stands on one corner of the Farm's field, see render/buildings.go
+	Tavern    = mustLoad("tiles/tavern.png")
 
-	// Serf holds walk-pose frames for the serf sprite -- not a real
-	// walk cycle (the source pack has directional poses, not leg
-	// animation), but cycling between them while a serf is moving
-	// reads fine as motion at this sprite size.
+	// Serf/Farmer/Baker each hold 3 walk-pose frames -- not a real walk
+	// cycle (the source pack has directional poses, not leg animation),
+	// but cycling between them while a unit is moving reads fine as
+	// motion at this sprite size. Different profession, different
+	// recolor of the same pack, so they're distinguishable at a glance.
 	Serf = [3]*ebiten.Image{
 		mustLoad("units/serf_a.png"),
 		mustLoad("units/serf_b.png"),
 		mustLoad("units/serf_c.png"),
+	}
+	Farmer = [3]*ebiten.Image{
+		mustLoad("units/farmer_a.png"),
+		mustLoad("units/farmer_b.png"),
+		mustLoad("units/farmer_c.png"),
+	}
+	Baker = [3]*ebiten.Image{
+		mustLoad("units/baker_a.png"),
+		mustLoad("units/baker_b.png"),
+		mustLoad("units/baker_c.png"),
 	}
 )
 

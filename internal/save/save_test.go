@@ -29,7 +29,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 			{Kind: building.Mill, X: 6, Y: 4, ProgressTicks: 0},
 		},
 		Stockpile:  *stock,
-		Population: economy.Population{Count: 4, TicksPerMeal: 6, TicksSinceMeal: 3},
+		Population: economy.Population{Count: 4},
 		CameraX:    128.5,
 		CameraY:    64,
 	}

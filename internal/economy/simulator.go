@@ -1,5 +1,5 @@
-// Package economy ticks buildings' production and the town's population
-// forward. It knows nothing about ebiten or rendering -- see AGENTS.md.
+// Package economy ticks buildings' production forward. It knows nothing
+// about ebiten or rendering -- see AGENTS.md.
 package economy
 
 import (
@@ -36,12 +36,17 @@ func (s *Simulator) ShouldTick() bool {
 // A building reads its recipe's inputs from its own InputBuffer and
 // writes its output to its own OutputBuffer -- it never touches the
 // shared warehouse stockpile directly, that's what serfs are for (see
-// package logistics). Buildings with no Recipe (Warehouse, Road) are
-// skipped. The population then eats, if it's mealtime.
-func Tick(buildings []*building.Building, pop *Population, stock *resource.Stockpile) {
+// package logistics). Buildings with no Recipe (Warehouse, Road,
+// Tavern) are skipped.
+//
+// starving marks buildings whose worker (package villagers) is off
+// finding a meal and hasn't come back yet -- production pauses for
+// those, same as it would if the building were simply short on raw
+// materials. nil is fine (nothing is starving).
+func Tick(buildings []*building.Building, starving map[*building.Building]bool) {
 	for _, b := range buildings {
 		recipe := building.Types[b.Kind].Recipe
-		if recipe.TicksToProduce <= 0 {
+		if recipe.TicksToProduce <= 0 || starving[b] {
 			continue
 		}
 
@@ -68,10 +73,6 @@ func Tick(buildings []*building.Building, pop *Population, stock *resource.Stock
 		}
 		b.AddOutput(recipe.Output, recipe.OutputAmount)
 		b.ProgressTicks = 0
-	}
-
-	if pop != nil {
-		pop.Tick(stock)
 	}
 }
 

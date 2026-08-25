@@ -13,7 +13,7 @@ var Types = map[Kind]Type{
 	Farm: {
 		Kind:           Farm,
 		Name:           "Farm",
-		Footprint:      2,
+		Footprint:      3, // one tile is the farmhouse, the rest is tilled field around it -- see render/buildings.go
 		AllowedTerrain: []world.TerrainType{world.Fertile},
 		Recipe: Recipe{
 			// No Inputs: a Farm gathers Wheat from the land itself.
@@ -57,5 +57,17 @@ var Types = map[Kind]Type{
 		Footprint: 1,
 		// No AllowedTerrain restriction: a road can be laid on any
 		// buildable tile.
+	},
+	Tavern: {
+		Kind:      Tavern,
+		Name:      "Tavern",
+		Footprint: 1,
+		Recipe: Recipe{
+			// TicksToProduce: 0 means economy.Tick skips it (it makes
+			// nothing) -- but logistics still reads Inputs to know the
+			// Tavern wants to be kept stocked with Bread, the same way
+			// it reads any real consumer's Inputs. See AGENTS.md.
+			Inputs: map[resource.Type]int{resource.Bread: BufferCapacity},
+		},
 	},
 }

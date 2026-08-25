@@ -8,10 +8,11 @@ import (
 
 func testGrid() *world.Grid {
 	g := world.NewGrid(10, 10)
-	g.Set(2, 2, world.Tile{Terrain: world.Fertile})
-	g.Set(3, 2, world.Tile{Terrain: world.Fertile})
-	g.Set(2, 3, world.Tile{Terrain: world.Fertile})
-	g.Set(3, 3, world.Tile{Terrain: world.Fertile})
+	for y := 2; y < 5; y++ {
+		for x := 2; x < 5; x++ {
+			g.Set(x, y, world.Tile{Terrain: world.Fertile})
+		}
+	}
 	g.Set(8, 8, world.Tile{Terrain: world.Water})
 	return g
 }

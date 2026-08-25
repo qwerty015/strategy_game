@@ -17,6 +17,32 @@ func straightRoad(fromX, toX, y int) []*building.Building {
 	return roads
 }
 
+func TestController_SerfEatsAtTavernWhenHungry(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 0}
+	tavern.AddInput(resource.Bread, 3)
+
+	buildings := append([]*building.Building{warehouse, tavern}, straightRoad(1, 5, 0)...)
+
+	c := NewController(warehouse, 1)
+	s := c.Serfs[0]
+	stock := resource.NewStockpile(100)
+
+	for range 500 {
+		c.Tick(buildings, stock)
+		if s.ph == idle && s.ticksSinceMeal == 0 {
+			break
+		}
+	}
+
+	if got := tavern.InputBuffer[resource.Bread]; got != 2 {
+		t.Fatalf("tavern Bread = %d, want 2 (serf ate one loaf)", got)
+	}
+	if s.Starving {
+		t.Fatal("Starving = true after a successful meal, want false")
+	}
+}
+
 func TestController_CollectsFromProducerToWarehouse(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0} // (0,0)-(1,1)
 	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}           // (5,0)-(6,1)
@@ -64,6 +90,39 @@ func TestController_SuppliesConsumerFromWarehouse(t *testing.T) {
 	}
 	if got := stock.Amount(resource.Wheat); got != 15 {
 		t.Fatalf("warehouse Wheat = %d, want 15 (5 handed off to the mill)", got)
+	}
+}
+
+func TestController_HaulsDirectlyBetweenProducerAndConsumer(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20} // far away, off this road entirely
+	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
+	mill := &building.Building{Kind: building.Mill, X: 5, Y: 0}
+	farm.AddOutput(resource.Wheat, 5)
+
+	buildings := append([]*building.Building{warehouse, farm, mill}, straightRoad(1, 5, 0)...)
+
+	c := NewController(warehouse, 1)
+	// The serf starts at the warehouse, far from this road -- give it
+	// somewhere to actually start from for this test.
+	c.Serfs[0].X, c.Serfs[0].Y = 0, 0
+	c.Serfs[0].atBuilding = farm
+	stock := resource.NewStockpile(100)
+
+	for range 500 {
+		c.Tick(buildings, stock)
+		if mill.InputBuffer[resource.Wheat] > 0 {
+			break
+		}
+	}
+
+	if got := mill.InputBuffer[resource.Wheat]; got != 5 {
+		t.Fatalf("mill InputBuffer[Wheat] = %d, want 5 (hauled straight from the farm)", got)
+	}
+	if got := farm.OutputBuffer[resource.Wheat]; got != 0 {
+		t.Fatalf("farm OutputBuffer[Wheat] = %d, want 0 (collected)", got)
+	}
+	if got := stock.Amount(resource.Wheat); got != 0 {
+		t.Fatalf("warehouse Wheat = %d, want 0 (never should have routed through the warehouse)", got)
 	}
 }
 

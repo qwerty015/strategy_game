@@ -17,7 +17,7 @@ type Palette struct {
 // number keys) in the HUD. Warehouse is deliberately excluded -- the
 // town has exactly one, auto-placed at game start.
 func NewPalette() *Palette {
-	return &Palette{Kinds: []building.Kind{building.Farm, building.Mill, building.Bakery, building.Road}}
+	return &Palette{Kinds: []building.Kind{building.Farm, building.Mill, building.Bakery, building.Tavern, building.Road}}
 }
 
 // SelectedKind returns the building kind currently chosen for placement.

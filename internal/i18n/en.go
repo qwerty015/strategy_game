@@ -21,9 +21,10 @@ func init() {
 			building.Bakery:    "Bakery",
 			building.Warehouse: "Warehouse",
 			building.Road:      "Road",
+			building.Tavern:    "Tavern",
 		},
 
-		Help:                  "Arrows: pan | 1-4: select building | Click: place | S: save | L: load | Esc: quit",
+		Help:                  "Arrows: pan | 1-5: select building | Click: place | S: save | L: load | Esc: quit",
 		CantBuildHere:         "Can't build there",
 		SaveFailedPrefix:      "Save failed: ",
 		LoadFailedPrefix:      "Load failed: ",

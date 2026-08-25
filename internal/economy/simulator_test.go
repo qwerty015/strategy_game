@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
-	"strategy_game/internal/resource"
 )
 
 func TestTick_FarmProducesIntoOwnOutputBuffer(t *testing.T) {
@@ -12,13 +11,13 @@ func TestTick_FarmProducesIntoOwnOutputBuffer(t *testing.T) {
 	recipe := building.Types[building.Farm].Recipe
 
 	for i := 0; i < recipe.TicksToProduce-1; i++ {
-		Tick([]*building.Building{farm}, nil, nil)
+		Tick([]*building.Building{farm}, nil)
 		if got := farm.OutputBuffer[recipe.Output]; got != 0 {
 			t.Fatalf("tick %d: OutputBuffer[%s] = %d, want 0 (not done yet)", i, recipe.Output, got)
 		}
 	}
 
-	Tick([]*building.Building{farm}, nil, nil)
+	Tick([]*building.Building{farm}, nil)
 
 	if got, want := farm.OutputBuffer[recipe.Output], recipe.OutputAmount; got != want {
 		t.Fatalf("after %d ticks: OutputBuffer[%s] = %d, want %d", recipe.TicksToProduce, recipe.Output, got, want)
@@ -33,7 +32,7 @@ func TestTick_MillHoldsWhenInputBufferEmpty(t *testing.T) {
 	recipe := building.Types[building.Mill].Recipe
 
 	for i := 0; i < recipe.TicksToProduce+3; i++ {
-		Tick([]*building.Building{mill}, nil, nil)
+		Tick([]*building.Building{mill}, nil)
 	}
 
 	if got := mill.OutputBuffer[recipe.Output]; got != 0 {
@@ -49,7 +48,7 @@ func TestTick_MillProducesAsSoonAsInputBufferIsFilled(t *testing.T) {
 	recipe := building.Types[building.Mill].Recipe
 
 	for i := 0; i < recipe.TicksToProduce; i++ {
-		Tick([]*building.Building{mill}, nil, nil)
+		Tick([]*building.Building{mill}, nil)
 	}
 	if mill.OutputBuffer[recipe.Output] != 0 {
 		t.Fatal("mill produced with an empty InputBuffer")
@@ -58,7 +57,7 @@ func TestTick_MillProducesAsSoonAsInputBufferIsFilled(t *testing.T) {
 	for rt, n := range recipe.Inputs {
 		mill.AddInput(rt, n)
 	}
-	Tick([]*building.Building{mill}, nil, nil)
+	Tick([]*building.Building{mill}, nil)
 
 	if got, want := mill.OutputBuffer[recipe.Output], recipe.OutputAmount; got != want {
 		t.Fatalf("after InputBuffer filled: OutputBuffer[%s] = %d, want %d", recipe.Output, got, want)
@@ -76,7 +75,7 @@ func TestTick_ProductionHoldsWhenOutputBufferFull(t *testing.T) {
 	farm.AddOutput(recipe.Output, building.BufferCapacity) // pre-fill to capacity
 
 	for i := 0; i < recipe.TicksToProduce+3; i++ {
-		Tick([]*building.Building{farm}, nil, nil)
+		Tick([]*building.Building{farm}, nil)
 	}
 
 	if got := farm.OutputBuffer[recipe.Output]; got != building.BufferCapacity {
@@ -90,7 +89,7 @@ func TestTick_SkipsNonProducingBuildings(t *testing.T) {
 
 	// Should not panic and should not advance progress at all.
 	for range 10 {
-		Tick([]*building.Building{warehouse, road}, nil, nil)
+		Tick([]*building.Building{warehouse, road}, nil)
 	}
 
 	if warehouse.ProgressTicks != 0 || road.ProgressTicks != 0 {
@@ -98,29 +97,27 @@ func TestTick_SkipsNonProducingBuildings(t *testing.T) {
 	}
 }
 
-func TestPopulation_EatsWhenFed(t *testing.T) {
-	pop := NewPopulation(3, 2)
-	stock := resource.NewStockpile(100)
-	stock.Add(resource.Bread, 10)
+func TestTick_SkipsStarvingBuildings(t *testing.T) {
+	farm := &building.Building{Kind: building.Farm}
+	recipe := building.Types[building.Farm].Recipe
+	starving := map[*building.Building]bool{farm: true}
 
-	pop.Tick(stock) // tick 1: not mealtime yet
-	pop.Tick(stock) // tick 2: mealtime
-
-	if pop.Count != 3 {
-		t.Fatalf("Count = %d, want 3 (fed, no starvation)", pop.Count)
+	for i := 0; i < recipe.TicksToProduce+3; i++ {
+		Tick([]*building.Building{farm}, starving)
 	}
-	if got, want := stock.Amount(resource.Bread), 10-3; got != want {
-		t.Fatalf("Bread left = %d, want %d", got, want)
+
+	if farm.ProgressTicks != 0 {
+		t.Fatalf("ProgressTicks = %d, want 0 (starving worker, no progress)", farm.ProgressTicks)
 	}
-}
+	if got := farm.OutputBuffer[recipe.Output]; got != 0 {
+		t.Fatalf("OutputBuffer[%s] = %d, want 0 (starving worker never produced)", recipe.Output, got)
+	}
 
-func TestPopulation_StarvesWithoutBread(t *testing.T) {
-	pop := NewPopulation(3, 1)
-	stock := resource.NewStockpile(100) // no bread
-
-	pop.Tick(stock)
-
-	if pop.Count != 2 {
-		t.Fatalf("Count = %d, want 2 (lost one villager to starvation)", pop.Count)
+	delete(starving, farm)
+	for i := 0; i < recipe.TicksToProduce; i++ {
+		Tick([]*building.Building{farm}, starving)
+	}
+	if got := farm.OutputBuffer[recipe.Output]; got != recipe.OutputAmount {
+		t.Fatalf("after worker returned: OutputBuffer[%s] = %d, want %d", recipe.Output, got, recipe.OutputAmount)
 	}
 }
