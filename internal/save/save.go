@@ -34,9 +34,37 @@ type GameState struct {
 
 	Population economy.Population
 
+	// Units stores the persistent part of every unit. Current routes are
+	// intentionally rebuilt after loading, but the roster, position and hunger
+	// state stay where the player saved them.
+	Units []UnitState
+
 	CameraX    float64
 	CameraY    float64
 	CameraZoom float64
+}
+
+// UnitKind identifies a unit in a save file without coupling the save format
+// to the numeric iota values of the simulation packages.
+type UnitKind string
+
+const (
+	UnitSerf   UnitKind = "serf"
+	UnitFarmer UnitKind = "farmer"
+	UnitBaker  UnitKind = "baker"
+)
+
+// UnitState is the serializable part of a unit. HomeIndex points into the
+// GameState.Buildings slice for farmers and bakers; serfs use -1. State is
+// currently meaningful for villagers, whose route can be rebuilt after load.
+type UnitState struct {
+	Kind        UnitKind
+	X           int
+	Y           int
+	HomeIndex   int
+	HungerTicks int
+	Starving    bool
+	State       int
 }
 
 // Save writes state as indented JSON to path, creating any missing

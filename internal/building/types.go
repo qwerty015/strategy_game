@@ -28,9 +28,10 @@ var Types = map[Kind]Type{
 		Name:      "Mill",
 		Footprint: 1,
 		Recipe: Recipe{
-			Inputs:       map[resource.Type]int{resource.Wheat: 5},
+			// One unit of Wheat is milled into one unit of Flour.
+			Inputs:       map[resource.Type]int{resource.Wheat: 1},
 			Output:       resource.Flour,
-			OutputAmount: 5,
+			OutputAmount: 1,
 			// Milling is faster than growing, but remains a visible stage
 			// in the chain instead of completing instantly.
 			TicksToProduce: 48,
@@ -41,9 +42,10 @@ var Types = map[Kind]Type{
 		Name:      "Bakery",
 		Footprint: 1,
 		Recipe: Recipe{
-			Inputs:       map[resource.Type]int{resource.Flour: 5},
+			// One unit of Flour bakes into two units of Bread.
+			Inputs:       map[resource.Type]int{resource.Flour: 1},
 			Output:       resource.Bread,
-			OutputAmount: 5,
+			OutputAmount: 2,
 			// Baking takes roughly 36 seconds at normal speed.
 			TicksToProduce: 72,
 		},

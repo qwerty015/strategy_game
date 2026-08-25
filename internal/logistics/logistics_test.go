@@ -85,11 +85,11 @@ func TestController_SuppliesConsumerFromWarehouse(t *testing.T) {
 		}
 	}
 
-	if got := mill.InputBuffer[resource.Wheat]; got != 5 {
-		t.Fatalf("mill InputBuffer[Wheat] = %d, want 5 (serf should have supplied it)", got)
+	if got := mill.InputBuffer[resource.Wheat]; got != 1 {
+		t.Fatalf("mill InputBuffer[Wheat] = %d, want 1 (serf should have supplied it)", got)
 	}
-	if got := stock.Amount(resource.Wheat); got != 15 {
-		t.Fatalf("warehouse Wheat = %d, want 15 (5 handed off to the mill)", got)
+	if got := stock.Amount(resource.Wheat); got != 19 {
+		t.Fatalf("warehouse Wheat = %d, want 19 (1 handed off to the mill)", got)
 	}
 }
 
@@ -115,11 +115,11 @@ func TestController_HaulsDirectlyBetweenProducerAndConsumer(t *testing.T) {
 		}
 	}
 
-	if got := mill.InputBuffer[resource.Wheat]; got != 5 {
-		t.Fatalf("mill InputBuffer[Wheat] = %d, want 5 (hauled straight from the farm)", got)
+	if got := mill.InputBuffer[resource.Wheat]; got != 1 {
+		t.Fatalf("mill InputBuffer[Wheat] = %d, want 1 (hauled straight from the farm)", got)
 	}
-	if got := farm.OutputBuffer[resource.Wheat]; got != 0 {
-		t.Fatalf("farm OutputBuffer[Wheat] = %d, want 0 (collected)", got)
+	if got := farm.OutputBuffer[resource.Wheat]; got != 4 {
+		t.Fatalf("farm OutputBuffer[Wheat] = %d, want 4 (one unit delivered, four remain)", got)
 	}
 	if got := stock.Amount(resource.Wheat); got != 0 {
 		t.Fatalf("warehouse Wheat = %d, want 0 (never should have routed through the warehouse)", got)

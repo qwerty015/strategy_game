@@ -17,26 +17,42 @@ func FindPath(buildings []*building.Building, from, to *building.Building) ([]Po
 	if from == to {
 		return []Point{accessPoint(from)}, true
 	}
+	return findPathBetween(buildings, accessPoint(from), accessPoint(to), true)
+}
 
-	walkable := walkableSet(buildings, from, to)
-	goals := map[Point]bool{accessPoint(to): true}
+// FindPathFromPoint returns a route from an arbitrary saved unit position to
+// a building's access point. It is used when a unit was saved halfway through
+// a road trip: the unit keeps its screen position, then receives a fresh job
+// from that point instead of visually jumping back to its old building.
+func FindPathFromPoint(buildings []*building.Building, from Point, to *building.Building) ([]Point, bool) {
+	goal := accessPoint(to)
+	if from == goal {
+		return []Point{from}, true
+	}
+	return findPathBetween(buildings, from, goal, true)
+}
+
+func findPathBetween(buildings []*building.Building, start, goal Point, requireRoad bool) ([]Point, bool) {
+	walkable := roadSet(buildings)
+	walkable[start] = true
+	walkable[goal] = true
+
 	roads := roadSet(buildings)
 
 	// Breadth-first search over the walkable tile graph. visited maps
 	// each reached tile to the tile it was reached from; the root maps to
 	// itself.
 	visited := map[Point]Point{}
-	queue := []Point{accessPoint(from)}
+	queue := []Point{start}
 	for _, p := range queue {
 		visited[p] = p
 	}
 
-	var goal Point
 	found := false
 	for i := 0; i < len(queue); i++ {
 		p := queue[i]
-		if goals[p] {
-			goal, found = p, true
+		if p == goal {
+			found = true
 			break
 		}
 		for _, n := range neighbors(p) {
@@ -61,7 +77,7 @@ func FindPath(buildings []*building.Building, from, to *building.Building) ([]Po
 		cur = parent
 	}
 	reverse(path)
-	if !containsRoad(path, roads) {
+	if requireRoad && !containsRoad(path, roads) {
 		return nil, false
 	}
 	return path, true
@@ -70,20 +86,6 @@ func FindPath(buildings []*building.Building, from, to *building.Building) ([]Po
 func accessPoint(b *building.Building) Point {
 	p := b.AccessPoint()
 	return Point{X: p.X, Y: p.Y}
-}
-
-// walkableSet is every tile a serf may step on for a trip between from and
-// to: all Road tiles, plus the access points of the two endpoint buildings.
-func walkableSet(buildings []*building.Building, from, to *building.Building) map[Point]bool {
-	set := make(map[Point]bool)
-	for _, b := range buildings {
-		if b.Kind == building.Road {
-			set[Point{b.X, b.Y}] = true
-		}
-	}
-	set[accessPoint(from)] = true
-	set[accessPoint(to)] = true
-	return set
 }
 
 func roadSet(buildings []*building.Building) map[Point]bool {

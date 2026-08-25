@@ -184,6 +184,19 @@ func (c *Controller) Hire() *Serf {
 	return s
 }
 
+// RestoreSerf adds a serf at the position stored in a save file. Its active
+// haul is deliberately rebuilt on the next tick, but hunger and the visible
+// position survive the load. atBuilding stays nil until the first restored
+// route reaches a building; routing uses X/Y directly in the meantime.
+func (c *Controller) RestoreSerf(x, y, hungerTicks int, starving bool) *Serf {
+	if hungerTicks < 0 {
+		hungerTicks = 0
+	}
+	s := &Serf{X: x, Y: y, ticksSinceMeal: hungerTicks, Starving: starving}
+	c.Serfs = append(c.Serfs, s)
+	return s
+}
+
 // CancelAllJobs safely interrupts every active route after the map changes
 // (for example, when a road or building is deleted). A serf that already
 // picked up a load returns it to the shared stockpile, then all serfs are
@@ -240,7 +253,7 @@ func (c *Controller) tryStartMeal(s *Serf, tavern *building.Building, buildings 
 		s.Starving = true
 		return false
 	}
-	path, ok := pathfind.FindPath(buildings, s.atBuilding, tavern)
+	path, ok := pathfind.FindPathFromPoint(buildings, pathfind.Point{X: s.X, Y: s.Y}, tavern)
 	if !ok {
 		s.Starving = true
 		return false
@@ -398,7 +411,7 @@ func findSupplyJob(buildings []*building.Building, warehouse *building.Building,
 }
 
 func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t resource.Type, amount int, buildings []*building.Building) bool {
-	path, ok := pathfind.FindPath(buildings, s.atBuilding, pickup)
+	path, ok := pathfind.FindPathFromPoint(buildings, pathfind.Point{X: s.X, Y: s.Y}, pickup)
 	if !ok {
 		return false // not reachable from here right now; try again next tick
 	}

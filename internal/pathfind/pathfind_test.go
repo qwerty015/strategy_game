@@ -74,3 +74,19 @@ func TestFindPath_AdjacentBuildingsNeedRoad(t *testing.T) {
 		t.Fatal("FindPath() between adjacent buildings without Road = found, want not found")
 	}
 }
+
+func TestFindPathFromPoint_StartsAtSavedRoadTile(t *testing.T) {
+	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 0}
+	buildings := []*building.Building{tavern}
+	for x := 1; x <= 4; x++ {
+		buildings = append(buildings, &building.Building{Kind: building.Road, X: x, Y: 0})
+	}
+
+	path, ok := FindPathFromPoint(buildings, Point{X: 2, Y: 0}, tavern)
+	if !ok {
+		t.Fatal("FindPathFromPoint() = not found, want a path from the saved road tile")
+	}
+	if first := path[0]; first != (Point{X: 2, Y: 0}) {
+		t.Fatalf("path starts at %v, want saved point (2,0)", first)
+	}
+}

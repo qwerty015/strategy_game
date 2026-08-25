@@ -410,6 +410,7 @@ func (g *Game) handleSaveLoad() {
 			Buildings:  dereferenceBuildings(g.buildings),
 			Stockpile:  *g.stock,
 			Population: *g.pop,
+			Units:      g.serializeUnits(),
 			CameraX:    g.camera.X,
 			CameraY:    g.camera.Y,
 			CameraZoom: g.camera.Scale,
@@ -458,19 +459,32 @@ func (g *Game) handleSaveLoad() {
 		g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
 		g.selection.Clear()
 
-		// Serf/villager positions and jobs aren't persisted (see
-		// save.GameState docs) -- respawn a fresh crew instead, one
-		// villager per Farm/Bakery that was actually saved.
-		g.logi = logistics.NewController(warehouse, startingSerfs)
+		// Jobs are rebuilt from the saved positions. The roster itself is
+		// restored, so hiring extra serfs or saving a worker halfway to the
+		// Tavern no longer silently resets the town.
+		g.logi = logistics.NewController(warehouse, 0)
 		for _, b := range buildings {
 			if b.Kind == building.Warehouse && b != warehouse {
 				g.logi.AddWarehouse(b)
 			}
 		}
 		g.vills = villagers.NewController()
-		for _, b := range buildings {
-			g.spawnVillagerFor(b)
+		if len(state.Units) == 0 {
+			// Saves from before unit persistence did not contain a roster.
+			// Keep those saves playable with the old sensible defaults.
+			g.logi = logistics.NewController(warehouse, startingSerfs)
+			for _, b := range buildings {
+				if b.Kind == building.Warehouse && b != warehouse {
+					g.logi.AddWarehouse(b)
+				}
+			}
+			for _, b := range buildings {
+				g.spawnVillagerFor(b)
+			}
+		} else {
+			g.restoreUnits(state.Units, buildings)
 		}
+		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers)
 
 		g.statusMsg = i18n.T().Loaded
 	}
@@ -491,6 +505,68 @@ func dereferenceBuildings(in []*building.Building) []building.Building {
 		out[i] = *b
 	}
 	return out
+}
+
+func (g *Game) serializeUnits() []save.UnitState {
+	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers))
+	for _, s := range g.logi.Serfs {
+		units = append(units, save.UnitState{
+			Kind:        save.UnitSerf,
+			X:           s.X,
+			Y:           s.Y,
+			HomeIndex:   -1,
+			HungerTicks: s.HungerTicks(),
+			Starving:    s.Starving,
+		})
+	}
+	for _, v := range g.vills.Villagers {
+		kind := save.UnitFarmer
+		if v.Profession == villagers.Baker {
+			kind = save.UnitBaker
+		}
+		units = append(units, save.UnitState{
+			Kind:        kind,
+			X:           v.X,
+			Y:           v.Y,
+			HomeIndex:   indexOfBuilding(g.buildings, v.HomeBuilding()),
+			HungerTicks: v.HungerTicks(),
+			Starving:    v.Starving,
+			State:       int(v.State()),
+		})
+	}
+	return units
+}
+
+func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Building) {
+	for _, state := range states {
+		switch state.Kind {
+		case save.UnitSerf:
+			g.logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving)
+		case save.UnitFarmer, save.UnitBaker:
+			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) {
+				continue
+			}
+			home := buildings[state.HomeIndex]
+			profession := villagers.Farmer
+			if state.Kind == save.UnitBaker {
+				profession = villagers.Baker
+			}
+			if (profession == villagers.Farmer && home.Kind != building.Farm) ||
+				(profession == villagers.Baker && home.Kind != building.Bakery) {
+				continue
+			}
+			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings)
+		}
+	}
+}
+
+func indexOfBuilding(buildings []*building.Building, target *building.Building) int {
+	for i, b := range buildings {
+		if b == target {
+			return i
+		}
+	}
+	return -1
 }
 
 func referenceBuildings(in []building.Building) []*building.Building {

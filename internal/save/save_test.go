@@ -30,8 +30,12 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		},
 		Stockpile:  *stock,
 		Population: economy.Population{Count: 4},
-		CameraX:    128.5,
-		CameraY:    64,
+		Units: []UnitState{
+			{Kind: UnitSerf, X: 7, Y: 8, HomeIndex: -1, HungerTicks: 12, Starving: true},
+			{Kind: UnitFarmer, X: 4, Y: 5, HomeIndex: 0, HungerTicks: 21, State: 0},
+		},
+		CameraX: 128.5,
+		CameraY: 64,
 	}
 
 	path := filepath.Join(t.TempDir(), "slot1.json")

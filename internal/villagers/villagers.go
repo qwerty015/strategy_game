@@ -144,6 +144,38 @@ func (c *Controller) Spawn(profession Profession, home *building.Building) {
 	c.Villagers = append(c.Villagers, NewVillager(profession, home))
 }
 
+// RestoreVillager recreates a worker from a save snapshot. Unlike a new
+// Spawn, it keeps the saved map position and hunger state. If the worker was
+// walking to eat when saved, its route is rebuilt from that exact position;
+// the old tile-by-tile path itself is not part of the save format.
+func (c *Controller) RestoreVillager(profession Profession, home *building.Building, x, y, hungerTicks int, starving bool, state State, buildings []*building.Building) *Villager {
+	v := NewVillager(profession, home)
+	v.X, v.Y = x, y
+	if hungerTicks < 0 {
+		hungerTicks = 0
+	}
+	v.ticksSinceMeal = hungerTicks
+	v.Starving = starving
+
+	switch state {
+	case VillagerToTavern:
+		if tavern := findTavern(buildings); tavern != nil {
+			if path, ok := pathfind.FindPathFromPoint(buildings, pathfind.Point{X: x, Y: y}, tavern); ok {
+				v.path, v.pathIdx, v.tileTicks = path, 0, 0
+				v.ph = toTavern
+			}
+		}
+	case VillagerToHome:
+		if path, ok := pathfind.FindPathFromPoint(buildings, pathfind.Point{X: x, Y: y}, home); ok {
+			v.path, v.pathIdx, v.tileTicks = path, 0, 0
+			v.ph = toHome
+		}
+	}
+
+	c.Villagers = append(c.Villagers, v)
+	return v
+}
+
 // RemoveHome removes the worker assigned to a building that was deleted.
 // Workers are tied to their workplace in the current economy, so keeping a
 // villager with a dangling Home pointer would make it continue working at a

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"embed"
 	"image"
+	"image/color"
 	"image/draw"
 	"image/png"
 	"math"
@@ -33,12 +34,13 @@ var (
 	Road    = mustLoad("generated/terrain_road_stone.png") // cobblestone path
 
 	// MillFrames are flattened once on the CPU from the mill body and three
-	// blade positions. The render loop only switches the finished images, so
-	// rotating the sails does not require two layered draws every frame.
+	// blade positions. The base is the older, more detailed mill sprite; its
+	// baked-in sail pixels are masked before the new animated sail layer is
+	// attached.
 	MillFrames = [3]*ebiten.Image{
-		mustCompositeScaled("tiles/mill_base.png", "tiles/mill_blades1.png", 0.72),
-		mustCompositeScaled("tiles/mill_base.png", "tiles/mill_blades2.png", 0.72),
-		mustCompositeScaled("tiles/mill_base.png", "tiles/mill_blades3.png", 0.72),
+		mustCompositeLegacyMill("tiles/mill_blades1.png"),
+		mustCompositeLegacyMill("tiles/mill_blades2.png"),
+		mustCompositeLegacyMill("tiles/mill_blades3.png"),
 	}
 
 	Bakery    = mustLoad("generated/building_bakery.png")
@@ -123,6 +125,81 @@ func mustCompositeScaled(base, overlay string, scale float64) *ebiten.Image {
 	baseImg := mustDecode(base)
 	overlayImg := mustDecode(overlay)
 	return compositeImages(baseImg, scaleImageNearest(overlayImg, scale))
+}
+
+// mustCompositeLegacyMill keeps the detailed generated mill body that was
+// used before the animation pass, but replaces its baked static sails with
+// one of the separate rotating sail frames. The old sprite did not expose a
+// clean body layer, so a narrow diagonal colour/shape mask removes only the
+// wooden arms while leaving the roof, stone tower and door intact.
+func mustCompositeLegacyMill(overlay string) *ebiten.Image {
+	base := legacyMillBody()
+	sails := scaleImageNearestAt(mustDecode(overlay), 0.55, 31, 24)
+	return compositeImages(base, sails)
+}
+
+func legacyMillBody() image.Image {
+	src := mustDecode("generated/building_mill.png")
+	b := src.Bounds()
+	out := image.NewNRGBA(b)
+	draw.Draw(out, b, src, b.Min, draw.Src)
+
+	const centerX, centerY = 31, 24
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := out.At(x, y).RGBA()
+			if a < 0x8000 {
+				continue
+			}
+			dx, dy := x-centerX, y-centerY
+			diagonalDistance := minInt(absInt(dy-dx), absInt(dy+dx))
+			distance := dx*dx + dy*dy
+			if diagonalDistance <= 3 && distance > 70 && y < 43 && isWoodSail(r>>8, g>>8, bl>>8) {
+				out.Set(x, y, color.Transparent)
+			}
+		}
+	}
+	return out
+}
+
+func scaleImageNearestAt(src image.Image, scale float64, centerX, centerY int) image.Image {
+	b := src.Bounds()
+	out := image.NewNRGBA(b)
+	if scale <= 0 {
+		return out
+	}
+	sourceCX := float64(b.Min.X+b.Max.X-1) / 2
+	sourceCY := float64(b.Min.Y+b.Max.Y-1) / 2
+	destCX, destCY := float64(centerX), float64(centerY)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			srcX := int(math.Round((float64(x)-destCX)/scale + sourceCX))
+			srcY := int(math.Round((float64(y)-destCY)/scale + sourceCY))
+			if srcX < b.Min.X || srcX >= b.Max.X || srcY < b.Min.Y || srcY >= b.Max.Y {
+				continue
+			}
+			out.Set(x, y, src.At(srcX, srcY))
+		}
+	}
+	return out
+}
+
+func isWoodSail(r, g, b uint32) bool {
+	return r > 130 && g > 85 && b > 35 && r > g+15 && g > b+20
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func scaleImageNearest(src image.Image, scale float64) image.Image {
