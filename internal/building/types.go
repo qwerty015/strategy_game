@@ -44,4 +44,18 @@ var Types = map[Kind]Type{
 			TicksToProduce: 3,
 		},
 	},
+	Warehouse: {
+		Kind:      Warehouse,
+		Name:      "Warehouse",
+		Footprint: 2,
+		// No Recipe: it produces nothing, it's the logistics hub serfs
+		// move goods through. See Building's doc comment.
+	},
+	Road: {
+		Kind:      Road,
+		Name:      "Road",
+		Footprint: 1,
+		// No AllowedTerrain restriction: a road can be laid on any
+		// buildable tile.
+	},
 }

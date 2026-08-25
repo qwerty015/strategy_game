@@ -7,37 +7,43 @@ import (
 	"strategy_game/internal/resource"
 )
 
-// Simulator advances the economy on a fixed simulation step, independent
-// of the render framerate, so production speed doesn't drift with FPS.
+// Simulator paces fixed simulation ticks against the render framerate,
+// so production speed doesn't drift with FPS.
 type Simulator struct {
 	FramesPerTick int // render frames per simulation tick
 	frameAccum    int
 }
 
-// NewSimulator creates a Simulator that runs one simulation tick every
-// framesPerTick calls to Update.
+// NewSimulator creates a Simulator that allows one simulation tick every
+// framesPerTick calls to ShouldTick.
 func NewSimulator(framesPerTick int) *Simulator {
 	return &Simulator{FramesPerTick: framesPerTick}
 }
 
-// Update should be called once per render frame. It runs zero or one
-// simulation tick depending on accumulated frames.
-func (s *Simulator) Update(buildings []*building.Building, stock *resource.Stockpile, pop *Population) {
+// ShouldTick should be called once per render frame. It returns true at
+// most once every FramesPerTick frames, telling the caller to run one
+// simulation step (economy.Tick, logistics.Controller.Tick, ...).
+func (s *Simulator) ShouldTick() bool {
 	s.frameAccum++
 	if s.frameAccum < s.FramesPerTick {
-		return
+		return false
 	}
 	s.frameAccum = 0
-	Tick(buildings, stock, pop)
+	return true
 }
 
-// Tick runs exactly one simulation step: every building advances its
-// production progress and, once a cycle completes and its inputs are
-// available, consumes them and deposits its output into the shared
-// stockpile. The population then eats, if it's mealtime.
-func Tick(buildings []*building.Building, stock *resource.Stockpile, pop *Population) {
+// Tick runs exactly one simulation step for every building's production.
+// A building reads its recipe's inputs from its own InputBuffer and
+// writes its output to its own OutputBuffer -- it never touches the
+// shared warehouse stockpile directly, that's what serfs are for (see
+// package logistics). Buildings with no Recipe (Warehouse, Road) are
+// skipped. The population then eats, if it's mealtime.
+func Tick(buildings []*building.Building, pop *Population, stock *resource.Stockpile) {
 	for _, b := range buildings {
 		recipe := building.Types[b.Kind].Recipe
+		if recipe.TicksToProduce <= 0 {
+			continue
+		}
 
 		if b.ProgressTicks < recipe.TicksToProduce {
 			b.ProgressTicks++
@@ -46,16 +52,21 @@ func Tick(buildings []*building.Building, stock *resource.Stockpile, pop *Popula
 			continue
 		}
 
-		// Production cycle complete; hold here until inputs are
-		// available rather than restarting the timer, so a building
-		// starved of raw materials produces the instant they arrive.
-		if !hasAllInputs(stock, recipe.Inputs) {
+		// Production cycle complete; hold here (rather than restart the
+		// timer) until inputs are available and there's room for the
+		// output, so a building starved of raw materials or blocked by
+		// a full OutputBuffer produces the instant a serf clears things.
+		if !hasAllInputs(b, recipe.Inputs) {
 			continue
 		}
-		for t, n := range recipe.Inputs {
-			stock.Remove(t, n)
+		if b.OutputBuffer[recipe.Output]+recipe.OutputAmount > building.BufferCapacity {
+			continue
 		}
-		stock.Add(recipe.Output, recipe.OutputAmount)
+
+		for t, n := range recipe.Inputs {
+			b.TakeInput(t, n)
+		}
+		b.AddOutput(recipe.Output, recipe.OutputAmount)
 		b.ProgressTicks = 0
 	}
 
@@ -64,9 +75,9 @@ func Tick(buildings []*building.Building, stock *resource.Stockpile, pop *Popula
 	}
 }
 
-func hasAllInputs(stock *resource.Stockpile, inputs map[resource.Type]int) bool {
+func hasAllInputs(b *building.Building, inputs map[resource.Type]int) bool {
 	for t, n := range inputs {
-		if !stock.Has(t, n) {
+		if b.InputBuffer[t] < n {
 			return false
 		}
 	}

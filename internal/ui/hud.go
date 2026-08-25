@@ -10,6 +10,7 @@ import (
 
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
+	"strategy_game/internal/i18n"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
 )
@@ -18,9 +19,13 @@ import (
 // the top-left of the screen. Placeholder text HUD -- swappable for real
 // art later without touching game logic.
 func DrawResourceBar(screen *ebiten.Image, stock *resource.Stockpile, pop *economy.Population) {
+	t := i18n.T()
 	line := fmt.Sprintf(
-		"Population: %d | Wheat: %d  Flour: %d  Bread: %d",
-		pop.Count, stock.Amount(resource.Wheat), stock.Amount(resource.Flour), stock.Amount(resource.Bread),
+		"%s: %d | %s: %d  %s: %d  %s: %d",
+		t.Population, pop.Count,
+		t.ResourceName[resource.Wheat], stock.Amount(resource.Wheat),
+		t.ResourceName[resource.Flour], stock.Amount(resource.Flour),
+		t.ResourceName[resource.Bread], stock.Amount(resource.Bread),
 	)
 	ebitenutil.DebugPrintAt(screen, line, 8, 8)
 }
@@ -28,12 +33,13 @@ func DrawResourceBar(screen *ebiten.Image, stock *resource.Stockpile, pop *econo
 // DrawPalette prints the building selection hotkeys, highlighting the
 // currently selected one.
 func DrawPalette(screen *ebiten.Image, p *Palette) {
+	names := i18n.T().BuildingName
 	for i, kind := range p.Kinds {
 		marker := "  "
 		if i == p.Selected {
 			marker = "> "
 		}
-		line := fmt.Sprintf("%s[%d] %s", marker, i+1, building.Types[kind].Name)
+		line := fmt.Sprintf("%s[%d] %s", marker, i+1, names[kind])
 		ebitenutil.DebugPrintAt(screen, line, 8, 28+i*16)
 	}
 }
