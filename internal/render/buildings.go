@@ -52,21 +52,32 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // with tilled field on the rest of it -- the field's color sweeps from
 // bare earth to golden wheat as the crop matures (see AGENTS.md), so the
 // field itself shows the growth the player asked to be able to see. A
-// Road is one path tile. Mill/Bakery/Warehouse/Tavern each stand on
-// their single tile taller than the tile itself (see buildingHeight),
-// with a production-progress bar underneath. MillFrames contains three
-// compact sail positions, switched periodically to animate the windmill.
+// Roads are drawn in a dedicated first pass, so a road can never cover the
+// lower part of a building just because it appears later in the save/build
+// slice. Mill/Bakery/Warehouse/Tavern each stand on their single tile taller
+// than the tile itself (see buildingHeight), with a production-progress bar
+// underneath. MillFrames contains three compact sail positions, switched
+// periodically to animate the windmill.
 func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
 	tilePixels := cam.TilePixels()
+	// Ground is drawn before this function. Roads are the bottom gameplay
+	// layer, so render every road before any tree, field or standing building.
 	for _, b := range buildings {
+		if b.Kind != building.Road {
+			continue
+		}
+		sx, sy := cam.TileToScreen(b.X, b.Y)
+		drawStandingAtScale(screen, assets.Road, sx, sy, 1, tilePixels)
+	}
+
+	for _, b := range buildings {
+		if b.Kind == building.Road {
+			continue
+		}
 		bt := building.Types[b.Kind]
 		sx, sy := cam.TileToScreen(b.X, b.Y)
 
 		switch b.Kind {
-		case building.Road:
-			drawStandingAtScale(screen, assets.Road, sx, sy, 1, tilePixels)
-			continue
-
 		case building.Tree:
 			drawTree(screen, sx, sy, tilePixels, b.GrowthStage())
 			continue
