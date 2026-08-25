@@ -28,6 +28,37 @@ type Catalog struct {
 	ResourceName map[resource.Type]string
 	BuildingName map[building.Kind]string
 
+	BuildMenuTitle string
+	InspectorTitle string
+	InspectorHint  string
+	SpeedTitle     string
+	SpeedPaused    string
+	SpeedHalf      string
+	SpeedNormal    string
+	SpeedDouble    string
+	SpeedQuadruple string
+
+	StateLabel      string
+	CargoLabel      string
+	RouteLabel      string
+	HungerLabel     string
+	ProfessionLabel string
+	HomeLabel       string
+	BuildingLabel   string
+	InputLabel      string
+	OutputLabel     string
+	NoCargo         string
+	NoRoute         string
+	StateIdle       string
+	StateWorking    string
+	StateWalking    string
+	StateDelivering string
+	StateEating     string
+	StateStarving   string
+	UnitSerf        string
+	UnitFarmer      string
+	UnitBaker       string
+
 	Help                  string
 	CantBuildHere         string
 	SaveFailedPrefix      string

@@ -61,6 +61,31 @@ type Villager struct {
 	Starving bool
 }
 
+// State is the public, read-only activity state used by the inspector and
+// render layer. The movement bookkeeping itself remains private here.
+type State int
+
+const (
+	VillagerWorking State = iota
+	VillagerToTavern
+	VillagerToHome
+)
+
+// State reports whether the villager is working or walking to eat.
+func (v *Villager) State() State {
+	return State(v.ph)
+}
+
+// HungerTicks returns simulation ticks since the villager's last meal.
+func (v *Villager) HungerTicks() int {
+	return v.ticksSinceMeal
+}
+
+// HomeBuilding returns the building where this villager works.
+func (v *Villager) HomeBuilding() *building.Building {
+	return v.Home
+}
+
 // NewVillager creates a Villager standing at home, working.
 func NewVillager(profession Profession, home *building.Building) *Villager {
 	return &Villager{Profession: profession, Home: home, X: home.X, Y: home.Y}

@@ -11,25 +11,79 @@ import (
 // so production speed doesn't drift with FPS.
 type Simulator struct {
 	FramesPerTick int // render frames per simulation tick
-	frameAccum    int
+	frameAccum    float64
+	speed         Speed
+}
+
+// Speed is the simulation speed selected by the player. Rendering and input
+// continue while the simulation is paused.
+type Speed int
+
+const (
+	Paused Speed = iota
+	Half
+	Normal
+	Double
+	Quadruple
+)
+
+func (s Speed) multiplier() float64 {
+	switch s {
+	case Paused:
+		return 0
+	case Half:
+		return 0.5
+	case Double:
+		return 2
+	case Quadruple:
+		return 4
+	default:
+		return 1
+	}
 }
 
 // NewSimulator creates a Simulator that allows one simulation tick every
 // framesPerTick calls to ShouldTick.
 func NewSimulator(framesPerTick int) *Simulator {
-	return &Simulator{FramesPerTick: framesPerTick}
+	return &Simulator{FramesPerTick: framesPerTick, speed: Normal}
 }
 
-// ShouldTick should be called once per render frame. It returns true at
-// most once every FramesPerTick frames, telling the caller to run one
-// simulation step (economy.Tick, logistics.Controller.Tick, ...).
-func (s *Simulator) ShouldTick() bool {
-	s.frameAccum++
-	if s.frameAccum < s.FramesPerTick {
-		return false
+// SetSpeed changes the simulation speed. Invalid values are treated as the
+// normal speed so a corrupted UI state cannot stop the simulation forever.
+func (s *Simulator) SetSpeed(speed Speed) {
+	if speed < Paused || speed > Quadruple {
+		speed = Normal
 	}
-	s.frameAccum = 0
-	return true
+	s.speed = speed
+}
+
+// Speed reports the currently selected simulation speed.
+func (s *Simulator) Speed() Speed {
+	return s.speed
+}
+
+// Advance returns how many fixed simulation ticks should run during this
+// render frame. At high speeds it may return more than one; every returned
+// tick must be passed through economy, logistics, and villagers together.
+func (s *Simulator) Advance() int {
+	if s.FramesPerTick <= 0 || s.speed == Paused {
+		return 0
+	}
+
+	s.frameAccum += s.speed.multiplier()
+	ticks := 0
+	for s.frameAccum >= float64(s.FramesPerTick) {
+		s.frameAccum -= float64(s.FramesPerTick)
+		ticks++
+	}
+	return ticks
+}
+
+// ShouldTick is the backwards-compatible single-tick view of Advance. New
+// callers should use Advance so high speed settings can run more than one
+// fixed simulation tick during a render frame.
+func (s *Simulator) ShouldTick() bool {
+	return s.Advance() > 0
 }
 
 // Tick runs exactly one simulation step for every building's production.

@@ -70,6 +70,54 @@ type Serf struct {
 	Starving bool
 }
 
+// State is the public, read-only activity state used by the inspector and
+// render layer. The movement bookkeeping itself remains private to this
+// package.
+type State int
+
+const (
+	SerfIdle State = iota
+	SerfToPickup
+	SerfToDropoff
+)
+
+// State reports what the serf is doing right now.
+func (s *Serf) State() State {
+	return State(s.ph)
+}
+
+// Eating reports whether the current trip is a meal trip to the Tavern.
+func (s *Serf) Eating() bool {
+	return s.eating
+}
+
+// AtBuilding returns the building where the serf is currently stationed.
+func (s *Serf) AtBuilding() *building.Building {
+	return s.atBuilding
+}
+
+// PickupBuilding returns the current job's pickup building, if any.
+func (s *Serf) PickupBuilding() *building.Building {
+	return s.pickup
+}
+
+// DropoffBuilding returns the current job's destination, if any.
+func (s *Serf) DropoffBuilding() *building.Building {
+	return s.dropoff
+}
+
+// Cargo returns the resource and amount currently assigned to the serf. The
+// amount is also populated before pickup, so the inspector can show planned
+// jobs as well as cargo already in hand.
+func (s *Serf) Cargo() (resource.Type, int) {
+	return s.resource, s.amount
+}
+
+// HungerTicks returns simulation ticks since the serf's last meal.
+func (s *Serf) HungerTicks() int {
+	return s.ticksSinceMeal
+}
+
 // Busy reports whether the serf is currently walking a job, for
 // rendering (e.g. a different color for working vs. idle serfs).
 func (s *Serf) Busy() bool {

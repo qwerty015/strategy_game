@@ -18,6 +18,12 @@ import (
 // the top-left of the screen. Placeholder text HUD -- swappable for real
 // art later without touching game logic.
 func DrawResourceBar(screen *ebiten.Image, stock *resource.Stockpile, pop *economy.Population) {
+	DrawResourceBarAt(screen, stock, pop, 8, 8)
+}
+
+// DrawResourceBarAt draws the resource strip at a caller-selected position,
+// which lets the game keep it inside the map viewport beside the side panels.
+func DrawResourceBarAt(screen *ebiten.Image, stock *resource.Stockpile, pop *economy.Population, x, y float64) {
 	t := i18n.T()
 	line := fmt.Sprintf(
 		"%s: %d | %s: %d  %s: %d  %s: %d",
@@ -26,7 +32,7 @@ func DrawResourceBar(screen *ebiten.Image, stock *resource.Stockpile, pop *econo
 		t.ResourceName[resource.Flour], stock.Amount(resource.Flour),
 		t.ResourceName[resource.Bread], stock.Amount(resource.Bread),
 	)
-	DrawText(screen, line, 8, 8)
+	DrawText(screen, line, x, y)
 }
 
 // DrawPalette prints the building selection hotkeys, highlighting the
