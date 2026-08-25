@@ -23,8 +23,9 @@ const (
 
 const (
 	// HungerInterval is how many simulation ticks a villager can go
-	// between meals before heading to the Tavern.
-	HungerInterval = 40
+	// between meals before heading to the Tavern. At normal speed this
+	// is about 90 seconds, so eating does not dominate the work cycle.
+	HungerInterval = 180
 
 	// TicksPerTile is how many simulation ticks it takes a villager to
 	// cross one tile of road, walking to/from the Tavern.

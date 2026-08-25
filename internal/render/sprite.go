@@ -18,7 +18,11 @@ import (
 // different images -- e.g. a building base and an overlay -- draws them
 // perfectly aligned with no extra offset math.
 func drawStanding(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall float64) {
-	drawStandingTinted(screen, img, sx, sy, tilesTall, color.White)
+	drawStandingScaled(screen, img, sx, sy, tilesTall, TileSize, color.White)
+}
+
+func drawStandingAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall, tilePixels float64) {
+	drawStandingScaled(screen, img, sx, sy, tilesTall, tilePixels, color.White)
 }
 
 // unitBob returns a four-step one-pixel gait offset. It is intentionally
@@ -39,15 +43,23 @@ func unitBob() float64 {
 // sprite -- used to sweep a Farm's fertile tiles from bare soil to
 // golden wheat as its crop matures (see render/buildings.go).
 func drawStandingTinted(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall float64, clr color.Color) {
+	drawStandingScaled(screen, img, sx, sy, tilesTall, TileSize, clr)
+}
+
+func drawStandingTintedAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall, tilePixels float64, clr color.Color) {
+	drawStandingScaled(screen, img, sx, sy, tilesTall, tilePixels, clr)
+}
+
+func drawStandingScaled(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall, tilePixels float64, clr color.Color) {
 	b := img.Bounds()
 	native := float64(b.Dy())
-	scale := (tilesTall * TileSize) / native
+	scale := (tilesTall * tilePixels) / native
 	drawnW := float64(b.Dx()) * scale
 	drawnH := native * scale
 
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Scale(scale, scale)
-	op.GeoM.Translate(sx+TileSize/2-drawnW/2, sy+TileSize-drawnH)
+	op.GeoM.Translate(sx+tilePixels/2-drawnW/2, sy+tilePixels-drawnH)
 	op.ColorScale.ScaleWithColor(clr)
 	// The zero-value CompositeMode is CompositeModeCustom (not
 	// SourceOver!) with a zero-value Blend, which does NOT behave like

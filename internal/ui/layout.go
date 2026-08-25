@@ -18,12 +18,53 @@ type Layout struct {
 }
 
 func NewLayout(width, height int) Layout {
+	left := width / 5
+	if left < 180 {
+		left = 180
+	}
+	if left > 240 {
+		left = 240
+	}
+	right := width / 4
+	if right < 220 {
+		right = 220
+	}
+	if right > 300 {
+		right = 300
+	}
+	// Keep a usable map strip even in a narrow resizable window. The two
+	// side panels remain attached to the actual edges; only their widths
+	// shrink when there is no room for the preferred proportions.
+	if left+right > width-160 {
+		right = width - left - 160
+		if right < 160 {
+			right = 160
+			left = width - right - 160
+		}
+		if left < 150 {
+			left = 150
+		}
+	}
+	if left+right > width {
+		left = width / 2
+		right = width - left
+	}
+	bottom := height / 9
+	if bottom < 64 {
+		bottom = 64
+	}
+	if bottom > 84 {
+		bottom = 84
+	}
+	if bottom > height {
+		bottom = height
+	}
 	return Layout{
 		Width:        width,
 		Height:       height,
-		LeftWidth:    220,
-		RightWidth:   260,
-		BottomHeight: 64,
+		LeftWidth:    left,
+		RightWidth:   right,
+		BottomHeight: bottom,
 	}
 }
 

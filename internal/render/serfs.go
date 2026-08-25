@@ -22,6 +22,7 @@ const serfHeight = 0.85
 // the frame-array hook in assets.Serf (the current generated pass has one
 // consistent pose); an idle one is dimmed.
 func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
+	tilePixels := cam.TilePixels()
 	for _, s := range serfs {
 		sx, sy := cam.TileToScreen(s.X, s.Y)
 
@@ -38,7 +39,7 @@ func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 				tint = color.White
 			}
 		}
-		drawStandingTinted(screen, assets.Serf[frame], sx, sy+bob, serfHeight, tint)
+		drawStandingTintedAtScale(screen, assets.Serf[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint)
 
 		// A tiny resource badge makes the logistics simulation readable on the
 		// map itself: the player can see that this is a loaded serf before
@@ -46,7 +47,8 @@ func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 		// not text, so it remains legible at the game's small tile scale.
 		cargo, amount := s.Cargo()
 		if amount > 0 {
-			vector.FillRect(screen, float32(sx+17), float32(sy+3+bob), 5, 5, cargoColor(cargo), false)
+			badge := 5 * tilePixels / TileSize
+			vector.FillRect(screen, float32(sx+17*tilePixels/TileSize), float32(sy+(3+bob)*tilePixels/TileSize), float32(badge), float32(badge), cargoColor(cargo), false)
 		}
 	}
 }

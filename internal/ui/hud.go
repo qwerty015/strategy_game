@@ -60,7 +60,7 @@ func DrawPlacementPreview(screen *ebiten.Image, cam *render.Camera, kind buildin
 
 	footprint := building.Types[kind].Footprint
 	sx, sy := cam.TileToScreen(tx, ty)
-	size := float32(footprint * render.TileSize)
+	size := float32(float64(footprint) * cam.TilePixels())
 	vector.FillRect(screen, float32(sx), float32(sy), size, size, c, false)
 	accessX := tx + building.Types[kind].AccessX
 	accessY := ty + building.Types[kind].AccessY

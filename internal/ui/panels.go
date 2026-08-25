@@ -13,6 +13,7 @@ import (
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/render"
+	"strategy_game/internal/resource"
 	"strategy_game/internal/villagers"
 )
 
@@ -57,7 +58,7 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette) {
 // DrawInspectorPanel renders the currently selected object. It reads only
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -67,7 +68,7 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 
 	switch selection.Kind {
 	case SelectionBuilding:
-		drawBuildingInspector(screen, r.Min.X+18, 62, selection.Building, connected)
+		drawBuildingInspector(screen, r.Min.X+18, 62, selection.Building, connected, stock)
 	case SelectionSerf:
 		drawSerfInspector(screen, r.Min.X+18, 62, selection.Serf)
 	case SelectionVillager:
@@ -75,28 +76,65 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	}
 }
 
-func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool) {
+func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool, stock *resource.Stockpile) {
 	t := i18n.T()
 	bt := building.Types[b.Kind]
 	DrawText(screen, t.BuildingName[b.Kind], float64(x), float64(y))
 	y += 24
+	if b.Kind == building.Tree {
+		DrawText(screen, fmt.Sprintf("%s: %d%%", t.GrowthLabel, int(b.GrowthProgress()*100)), float64(x), float64(y))
+		y += 20
+		DrawText(screen, t.IndestructibleLabel, float64(x), float64(y))
+		return
+	}
+	if b.Kind == building.Warehouse && stock != nil {
+		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		y += 20
+		for _, rt := range resource.AllTypes() {
+			DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], stock.Amount(rt), stock.Capacity), float64(x), float64(y))
+			y += 18
+		}
+	}
 	if bt.Recipe.TicksToProduce > 0 {
 		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.StateLabel, b.ProgressTicks, bt.Recipe.TicksToProduce), float64(x), float64(y))
 		y += 20
 	}
-	if len(bt.Recipe.Inputs) > 0 {
-		DrawText(screen, fmt.Sprintf("%s: %d", t.InputLabel, bufferTotal(b.InputBuffer)), float64(x), float64(y))
-		y += 20
+	inputTypes := recipeInputTypes(bt)
+	if len(bt.AcceptedResources) > 0 {
+		inputTypes = bt.AcceptedResources
+	}
+	if len(inputTypes) > 0 {
+		DrawText(screen, t.InputLabel+":", float64(x), float64(y))
+		y += 18
+		for _, rt := range inputTypes {
+			DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity), float64(x+8), float64(y))
+			y += 18
+		}
 	}
 	if bt.Recipe.TicksToProduce > 0 {
-		DrawText(screen, fmt.Sprintf("%s: %d", t.OutputLabel, bufferTotal(b.OutputBuffer)), float64(x), float64(y))
-		y += 20
+		DrawText(screen, t.OutputLabel+":", float64(x), float64(y))
+		y += 18
+		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[bt.Recipe.Output], b.OutputBuffer[bt.Recipe.Output], building.BufferCapacity), float64(x+8), float64(y))
+		y += 18
 	}
 	roadState := t.Disconnected
-	if connected || b.Kind == building.Warehouse {
+	if connected || b.Kind == building.Warehouse || b.Kind == building.Road {
 		roadState = t.Connected
 	}
 	DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, roadState), float64(x), float64(y))
+}
+
+func recipeInputTypes(bt building.Type) []resource.Type {
+	if len(bt.Recipe.Inputs) == 0 {
+		return nil
+	}
+	out := make([]resource.Type, 0, len(bt.Recipe.Inputs))
+	for _, rt := range resource.AllTypes() {
+		if _, ok := bt.Recipe.Inputs[rt]; ok {
+			out = append(out, rt)
+		}
+	}
+	return out
 }
 
 func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
@@ -173,10 +211,10 @@ func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager
 // player can connect the inspector to the world even when sprites overlap.
 func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Selection) {
 	var x, y float64
-	size := render.TileSize
+	size := cam.TilePixels()
 	if selection.Kind == SelectionBuilding && selection.Building != nil {
 		x, y = cam.TileToScreen(selection.Building.X, selection.Building.Y)
-		size *= building.Types[selection.Building.Kind].Footprint
+		size *= float64(building.Types[selection.Building.Kind].Footprint)
 	} else if selection.Kind == SelectionSerf && selection.Serf != nil {
 		x, y = cam.TileToScreen(selection.Serf.X, selection.Serf.Y)
 	} else if selection.Kind == SelectionVillager && selection.Villager != nil {
@@ -188,9 +226,9 @@ func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Sel
 	line := color.RGBA{R: 245, G: 201, B: 72, A: 255}
 	thickness := float32(2)
 	vector.FillRect(screen, float32(x), float32(y), float32(size), thickness, line, false)
-	vector.FillRect(screen, float32(x), float32(y+float64(size)-2), float32(size), thickness, line, false)
+	vector.FillRect(screen, float32(x), float32(y+size-2), float32(size), thickness, line, false)
 	vector.FillRect(screen, float32(x), float32(y), thickness, float32(size), line, false)
-	vector.FillRect(screen, float32(x+float64(size)-2), float32(y), thickness, float32(size), line, false)
+	vector.FillRect(screen, float32(x+size-2), float32(y), thickness, float32(size), line, false)
 }
 
 // DrawAccessMarker marks the only tile where a road can serve a building.
@@ -224,8 +262,9 @@ func DrawPlacementAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y in
 
 func drawAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y int, marker color.RGBA) {
 	sx, sy := cam.TileToScreen(x, y)
-	vector.FillRect(screen, float32(sx+7), float32(sy+7), 10, 10, marker, false)
-	vector.FillRect(screen, float32(sx+10), float32(sy+3), 4, 18, marker, false)
+	scale := cam.TilePixels() / render.TileSize
+	vector.FillRect(screen, float32(sx+7*scale), float32(sy+7*scale), float32(10*scale), float32(10*scale), marker, false)
+	vector.FillRect(screen, float32(sx+10*scale), float32(sy+3*scale), float32(4*scale), float32(18*scale), marker, false)
 }
 
 func DrawSpeedPanel(screen *ebiten.Image, layout Layout, speed economy.Speed) {

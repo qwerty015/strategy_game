@@ -32,8 +32,8 @@ const (
 
 	// HungerInterval is how many simulation ticks a serf can go between
 	// meals before heading to the Tavern between jobs (never mid-haul --
-	// see tryStartMeal).
-	HungerInterval = 40
+	// see tryStartMeal). At normal speed this is about 90 seconds.
+	HungerInterval = 180
 )
 
 type phase int
@@ -230,22 +230,68 @@ func (c *Controller) tryStartMeal(s *Serf, tavern *building.Building, buildings 
 }
 
 // assign gives an idle serf a job, if one exists that it can currently
-// reach, in priority order: direct producer->consumer haul first (keeps
-// the processing chain fed without routing through the Warehouse at
-// all), then draining leftover OutputBuffer to the Warehouse, then
-// pulling from the Warehouse to cover a shortage no producer can.
+// reach, in priority order: keep the Tavern supplied first, then direct
+// producer->consumer haul, then drain leftover OutputBuffer to the Warehouse,
+// then pull from the Warehouse to cover a shortage no producer can.
 func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *resource.Stockpile) {
+	if pickup, dropoff, t, n, ok := findTavernSupplyJob(buildings, c.Warehouse, stock); ok {
+		if c.startLeg(s, pickup, dropoff, t, n, buildings) {
+			return
+		}
+	}
 	if pickup, dropoff, t, n, ok := findDirectJob(buildings, c.Warehouse); ok {
-		c.startLeg(s, pickup, dropoff, t, n, buildings)
-		return
+		if c.startLeg(s, pickup, dropoff, t, n, buildings) {
+			return
+		}
 	}
 	if b, t, n, ok := findCollectJob(buildings, c.Warehouse); ok {
-		c.startLeg(s, b, c.Warehouse, t, n, buildings)
-		return
+		if c.startLeg(s, b, c.Warehouse, t, n, buildings) {
+			return
+		}
 	}
 	if b, t, n, ok := findSupplyJob(buildings, c.Warehouse, stock); ok {
 		c.startLeg(s, c.Warehouse, b, t, n, buildings)
 	}
+}
+
+// findTavernSupplyJob is deliberately separate from the general consumer
+// search. A hungry town must replenish the Tavern before it spends a serf on
+// optional warehouse cleanup or a lower-priority production input. Bread is
+// currently the only produced meal; the accepted-resource order also makes
+// Fish, Wine and Sausage ready for future production chains.
+func findTavernSupplyJob(buildings []*building.Building, warehouse *building.Building, stock *resource.Stockpile) (pickup, dropoff *building.Building, t resource.Type, amount int, ok bool) {
+	var tavern *building.Building
+	for _, b := range buildings {
+		if b.Kind == building.Tavern {
+			tavern = b
+			break
+		}
+	}
+	if tavern == nil {
+		return nil, nil, 0, 0, false
+	}
+	accepted := building.Types[building.Tavern].AcceptedResources
+	if len(accepted) == 0 {
+		accepted = []resource.Type{resource.Bread}
+	}
+	for _, rt := range accepted {
+		room := building.BufferCapacity - tavern.InputBuffer[rt]
+		if room <= 0 {
+			continue
+		}
+		for _, producer := range buildings {
+			if producer == warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
+				continue
+			}
+			if have := producer.OutputBuffer[rt]; have > 0 {
+				return producer, tavern, rt, min(have, CarryCapacity, room), true
+			}
+		}
+		if stock != nil && stock.Amount(rt) > 0 {
+			return warehouse, tavern, rt, min(CarryCapacity, room, stock.Amount(rt)), true
+		}
+	}
+	return nil, nil, 0, 0, false
 }
 
 // findDirectJob looks for a producer with surplus output that some
@@ -255,7 +301,7 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 // it just reads OutputBuffer against the candidate's Recipe.Inputs.
 func findDirectJob(buildings []*building.Building, warehouse *building.Building) (pickup, dropoff *building.Building, t resource.Type, amount int, ok bool) {
 	for _, producer := range buildings {
-		if producer == warehouse || producer.Kind == building.Road {
+		if producer == warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
 			continue
 		}
 		for rt, have := range producer.OutputBuffer {
@@ -263,7 +309,7 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building)
 				continue
 			}
 			for _, consumer := range buildings {
-				if consumer == warehouse || consumer == producer || consumer.Kind == building.Road {
+				if consumer == warehouse || consumer == producer || consumer.Kind == building.Road || consumer.Kind == building.Tree {
 					continue
 				}
 				need, wants := building.Types[consumer.Kind].Recipe.Inputs[rt]
@@ -285,7 +331,7 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building)
 
 func findCollectJob(buildings []*building.Building, warehouse *building.Building) (b *building.Building, t resource.Type, amount int, ok bool) {
 	for _, cand := range buildings {
-		if cand == warehouse || cand.Kind == building.Road {
+		if cand == warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
 		}
 		for rt, n := range cand.OutputBuffer {
@@ -299,7 +345,7 @@ func findCollectJob(buildings []*building.Building, warehouse *building.Building
 
 func findSupplyJob(buildings []*building.Building, warehouse *building.Building, stock *resource.Stockpile) (b *building.Building, t resource.Type, amount int, ok bool) {
 	for _, cand := range buildings {
-		if cand == warehouse || cand.Kind == building.Road {
+		if cand == warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
 		}
 		recipe := building.Types[cand.Kind].Recipe
@@ -317,15 +363,16 @@ func findSupplyJob(buildings []*building.Building, warehouse *building.Building,
 	return nil, 0, 0, false
 }
 
-func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t resource.Type, amount int, buildings []*building.Building) {
+func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t resource.Type, amount int, buildings []*building.Building) bool {
 	path, ok := pathfind.FindPath(buildings, s.atBuilding, pickup)
 	if !ok {
-		return // not reachable from here right now; try again next tick
+		return false // not reachable from here right now; try again next tick
 	}
 	s.pickup, s.dropoff = pickup, dropoff
 	s.resource, s.amount = t, amount
 	s.path, s.pathIdx, s.tileTicks = path, 0, 0
 	s.ph = toPickup
+	return true
 }
 
 func (c *Controller) advance(s *Serf, buildings []*building.Building, stock *resource.Stockpile) {

@@ -11,9 +11,12 @@ func init() {
 
 		Population: "Population",
 		ResourceName: map[resource.Type]string{
-			resource.Wheat: "Wheat",
-			resource.Flour: "Flour",
-			resource.Bread: "Bread",
+			resource.Wheat:   "Wheat",
+			resource.Flour:   "Flour",
+			resource.Bread:   "Bread",
+			resource.Fish:    "Fish",
+			resource.Wine:    "Wine",
+			resource.Sausage: "Sausage",
 		},
 		BuildingName: map[building.Kind]string{
 			building.Farm:      "Farm",
@@ -22,6 +25,7 @@ func init() {
 			building.Warehouse: "Warehouse",
 			building.Road:      "Road",
 			building.Tavern:    "Tavern",
+			building.Tree:      "Tree",
 		},
 
 		BuildMenuTitle: "Build",
@@ -43,6 +47,9 @@ func init() {
 		BuildingLabel:         "Building",
 		InputLabel:            "Input",
 		OutputLabel:           "Output",
+		ContentsLabel:         "Contents",
+		GrowthLabel:           "Growth",
+		IndestructibleLabel:   "Indestructible",
 		RoadLabel:             "Road",
 		Connected:             "connected",
 		Disconnected:          "not connected",
@@ -60,8 +67,9 @@ func init() {
 		HireSerf:              "Hire serf [H]",
 		Deleted:               "Deleted.",
 		CannotDeleteWarehouse: "The warehouse cannot be deleted",
+		CannotDeleteTree:      "The tree cannot be removed yet",
 
-		Help:                  "Arrows: pan | 1-5: select | Click: place/select | H: hire serf | Delete: remove | S/L: save/load | Esc: quit",
+		Help:                  "Arrows: pan | Wheel +/-: zoom | 1-5: select | Click: place/select | H: hire serf | Delete: remove | S/L: save/load | Esc: quit",
 		CantBuildHere:         "Can't build there",
 		SaveFailedPrefix:      "Save failed: ",
 		LoadFailedPrefix:      "Load failed: ",

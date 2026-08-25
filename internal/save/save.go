@@ -34,8 +34,9 @@ type GameState struct {
 
 	Population economy.Population
 
-	CameraX float64
-	CameraY float64
+	CameraX    float64
+	CameraY    float64
+	CameraZoom float64
 }
 
 // Save writes state as indented JSON to path, creating any missing

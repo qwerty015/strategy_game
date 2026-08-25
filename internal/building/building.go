@@ -38,6 +38,11 @@ const (
 	// logistics system knows to keep it stocked with Bread the same way
 	// it stocks any other consumer -- see Types[Tavern].
 	Tavern
+
+	// Tree is a world object rather than a player-buildable structure. It
+	// occupies a tile, grows over time, and is deliberately indestructible
+	// until the future lumberjack system is introduced.
+	Tree
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -71,6 +76,12 @@ type Type struct {
 	AllowedTerrain []world.TerrainType
 
 	Recipe Recipe
+
+	// AcceptedResources is used by service buildings that can consume more
+	// than one food type. Tavern currently consumes Bread, but declaring the
+	// complete future menu here lets logistics and the inspector already
+	// understand Fish, Wine and Sausage without pretending they are produced.
+	AcceptedResources []resource.Type
 }
 
 // AccessPoint returns the world tile that serves as this building's door or
@@ -118,6 +129,77 @@ type Building struct {
 
 	InputBuffer  map[resource.Type]int
 	OutputBuffer map[resource.Type]int
+
+	// Tree growth is kept on the placed object so it survives save/load and
+	// each tree can have its own deterministic random-looking lifetime.
+	GrowthTicks       int
+	GrowthTargetTicks int
+}
+
+const (
+	// TreeGrowthMinTicks is two minutes at the normal two simulation ticks
+	// per second. The extra random-looking part makes a grove grow unevenly.
+	TreeGrowthMinTicks       = 240
+	TreeGrowthVariationTicks = 240
+)
+
+// NewTree creates an indestructible tree with a stable per-coordinate growth
+// target. The target is deterministic, so saving and loading never changes
+// how long that particular tree takes to mature.
+func NewTree(x, y int) *Building {
+	return &Building{
+		Kind:              Tree,
+		X:                 x,
+		Y:                 y,
+		GrowthTargetTicks: treeGrowthTarget(x, y),
+	}
+}
+
+// TickGrowth advances a tree by one simulation tick. Non-tree buildings are
+// ignored so the caller can safely tick the whole building slice.
+func (b *Building) TickGrowth() {
+	if b == nil || b.Kind != Tree {
+		return
+	}
+	if b.GrowthTargetTicks <= 0 {
+		b.GrowthTargetTicks = treeGrowthTarget(b.X, b.Y)
+	}
+	if b.GrowthTicks < b.GrowthTargetTicks {
+		b.GrowthTicks++
+	}
+}
+
+// GrowthProgress returns a clamped 0..1 value for rendering and UI.
+func (b *Building) GrowthProgress() float64 {
+	if b == nil || b.Kind != Tree || b.GrowthTargetTicks <= 0 {
+		return 0
+	}
+	progress := float64(b.GrowthTicks) / float64(b.GrowthTargetTicks)
+	if progress > 1 {
+		return 1
+	}
+	if progress < 0 {
+		return 0
+	}
+	return progress
+}
+
+// GrowthStage returns 0 for a sapling and 2 for a mature tree.
+func (b *Building) GrowthStage() int {
+	progress := b.GrowthProgress()
+	switch {
+	case progress >= 0.66:
+		return 2
+	case progress >= 0.33:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func treeGrowthTarget(x, y int) int {
+	seed := uint32(x)*73856093 ^ uint32(y)*19349663 ^ 0x9e3779b9
+	return TreeGrowthMinTicks + int(seed%TreeGrowthVariationTicks)
 }
 
 // AddOutput deposits up to n units of t into OutputBuffer, capped by

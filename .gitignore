@@ -9,3 +9,4 @@
 # Go
 *.test
 *.out
+/.gocache/

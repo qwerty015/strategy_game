@@ -11,9 +11,12 @@ func init() {
 
 		Population: "Население",
 		ResourceName: map[resource.Type]string{
-			resource.Wheat: "Пшеница",
-			resource.Flour: "Мука",
-			resource.Bread: "Хлеб",
+			resource.Wheat:   "Пшеница",
+			resource.Flour:   "Мука",
+			resource.Bread:   "Хлеб",
+			resource.Fish:    "Рыба",
+			resource.Wine:    "Вино",
+			resource.Sausage: "Колбаса",
 		},
 		BuildingName: map[building.Kind]string{
 			building.Farm:      "Ферма",
@@ -22,6 +25,7 @@ func init() {
 			building.Warehouse: "Склад",
 			building.Road:      "Дорога",
 			building.Tavern:    "Харчевня",
+			building.Tree:      "Дерево",
 		},
 
 		BuildMenuTitle: "Строительство",
@@ -43,6 +47,9 @@ func init() {
 		BuildingLabel:         "Здание",
 		InputLabel:            "Вход",
 		OutputLabel:           "Выход",
+		ContentsLabel:         "Внутри",
+		GrowthLabel:           "Рост",
+		IndestructibleLabel:   "Неубираемое",
 		RoadLabel:             "Дорога",
 		Connected:             "подключена",
 		Disconnected:          "не подключена",
@@ -60,8 +67,9 @@ func init() {
 		HireSerf:              "Нанять слугу [H]",
 		Deleted:               "Удалено.",
 		CannotDeleteWarehouse: "Склад нельзя удалить",
+		CannotDeleteTree:      "Дерево пока нельзя убрать",
 
-		Help:                  "Стрелки: камера | 1-5: выбор | Клик: построить/выбрать | H: нанять слугу | Delete: удалить | S/L: сохранение/загрузка | Esc: выход",
+		Help:                  "Стрелки: камера | Колесо +/-: масштаб | 1-5: выбор | Клик: построить/выбрать | H: нанять слугу | Delete: удалить | S/L: сохранение/загрузка | Esc: выход",
 		CantBuildHere:         "Здесь нельзя строить",
 		SaveFailedPrefix:      "Не удалось сохранить: ",
 		LoadFailedPrefix:      "Не удалось загрузить: ",

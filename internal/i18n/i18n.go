@@ -47,6 +47,9 @@ type Catalog struct {
 	BuildingLabel         string
 	InputLabel            string
 	OutputLabel           string
+	ContentsLabel         string
+	GrowthLabel           string
+	IndestructibleLabel   string
 	RoadLabel             string
 	Connected             string
 	Disconnected          string
@@ -64,6 +67,7 @@ type Catalog struct {
 	HireSerf              string
 	Deleted               string
 	CannotDeleteWarehouse string
+	CannotDeleteTree      string
 
 	Help                  string
 	CantBuildHere         string

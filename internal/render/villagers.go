@@ -15,7 +15,14 @@ import (
 // (see villagers.Villager.Starving) is tinted red so the player can see
 // at a glance which building's worker needs a Tavern reachable.
 func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camera) {
+	tilePixels := cam.TilePixels()
 	for _, v := range vills {
+		// A villager at its workplace is represented by the building's
+		// small green/red worker marker. Draw the person only while walking
+		// to the Tavern or back, so workers do not visually sit on roofs.
+		if v.Working() {
+			continue
+		}
 		frames := assets.Farmer
 		if v.Profession == villagers.Baker {
 			frames = assets.Baker
@@ -33,6 +40,6 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 			frame = (animFrame / 10) % len(frames)
 			bob = unitBob()
 		}
-		drawStandingTinted(screen, frames[frame], sx, sy+bob, serfHeight, tint)
+		drawStandingTintedAtScale(screen, frames[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint)
 	}
 }

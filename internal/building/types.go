@@ -15,9 +15,12 @@ var Types = map[Kind]Type{
 		Footprint: 3, // one tile is the farmhouse, the rest is tilled field around it -- see render/buildings.go
 		Recipe: Recipe{
 			// No Inputs: a Farm gathers Wheat from the land itself.
-			Output:         resource.Wheat,
-			OutputAmount:   5,
-			TicksToProduce: 4,
+			Output:       resource.Wheat,
+			OutputAmount: 5,
+			// At the normal speed (2 simulation ticks/sec) this is about
+			// one minute per harvest: deliberately much slower than the
+			// original prototype's two-second cycle.
+			TicksToProduce: 120,
 		},
 	},
 	Mill: {
@@ -25,10 +28,12 @@ var Types = map[Kind]Type{
 		Name:      "Mill",
 		Footprint: 1,
 		Recipe: Recipe{
-			Inputs:         map[resource.Type]int{resource.Wheat: 5},
-			Output:         resource.Flour,
-			OutputAmount:   5,
-			TicksToProduce: 3,
+			Inputs:       map[resource.Type]int{resource.Wheat: 5},
+			Output:       resource.Flour,
+			OutputAmount: 5,
+			// Milling is faster than growing, but remains a visible stage
+			// in the chain instead of completing instantly.
+			TicksToProduce: 48,
 		},
 	},
 	Bakery: {
@@ -36,10 +41,11 @@ var Types = map[Kind]Type{
 		Name:      "Bakery",
 		Footprint: 1,
 		Recipe: Recipe{
-			Inputs:         map[resource.Type]int{resource.Flour: 5},
-			Output:         resource.Bread,
-			OutputAmount:   5,
-			TicksToProduce: 3,
+			Inputs:       map[resource.Type]int{resource.Flour: 5},
+			Output:       resource.Bread,
+			OutputAmount: 5,
+			// Baking takes roughly 36 seconds at normal speed.
+			TicksToProduce: 72,
 		},
 	},
 	Warehouse: {
@@ -67,5 +73,18 @@ var Types = map[Kind]Type{
 			// it reads any real consumer's Inputs. See AGENTS.md.
 			Inputs: map[resource.Type]int{resource.Bread: BufferCapacity},
 		},
+		AcceptedResources: []resource.Type{
+			resource.Bread,
+			resource.Fish,
+			resource.Wine,
+			resource.Sausage,
+		},
+	},
+	Tree: {
+		Kind:      Tree,
+		Name:      "Tree",
+		Footprint: 1,
+		// Trees are spawned by map generation, not offered in the build
+		// palette. They still use normal occupancy rules.
 	},
 }

@@ -61,10 +61,21 @@ type Game struct {
 }
 
 func NewGame() *Game {
+	grid := world.NewTestGrid()
 	warehouse := &building.Building{Kind: building.Warehouse, X: warehouseX, Y: warehouseY}
 	initialRoad := &building.Building{Kind: building.Road, X: warehouseX, Y: warehouseY + 1}
 
 	buildings := []*building.Building{warehouse, initialRoad}
+	// Forest terrain gets a few persistent tree objects. Their growth target
+	// is stored on each object, so the grove keeps growing at different
+	// quiet intervals and remains stable after save/load.
+	for y := 15; y < 25; y++ {
+		for x := 25; x < 35; x++ {
+			if (x+y)%3 == 0 {
+				buildings = append(buildings, building.NewTree(x, y))
+			}
+		}
+	}
 
 	layout := ui.NewLayout(screenWidth, screenHeight)
 	camera := render.NewCamera()
@@ -72,7 +83,7 @@ func NewGame() *Game {
 	camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
 
 	return &Game{
-		grid:      world.NewTestGrid(),
+		grid:      grid,
 		buildings: buildings,
 		stock:     resource.NewStockpile(stockpileCapacity),
 		pop:       &economy.Population{},
@@ -86,13 +97,20 @@ func NewGame() *Game {
 }
 
 func (g *Game) Update() error {
+	if width, height := ebiten.WindowSize(); width > 0 && height > 0 {
+		g.resizeLayout(width, height)
+	}
 	g.handleCameraPan()
+	g.handleCameraZoom()
 	g.handlePaletteSelect()
 	g.handleMouse()
 	g.handleUnitActions()
 	g.handleSaveLoad()
 
 	for range g.sim.Advance() {
+		for _, b := range g.buildings {
+			b.TickGrowth()
+		}
 		economy.TickWithConnectivity(g.buildings, g.starvingBuildings(), g.disconnectedBuildings())
 		g.logi.Tick(g.buildings, g.stock)
 		g.vills.Tick(g.buildings)
@@ -103,6 +121,16 @@ func (g *Game) Update() error {
 		return ebiten.Termination
 	}
 	return nil
+}
+
+func (g *Game) resizeLayout(width, height int) {
+	if width <= 0 || height <= 0 || (g.layout.Width == width && g.layout.Height == height) {
+		return
+	}
+	g.layout = ui.NewLayout(width, height)
+	mapRect := g.layout.MapRect()
+	g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
+	g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
 }
 
 // starvingBuildings reports which buildings currently have no worker
@@ -155,6 +183,29 @@ func (g *Game) handleCameraPan() {
 	if dx != 0 || dy != 0 {
 		mapRect := g.layout.MapRect()
 		g.camera.Pan(dx, dy, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
+	}
+}
+
+// handleCameraZoom accepts both the mouse wheel and keyboard shortcuts.
+// Zooming is limited to the map viewport so a wheel gesture over a side
+// panel never changes the inspector's apparent scale.
+func (g *Game) handleCameraZoom() {
+	mx, my := ebiten.CursorPosition()
+	if !image.Pt(mx, my).In(g.layout.MapRect()) {
+		return
+	}
+	_, wheelY := ebiten.Wheel()
+	delta := wheelY
+	if inpututil.IsKeyJustPressed(ebiten.KeyEqual) {
+		delta = 1
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyMinus) {
+		delta = -1
+	}
+	if delta != 0 {
+		mapRect := g.layout.MapRect()
+		g.camera.ZoomAt(delta, mx, my, g.grid.Width, g.grid.Height)
+		g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
 	}
 }
 
@@ -253,6 +304,10 @@ func (g *Game) deleteSelectedBuilding() {
 		g.statusMsg = i18n.T().CannotDeleteWarehouse
 		return
 	}
+	if b.Kind == building.Tree {
+		g.statusMsg = i18n.T().CannotDeleteTree
+		return
+	}
 
 	g.logi.CancelAllJobs(g.stock)
 	g.vills.RemoveHome(b)
@@ -330,6 +385,7 @@ func (g *Game) handleSaveLoad() {
 			Population: *g.pop,
 			CameraX:    g.camera.X,
 			CameraY:    g.camera.Y,
+			CameraZoom: g.camera.Scale,
 		}
 		if err := save.Save(savePath, state); err != nil {
 			g.statusMsg = i18n.T().SaveFailedPrefix + err.Error()
@@ -363,6 +419,13 @@ func (g *Game) handleSaveLoad() {
 		pop := state.Population
 		g.pop = &pop
 		g.camera.X, g.camera.Y = state.CameraX, state.CameraY
+		g.camera.Scale = state.CameraZoom
+		if g.camera.Scale <= 0 {
+			g.camera.Scale = 1
+		}
+		mapRect := g.layout.MapRect()
+		g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
+		g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
 		g.selection.Clear()
 
 		// Serf/villager positions and jobs aren't persisted (see
@@ -423,10 +486,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// connection rule visible without requiring the player to click buildings
 	// one by one; the inspector still explains the selected building in detail.
 	for _, b := range g.buildings {
-		if b.Kind != building.Road {
+		if b.Kind != building.Road && b.Kind != building.Tree {
 			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
 		}
 	}
+	render.DrawWorkerMarkers(screen, g.buildings, g.vills.Villagers, g.camera)
 	ui.DrawSelectionMarker(screen, g.camera, g.selection)
 	connected := false
 	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil {
@@ -434,18 +498,22 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 	ui.DrawResourceBarAt(screen, g.stock, g.pop, float64(g.layout.LeftWidth+16), 10)
 	ui.DrawBuildPanel(screen, g.layout, g.palette)
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected)
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock)
 	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
 	ui.DrawSpeedPanel(screen, g.layout, g.sim.Speed())
 
-	ui.DrawText(screen, i18n.T().Help, float64(g.layout.LeftWidth+16), float64(screenHeight-20))
+	ui.DrawText(screen, i18n.T().Help, float64(g.layout.LeftWidth+16), float64(g.layout.Height-20))
 	if g.statusMsg != "" {
-		ui.DrawText(screen, g.statusMsg, 8, float64(screenHeight-36))
+		ui.DrawText(screen, g.statusMsg, 8, float64(g.layout.Height-36))
 	}
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return screenWidth, screenHeight
+	if outsideWidth <= 0 || outsideHeight <= 0 {
+		return screenWidth, screenHeight
+	}
+	g.resizeLayout(outsideWidth, outsideHeight)
+	return outsideWidth, outsideHeight
 }
 
 func main() {

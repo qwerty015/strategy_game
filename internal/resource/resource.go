@@ -11,12 +11,18 @@ const (
 	Wheat Type = iota
 	Flour
 	Bread
+	Fish
+	Wine
+	Sausage
 )
 
 var typeNames = map[Type]string{
-	Wheat: "wheat",
-	Flour: "flour",
-	Bread: "bread",
+	Wheat:   "wheat",
+	Flour:   "flour",
+	Bread:   "bread",
+	Fish:    "fish",
+	Wine:    "wine",
+	Sausage: "sausage",
 }
 
 var namesToType = func() map[string]Type {
@@ -55,4 +61,11 @@ func (t *Type) UnmarshalText(data []byte) error {
 	}
 	*t = got
 	return nil
+}
+
+// AllTypes returns resources in a stable display and priority order. Maps
+// are intentionally used for buffers, but UI and service logic must not
+// change order from one frame to the next.
+func AllTypes() []Type {
+	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage}
 }

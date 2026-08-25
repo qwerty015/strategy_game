@@ -174,3 +174,20 @@ func TestController_HireAndCancelJobs(t *testing.T) {
 		t.Fatalf("serf after CancelAllJobs = phase %v at (%d,%d), want idle at warehouse", s.ph, s.X, s.Y)
 	}
 }
+
+func TestController_PrioritizesTavernSupply(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	bakery := &building.Building{Kind: building.Bakery, X: 5, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 7, Y: 0}
+	bakery.AddOutput(resource.Bread, 5)
+
+	buildings := append([]*building.Building{warehouse, bakery, tavern}, straightRoad(1, 5, 0)...)
+	buildings = append(buildings, &building.Building{Kind: building.Road, X: 6, Y: 0})
+	c := NewController(warehouse, 1)
+	c.Tick(buildings, resource.NewStockpile(100))
+
+	s := c.Serfs[0]
+	if s.PickupBuilding() != bakery || s.DropoffBuilding() != tavern {
+		t.Fatalf("first job = %v -> %v, want bakery -> tavern", s.PickupBuilding(), s.DropoffBuilding())
+	}
+}
