@@ -97,6 +97,7 @@ type Serf struct {
 	eating     bool // true: this trip is "walk to pickup (a Tavern) and eat", not haul
 
 	ticksSinceMeal int
+	dismissing     bool
 
 	// Starving is true once HungerInterval has passed with nowhere to
 	// actually go eat (no Tavern yet, no road to one, or all food is gone).
@@ -159,6 +160,13 @@ func (s *Serf) Busy() bool {
 	return s.ph != idle
 }
 
+// Dismissing reports whether the serf will leave the town after completing
+// the currently assigned trip. A dismissal never interrupts a haul, so cargo
+// that is already in the serf's hands still reaches its destination.
+func (s *Serf) Dismissing() bool {
+	return s.dismissing
+}
+
 func (s *Serf) reset() {
 	s.ph = idle
 	s.path = nil
@@ -207,6 +215,32 @@ func (c *Controller) AddWarehouse(warehouse *building.Building) {
 	c.Warehouses = append(c.Warehouses, warehouse)
 }
 
+// RemoveWarehouse unregisters a Warehouse that is about to be removed from
+// the map. The final Warehouse is deliberately protected: the simulation
+// always needs one physical logistics endpoint and spawn point. If the
+// primary Warehouse goes away, the oldest remaining one becomes the new
+// primary before active serfs are re-anchored by CancelAllJobs.
+func (c *Controller) RemoveWarehouse(warehouse *building.Building) bool {
+	if warehouse == nil || len(c.Warehouses) <= 1 {
+		return false
+	}
+	index := -1
+	for i, candidate := range c.Warehouses {
+		if candidate == warehouse {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return false
+	}
+	c.Warehouses = append(c.Warehouses[:index], c.Warehouses[index+1:]...)
+	if c.Warehouse == warehouse {
+		c.Warehouse = c.Warehouses[0]
+	}
+	return true
+}
+
 func (c *Controller) warehouses() []*building.Building {
 	if len(c.Warehouses) > 0 {
 		return c.Warehouses
@@ -230,13 +264,27 @@ func (c *Controller) Hire() *Serf {
 // haul is deliberately rebuilt on the next tick, but hunger and the visible
 // position survive the load. atBuilding stays nil until the first restored
 // route reaches a building; routing uses X/Y directly in the meantime.
-func (c *Controller) RestoreSerf(x, y, hungerTicks int, starving bool) *Serf {
+func (c *Controller) RestoreSerf(x, y, hungerTicks int, starving, dismissing bool) *Serf {
 	if hungerTicks < 0 {
 		hungerTicks = 0
 	}
-	s := &Serf{X: x, Y: y, ticksSinceMeal: hungerTicks, Starving: starving}
+	s := &Serf{X: x, Y: y, ticksSinceMeal: hungerTicks, Starving: starving, dismissing: dismissing}
 	c.Serfs = append(c.Serfs, s)
 	return s
+}
+
+// RequestDismissal marks a live serf to leave after its current assignment.
+// An idle serf has no assignment to finish and is removed on the next
+// simulation tick. The method returns false for a stale pointer, which keeps
+// UI actions harmless after a unit was already removed.
+func (c *Controller) RequestDismissal(serf *Serf) bool {
+	for _, s := range c.Serfs {
+		if s == serf {
+			s.dismissing = true
+			return true
+		}
+	}
+	return false
 }
 
 // CancelAllJobs safely interrupts every active route after the map changes
@@ -300,7 +348,7 @@ func (c *Controller) Reserve(ledger *reservations.Ledger) {
 func (c *Controller) MaxWaitingHunger() int {
 	best := -1
 	for _, s := range c.Serfs {
-		if s.ph != idle || s.ticksSinceMeal < HungerInterval {
+		if s.dismissing || s.ph != idle || s.ticksSinceMeal < HungerInterval {
 			continue
 		}
 		if s.ticksSinceMeal > best {
@@ -315,7 +363,14 @@ func (c *Controller) MaxWaitingHunger() int {
 // after every controller sharing ledger has had a chance to Reserve its
 // own pre-existing in-flight units.
 func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) {
+	remaining := c.Serfs[:0]
 	for _, s := range c.Serfs {
+		// A dismissal is checked before hunger and job assignment, so an
+		// idle serf leaves immediately and a serf who just completed a haul
+		// never starts a detour to the Tavern first.
+		if s.dismissing && s.ph == idle {
+			continue
+		}
 		// Deliberately uncapped: see MaxWaitingHunger's doc comment for
 		// why this must keep counting past HungerInterval instead of
 		// saturating there. HungerTicks() still returns the true value;
@@ -327,7 +382,9 @@ func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockp
 			}
 		}
 		c.advance(s, buildings, stock)
+		remaining = append(remaining, s)
 	}
+	c.Serfs = remaining
 }
 
 // nearestTavernWithFood returns the nearest reachable Tavern with at least one

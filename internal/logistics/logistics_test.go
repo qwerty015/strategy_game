@@ -466,6 +466,72 @@ func TestController_CollectsToNearestReachableWarehouse(t *testing.T) {
 	}
 }
 
+func TestController_RemoveWarehousePromotesAnotherWarehouse(t *testing.T) {
+	first := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	second := &building.Building{Kind: building.Warehouse, X: 6, Y: 0}
+
+	c := NewController(first, 0)
+	c.AddWarehouse(second)
+	if !c.RemoveWarehouse(first) {
+		t.Fatal("RemoveWarehouse(first) = false, want true with another warehouse available")
+	}
+	if c.Warehouse != second {
+		t.Fatalf("primary warehouse = %v, want remaining warehouse %v", c.Warehouse, second)
+	}
+	if len(c.Warehouses) != 1 || c.Warehouses[0] != second {
+		t.Fatalf("registered warehouses = %v, want only %v", c.Warehouses, second)
+	}
+	if got := c.Hire(); got.X != second.X || got.Y != second.Y {
+		t.Fatalf("new serf spawned at (%d,%d), want new primary warehouse (%d,%d)", got.X, got.Y, second.X, second.Y)
+	}
+	if c.RemoveWarehouse(second) {
+		t.Fatal("RemoveWarehouse(last) = true, want false")
+	}
+}
+
+func TestController_DismissalWaitsForCurrentHaul(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}
+	farm.AddOutput(resource.Wheat, 1)
+	buildings := append([]*building.Building{warehouse, farm}, straightRoad(1, 5, 0)...)
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(0)
+	tick(c, buildings, stock) // assigns the farm -> warehouse haul
+	serf := c.Serfs[0]
+	if !serf.Busy() {
+		t.Fatal("serf did not receive the expected haul before dismissal")
+	}
+	if !c.RequestDismissal(serf) || !serf.Dismissing() {
+		t.Fatal("RequestDismissal did not mark the live serf")
+	}
+
+	for range 100 {
+		tick(c, buildings, stock)
+		if len(c.Serfs) == 0 {
+			break
+		}
+	}
+	if got := len(c.Serfs); got != 0 {
+		t.Fatalf("serfs after completed dismissal = %d, want 0", got)
+	}
+	if got := stock.Amount(resource.Wheat); got != 1 {
+		t.Fatalf("warehouse Wheat = %d, want 1: dismissal must not lose carried cargo", got)
+	}
+}
+
+func TestController_DismissalRemovesIdleSerfBeforeNewJob(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	c := NewController(warehouse, 1)
+	if !c.RequestDismissal(c.Serfs[0]) {
+		t.Fatal("RequestDismissal(idle serf) = false")
+	}
+	tick(c, []*building.Building{warehouse}, resource.NewStockpile(0))
+	if got := len(c.Serfs); got != 0 {
+		t.Fatalf("idle dismissed serfs = %d, want 0", got)
+	}
+}
+
 // TestController_TavernSupplySkipsProducerThatCannotReachTavern covers
 // "проверка только пути слуги к производителю, но не производителя к
 // харчевне": producer1 sits on a dead-end spur reachable from the serf but

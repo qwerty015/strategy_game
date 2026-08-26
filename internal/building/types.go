@@ -130,4 +130,31 @@ var Types = map[Kind]Type{
 		AllowedTerrain: []world.TerrainType{world.Water},
 		// Fish are spawned by the water-population system, not player-built.
 	},
+	PigFarm: {
+		Kind:      PigFarm,
+		Name:      "Pig Farm",
+		Footprint: 1,
+		Recipe: Recipe{
+			// Feed is consumed before growth begins: without all three units
+			// of Wheat there is no pig being raised yet.
+			Inputs:               map[resource.Type]int{resource.Wheat: 3},
+			Output:               resource.Carcass,
+			OutputAmount:         1,
+			TicksToProduce:       600,
+			ConsumeInputsAtStart: true,
+		},
+	},
+	MeatWorkshop: {
+		Kind:      MeatWorkshop,
+		Name:      "Meat Workshop",
+		Footprint: 1,
+		Recipe: Recipe{
+			// A single generic carcass becomes two sausage portions. Keeping
+			// Carcass unified makes future animals add producers, not recipes.
+			Inputs:         map[resource.Type]int{resource.Carcass: 1},
+			Output:         resource.Sausage,
+			OutputAmount:   2,
+			TicksToProduce: 72,
+		},
+	},
 }

@@ -86,6 +86,38 @@ func TestTick_MillProducesAsSoonAsInputBufferIsFilled(t *testing.T) {
 	}
 }
 
+func TestTick_PigFarmConsumesFeedBeforeGrowth(t *testing.T) {
+	pigFarm := &building.Building{Kind: building.PigFarm}
+	recipe := building.Types[building.PigFarm].Recipe
+
+	// Waiting without feed must not silently advance the animal's lifetime.
+	for range 20 {
+		Tick([]*building.Building{pigFarm}, nil)
+	}
+	if pigFarm.ProgressTicks != 0 {
+		t.Fatalf("unfed pig farm progress = %d, want 0", pigFarm.ProgressTicks)
+	}
+
+	pigFarm.AddInput(resource.Wheat, recipe.Inputs[resource.Wheat])
+	Tick([]*building.Building{pigFarm}, nil)
+	if got := pigFarm.InputBuffer[resource.Wheat]; got != 0 {
+		t.Fatalf("wheat after growth started = %d, want 0", got)
+	}
+	if got := pigFarm.ProgressTicks; got != 1 {
+		t.Fatalf("progress after feeding = %d, want 1", got)
+	}
+
+	for range recipe.TicksToProduce - 1 {
+		Tick([]*building.Building{pigFarm}, nil)
+	}
+	if got := pigFarm.OutputBuffer[resource.Carcass]; got != 1 {
+		t.Fatalf("carcasses after %d fed growth ticks = %d, want 1", recipe.TicksToProduce, got)
+	}
+	if pigFarm.ProgressTicks != 0 {
+		t.Fatalf("progress after producing a carcass = %d, want 0", pigFarm.ProgressTicks)
+	}
+}
+
 func TestTick_ProductionHoldsWhenOutputBufferFull(t *testing.T) {
 	farm := &building.Building{Kind: building.Farm}
 	recipe := building.Types[building.Farm].Recipe

@@ -12,13 +12,13 @@ import (
 	"strategy_game/internal/villagers"
 )
 
-// DrawWorkerMarkers shows whether a worker is assigned to a Farm, Bakery,
-// Winery, Lumberjack Hut or Fisher Hut. A green plus means the worker is at work/assigned; a red
-// minus means the resident worker is away or missing.
+// DrawWorkerMarkers shows whether a worker is assigned to a workplace. A green
+// plus means the worker is at work/assigned; a red minus means the resident
+// worker is away or missing.
 func DrawWorkerMarkers(screen *ebiten.Image, buildings []*building.Building, vills []*villagers.Villager, jacks []*lumberjack.Lumberjack, fishermen []*fishing.Fisherman, cam *Camera) {
 	tilePixels := cam.TilePixels()
 	for _, b := range buildings {
-		if b.Kind != building.Farm && b.Kind != building.Bakery && b.Kind != building.Winery && b.Kind != building.LumberjackHut && b.Kind != building.FisherHut {
+		if b.Kind != building.Farm && b.Kind != building.Bakery && b.Kind != building.Winery && b.Kind != building.PigFarm && b.Kind != building.MeatWorkshop && b.Kind != building.LumberjackHut && b.Kind != building.FisherHut {
 			continue
 		}
 		present := false

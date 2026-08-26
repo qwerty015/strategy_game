@@ -74,11 +74,15 @@ const (
 	UnitLumberjack UnitKind = "lumberjack"
 	UnitWinemaker  UnitKind = "winemaker"
 	UnitFisherman  UnitKind = "fisherman"
+	UnitSwineherd  UnitKind = "swineherd"
+	UnitButcher    UnitKind = "butcher"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the
-// GameState.Buildings slice for farmers, bakers and winemakers; serfs use -1. State is
+// GameState.Buildings slice for resident workers; serfs use -1. State is
 // currently meaningful for villagers, whose route can be rebuilt after load.
+// Dismissing persists an already requested serf dismissal, so loading cannot
+// quietly put a departing serf back into the labour pool.
 type UnitState struct {
 	Kind        UnitKind
 	X           int
@@ -86,6 +90,7 @@ type UnitState struct {
 	HomeIndex   int
 	HungerTicks int
 	Starving    bool
+	Dismissing  bool
 	State       int
 	TargetIndex int
 	WorkTicks   int

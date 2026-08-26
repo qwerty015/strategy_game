@@ -60,6 +60,12 @@ const (
 	// Fish is a persistent water-world object. It grows from fry to a mature
 	// catchable fish and is never exposed in the construction palette.
 	Fish
+
+	// PigFarm and MeatWorkshop are appended after the pre-existing kinds so
+	// their numeric values never shift in older save files, which serialize
+	// Building.Kind directly.
+	PigFarm
+	MeatWorkshop
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -71,6 +77,12 @@ type Recipe struct {
 	Output         resource.Type
 	OutputAmount   int
 	TicksToProduce int
+
+	// ConsumeInputsAtStart reserves and removes the cycle's inputs before
+	// progress starts. It models a living animal: a PigFarm must receive all
+	// feed before a pig can begin its 600-tick growth cycle. Other recipes
+	// retain the normal completion-time consumption behaviour.
+	ConsumeInputsAtStart bool
 }
 
 // Point is a world-grid coordinate used for building access points.

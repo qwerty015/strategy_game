@@ -42,8 +42,8 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette) {
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
 	for i, kind := range p.Kinds {
-		x, y := 12, 56+i*58
-		w, h := layout.LeftWidth-24, 52
+		x, y := 12, 48+i*52
+		w, h := layout.LeftWidth-24, 48
 		fill := panelInnerColor
 		if i == p.Selected {
 			fill = selectedColor
@@ -52,8 +52,22 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette) {
 		vector.FillRect(screen, float32(x), float32(y+h-3), float32(w), 3, panelEdgeColor, false)
 
 		drawBuildingIcon(screen, kind, x+8, y+10, 32)
-		DrawText(screen, i18n.T().BuildingName[kind], float64(x+50), float64(y+10))
-		DrawText(screen, fmt.Sprintf("%d×%d  [%d]", building.Types[kind].Footprint, building.Types[kind].Footprint, i+1), float64(x+50), float64(y+29))
+		DrawText(screen, i18n.T().BuildingName[kind], float64(x+50), float64(y+8))
+		shortcut := paletteShortcut(i)
+		DrawText(screen, fmt.Sprintf("%d×%d%s", building.Types[kind].Footprint, building.Types[kind].Footprint, shortcut), float64(x+50), float64(y+27))
+	}
+}
+
+func paletteShortcut(index int) string {
+	switch {
+	case index < 9:
+		return fmt.Sprintf("  [%d]", index+1)
+	case index == 9:
+		return "  [0]"
+	case index == 10:
+		return "  [Q]"
+	default:
+		return ""
 	}
 }
 
@@ -184,7 +198,9 @@ func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
 	DrawText(screen, t.UnitSerf, float64(x), float64(y))
 	y += 24
 	state := t.StateIdle
-	if s.Eating() {
+	if s.Dismissing() {
+		state = t.StateLeaving
+	} else if s.Eating() {
 		state = t.StateEating
 	} else {
 		switch s.State() {
@@ -226,10 +242,15 @@ func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
 func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager) {
 	t := i18n.T()
 	profession := t.UnitFarmer
-	if v.Profession == villagers.Baker {
+	switch v.Profession {
+	case villagers.Baker:
 		profession = t.UnitBaker
-	} else if v.Profession == villagers.Winemaker {
+	case villagers.Winemaker:
 		profession = t.UnitWinemaker
+	case villagers.Swineherd:
+		profession = t.UnitSwineherd
+	case villagers.Butcher:
+		profession = t.UnitButcher
 	}
 	DrawText(screen, profession, float64(x), float64(y))
 	y += 24
@@ -443,6 +464,10 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.Bakery
 	case building.Winery:
 		img = assets.Winery
+	case building.PigFarm:
+		img = assets.PigFarm
+	case building.MeatWorkshop:
+		img = assets.MeatWorkshop
 	case building.Tavern:
 		img = assets.Tavern
 	case building.Road:

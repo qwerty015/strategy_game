@@ -14,6 +14,7 @@ const (
 	Fish
 	Wine
 	Sausage
+	Carcass
 	Log
 )
 
@@ -24,6 +25,7 @@ var typeNames = map[Type]string{
 	Fish:    "fish",
 	Wine:    "wine",
 	Sausage: "sausage",
+	Carcass: "carcass",
 	Log:     "log",
 }
 
@@ -69,7 +71,7 @@ func (t *Type) UnmarshalText(data []byte) error {
 // are intentionally used for buffers, but UI and service logic must not
 // change order from one frame to the next.
 func AllTypes() []Type {
-	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Log}
+	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log}
 }
 
 // FoodTypes returns every resource that can feed a unit in a Tavern. The

@@ -10,7 +10,7 @@ import (
 	"strategy_game/internal/villagers"
 )
 
-// DrawVillagers renders every Farmer/Baker/Winemaker at its current tile. A
+// DrawVillagers renders every production worker at its current tile. A
 // field worker walks a small loop over the eight crop cells while working; a baker remains
 // represented by the building marker until it leaves for the Tavern. The
 // farmer's bobbing pose and tiny tool cue are intentionally lightweight
@@ -30,6 +30,10 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 			frames = assets.Baker
 		case villagers.Winemaker:
 			frames = assets.Winemaker
+		case villagers.Swineherd:
+			frames = assets.Swineherd
+		case villagers.Butcher:
+			frames = assets.Butcher
 		}
 
 		sx, sy := cam.TileToScreen(v.X, v.Y)

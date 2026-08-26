@@ -66,14 +66,18 @@ type Catalog struct {
 	StateChopping         string
 	StateFishing          string
 	StateUnloading        string
+	StateLeaving          string
 	UnitSerf              string
 	UnitFarmer            string
 	UnitBaker             string
 	UnitLumberjack        string
 	UnitWinemaker         string
 	UnitFisherman         string
+	UnitSwineherd         string
+	UnitButcher           string
 	HireSerf              string
 	Deleted               string
+	SerfDismissRequested  string
 	CannotDeleteWarehouse string
 	CannotDeleteTree      string
 	CannotDeleteFish      string

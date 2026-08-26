@@ -187,6 +187,7 @@ func (g *Game) Update() error {
 		for _, step := range steps {
 			step.run()
 		}
+		g.clearDismissedSerfSelection()
 		for _, event := range jackEvents {
 			if event.Kind == lumberjack.TreeCut {
 				g.cutTree(event.Tree)
@@ -323,6 +324,7 @@ func (g *Game) handleCameraZoom() {
 var paletteKeys = []ebiten.Key{
 	ebiten.Key1, ebiten.Key2, ebiten.Key3, ebiten.Key4,
 	ebiten.Key5, ebiten.Key6, ebiten.Key7, ebiten.Key8, ebiten.Key9,
+	ebiten.Key0, ebiten.KeyQ,
 }
 
 func (g *Game) handlePaletteSelect() {
@@ -396,6 +398,12 @@ func (g *Game) handleUnitActions() {
 		g.hireSerf()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyDelete) {
+		if g.selection.Kind == ui.SelectionSerf && g.selection.Serf != nil {
+			if g.logi.RequestDismissal(g.selection.Serf) {
+				g.statusMsg = i18n.T().SerfDismissRequested
+			}
+			return
+		}
 		g.deleteSelectedBuilding()
 	}
 }
@@ -407,17 +415,14 @@ func (g *Game) hireSerf() {
 }
 
 // deleteSelectedBuilding removes the selected building and invalidates all
-// active routes before the slice is changed. The Warehouse is the town's
-// mandatory logistics root and cannot be deleted.
+// active routes before the slice is changed. Every building can be removed
+// except the final Warehouse: with several Warehouses, the logistics
+// controller first promotes one of the survivors to be the new root.
 func (g *Game) deleteSelectedBuilding() {
 	if g.selection.Kind != ui.SelectionBuilding || g.selection.Building == nil {
 		return
 	}
 	b := g.selection.Building
-	if b.Kind == building.Warehouse {
-		g.statusMsg = i18n.T().CannotDeleteWarehouse
-		return
-	}
 	if b.Kind == building.Tree {
 		g.statusMsg = i18n.T().CannotDeleteTree
 		return
@@ -427,6 +432,10 @@ func (g *Game) deleteSelectedBuilding() {
 		return
 	}
 
+	if b.Kind == building.Warehouse && !g.logi.RemoveWarehouse(b) {
+		g.statusMsg = i18n.T().CannotDeleteWarehouse
+		return
+	}
 	g.logi.CancelAllJobs(g.stock)
 	g.vills.RemoveHome(b)
 	g.vills.CancelRouteTo(b) // in case b is a Tavern someone is mid-trip to eat at
@@ -443,6 +452,20 @@ func (g *Game) deleteSelectedBuilding() {
 		g.statusMsg = i18n.T().Deleted
 		return
 	}
+}
+
+// clearDismissedSerfSelection prevents the inspector from retaining a pointer
+// to a serf that left on this simulation tick.
+func (g *Game) clearDismissedSerfSelection() {
+	if g.selection.Kind != ui.SelectionSerf || g.selection.Serf == nil {
+		return
+	}
+	for _, s := range g.logi.Serfs {
+		if s == g.selection.Serf {
+			return
+		}
+	}
+	g.selection.Clear()
 }
 
 // selectionAt resolves map coordinates to a live game object. Units have
@@ -507,6 +530,10 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 		g.vills.Spawn(villagers.Baker, b)
 	case building.Winery:
 		g.vills.Spawn(villagers.Winemaker, b)
+	case building.PigFarm:
+		g.vills.Spawn(villagers.Swineherd, b)
+	case building.MeatWorkshop:
+		g.vills.Spawn(villagers.Butcher, b)
 	case building.LumberjackHut:
 		g.jacks.Spawn(b)
 	case building.FisherHut:
@@ -669,6 +696,7 @@ func (g *Game) serializeUnits() []save.UnitState {
 			HomeIndex:   -1,
 			HungerTicks: s.HungerTicks(),
 			Starving:    s.Starving,
+			Dismissing:  s.Dismissing(),
 		})
 	}
 	for _, v := range g.vills.Villagers {
@@ -678,6 +706,10 @@ func (g *Game) serializeUnits() []save.UnitState {
 			kind = save.UnitBaker
 		case villagers.Winemaker:
 			kind = save.UnitWinemaker
+		case villagers.Swineherd:
+			kind = save.UnitSwineherd
+		case villagers.Butcher:
+			kind = save.UnitButcher
 		default:
 			kind = save.UnitFarmer
 		}
@@ -735,8 +767,8 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 	for _, state := range states {
 		switch state.Kind {
 		case save.UnitSerf:
-			g.logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving)
-		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker:
+			g.logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving, state.Dismissing)
+		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher:
 			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) {
 				continue
 			}
@@ -747,12 +779,18 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				profession = villagers.Baker
 			case save.UnitWinemaker:
 				profession = villagers.Winemaker
+			case save.UnitSwineherd:
+				profession = villagers.Swineherd
+			case save.UnitButcher:
+				profession = villagers.Butcher
 			default:
 				profession = villagers.Farmer
 			}
 			if (profession == villagers.Farmer && home.Kind != building.Farm) ||
 				(profession == villagers.Baker && home.Kind != building.Bakery) ||
-				(profession == villagers.Winemaker && home.Kind != building.Winery) {
+				(profession == villagers.Winemaker && home.Kind != building.Winery) ||
+				(profession == villagers.Swineherd && home.Kind != building.PigFarm) ||
+				(profession == villagers.Butcher && home.Kind != building.MeatWorkshop) {
 				continue
 			}
 			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings, state.Meal)

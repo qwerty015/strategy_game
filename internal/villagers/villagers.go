@@ -1,4 +1,5 @@
-// Package villagers simulates Farmer, Baker and Winemaker units. Unlike serfs
+// Package villagers simulates Farmer, Baker, Winemaker, Swineherd and Butcher
+// units. Unlike serfs
 // (package logistics) they don't haul goods -- they stand and work at
 // one building (Home) -- but per the user's request they get the same
 // treatment as every other unit "as in the reference game": they get
@@ -22,6 +23,8 @@ const (
 	Farmer Profession = iota
 	Baker
 	Winemaker
+	Swineherd
+	Butcher
 )
 
 const (
@@ -63,7 +66,7 @@ const (
 	toHome
 )
 
-// Villager is a Farmer, Baker or Winemaker.
+// Villager is a production worker such as a Farmer, Baker or Swineherd.
 type Villager struct {
 	Profession Profession
 	Home       *building.Building
@@ -137,7 +140,7 @@ func (v *Villager) VisibleOnMap() bool {
 // Meal returns the food reserved for the current or next Tavern trip.
 func (v *Villager) Meal() resource.Type { return v.meal }
 
-// Controller owns every Farmer/Baker/Winemaker in town.
+// Controller owns every production worker in town.
 type Controller struct {
 	Villagers []*Villager
 	meals     meal.Selector
@@ -155,7 +158,7 @@ func (c *Controller) MealSeed() uint32 { return c.meals.Seed() }
 // SetMealSeed restores the persistent pseudo-random state for villager meals.
 func (c *Controller) SetMealSeed(seed uint32) { c.meals.SetSeed(seed) }
 
-// Spawn adds a villager working at home (Farm, Bakery or Winery).
+// Spawn adds a villager working at home.
 func (c *Controller) Spawn(profession Profession, home *building.Building) {
 	c.Villagers = append(c.Villagers, NewVillager(profession, home))
 }

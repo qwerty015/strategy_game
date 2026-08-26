@@ -108,6 +108,64 @@ func TestFullChain_FarmToMillToBakeryToTavern(t *testing.T) {
 
 }
 
+// TestFullChain_FarmToPigFarmToMeatWorkshopToTavern ensures animal feed is
+// delivered through the same physical-road logistics as every other recipe.
+// The pig farm must receive all three wheat units before its 600-tick growth;
+// the produced carcass then travels directly to the meat workshop and the
+// two sausage portions end up in the tavern as normal food.
+func TestFullChain_FarmToPigFarmToMeatWorkshopToTavern(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 2, Y: 3}
+	pigFarm := &building.Building{Kind: building.PigFarm, X: 4, Y: 0}
+	meatWorkshop := &building.Building{Kind: building.MeatWorkshop, X: 6, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 8, Y: 0}
+
+	var roads []*building.Building
+	for x := 0; x <= 9; x++ {
+		roads = append(roads, &building.Building{Kind: building.Road, X: x, Y: 1})
+	}
+	roads = append(roads, &building.Building{Kind: building.Road, X: 2, Y: 2})
+	buildings := append([]*building.Building{warehouse, farm, pigFarm, meatWorkshop, tavern}, roads...)
+
+	logi := logistics.NewController(warehouse, 3)
+	vills := villagers.NewController()
+	vills.Spawn(villagers.Farmer, farm)
+	vills.Spawn(villagers.Swineherd, pigFarm)
+	vills.Spawn(villagers.Butcher, meatWorkshop)
+	stock := resource.NewStockpile(200)
+
+	starving := func() map[*building.Building]bool {
+		m := make(map[*building.Building]bool)
+		for _, v := range vills.Villagers {
+			if !v.Working() {
+				m[v.HomeBuilding()] = true
+			}
+		}
+		return m
+	}
+
+	var sawSausage bool
+	for range 2000 {
+		economy.Tick(buildings, starving())
+		ledger := reservations.New()
+		logi.Reserve(ledger)
+		vills.Reserve(ledger)
+		logi.Tick(buildings, stock, ledger)
+		vills.Tick(buildings, ledger)
+		if tavern.InputBuffer[resource.Sausage] > 0 || stock.Amount(resource.Sausage) > 0 {
+			sawSausage = true
+			break
+		}
+	}
+
+	if !sawSausage {
+		t.Fatal("sausage never reached the tavern or warehouse: pig chain is broken")
+	}
+	if got := pigFarm.InputBuffer[resource.Wheat]; got > building.BufferCapacity {
+		t.Fatalf("pig farm Wheat buffer = %d, want <= %d", got, building.BufferCapacity)
+	}
+}
+
 // TestSharedTavernReservation_SerfAndVillagerDoNotDoubleBookTheLastLoaf is
 // the cross-controller version of the user's "crowd" bug report: a serf
 // (package logistics) and a farmer (package villagers) both starving at
@@ -132,7 +190,7 @@ func TestSharedTavernReservation_SerfAndVillagerDoNotDoubleBookTheLastLoaf(t *te
 	// RestoreSerf/RestoreVillager are the same public entry points
 	// save/load uses -- here they let the test start both units already
 	// hungry, instead of ticking HungerInterval times to get there.
-	logi.RestoreSerf(warehouse.X, warehouse.Y, logistics.HungerInterval, false)
+	logi.RestoreSerf(warehouse.X, warehouse.Y, logistics.HungerInterval, false, false)
 	vills := villagers.NewController()
 	vills.RestoreVillager(villagers.Farmer, farm, farm.X, farm.Y, villagers.HungerInterval, false, villagers.VillagerWorking, buildings)
 

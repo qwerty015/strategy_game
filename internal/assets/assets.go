@@ -52,6 +52,8 @@ var (
 	Tavern        = mustLoad("generated/building_tavern.png")
 	LumberjackHut = mustLoad("generated/building_lumberjack_hut.png")
 	Winery        = mustLoad("generated/building_winery.png")
+	PigFarm       = mustLoad("generated/building_pig_farm.png")
+	MeatWorkshop  = mustLoad("generated/building_meat_workshop.png")
 	// The source fishing hut's pier points south. CPU-rotated variants let the
 	// renderer orient it toward whichever cardinal water tile borders the hut.
 	FisherHutFrames = [4]*ebiten.Image{
@@ -111,6 +113,16 @@ var (
 		mustLoad("generated/unit_fisherman.png"),
 		mustLoad("generated/unit_fisherman.png"),
 		mustLoad("generated/unit_fisherman.png"),
+	}
+	Swineherd = [3]*ebiten.Image{
+		mustLoad("generated/unit_swineherd.png"),
+		mustLoad("generated/unit_swineherd.png"),
+		mustLoad("generated/unit_swineherd.png"),
+	}
+	Butcher = [3]*ebiten.Image{
+		mustLoad("generated/unit_butcher.png"),
+		mustLoad("generated/unit_butcher.png"),
+		mustLoad("generated/unit_butcher.png"),
 	}
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )

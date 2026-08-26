@@ -113,6 +113,10 @@ func TickWithConnectivity(buildings []*building.Building, starving, disconnected
 		if recipe.TicksToProduce <= 0 || starving[b] || disconnected[b] {
 			continue
 		}
+		if recipe.ConsumeInputsAtStart {
+			tickPrepaidRecipe(b, recipe)
+			continue
+		}
 
 		if b.ProgressTicks < recipe.TicksToProduce {
 			b.ProgressTicks++
@@ -128,16 +132,36 @@ func TickWithConnectivity(buildings []*building.Building, starving, disconnected
 		if !hasAllInputs(b, recipe.Inputs) {
 			continue
 		}
-		if b.OutputBuffer[recipe.Output]+recipe.OutputAmount > b.OutputLimit() {
+		if !hasOutputRoom(b, recipe) {
 			continue
 		}
 
-		for t, n := range recipe.Inputs {
-			b.TakeInput(t, n)
-		}
+		consumeInputs(b, recipe.Inputs)
 		b.AddOutput(recipe.Output, recipe.OutputAmount)
 		b.ProgressTicks = 0
 	}
+}
+
+// tickPrepaidRecipe advances a recipe whose inputs must be spent before its
+// timer runs. The PigFarm uses this for feed: the player sees an empty input
+// buffer while the already-fed pig grows, rather than an implausible instant
+// animal appearing when wheat arrives after 600 ticks of empty waiting.
+func tickPrepaidRecipe(b *building.Building, recipe building.Recipe) {
+	if b.ProgressTicks == 0 {
+		if !hasAllInputs(b, recipe.Inputs) || !hasOutputRoom(b, recipe) {
+			return
+		}
+		consumeInputs(b, recipe.Inputs)
+	}
+
+	if b.ProgressTicks < recipe.TicksToProduce {
+		b.ProgressTicks++
+	}
+	if b.ProgressTicks < recipe.TicksToProduce || !hasOutputRoom(b, recipe) {
+		return
+	}
+	b.AddOutput(recipe.Output, recipe.OutputAmount)
+	b.ProgressTicks = 0
 }
 
 func hasAllInputs(b *building.Building, inputs map[resource.Type]int) bool {
@@ -147,4 +171,14 @@ func hasAllInputs(b *building.Building, inputs map[resource.Type]int) bool {
 		}
 	}
 	return true
+}
+
+func hasOutputRoom(b *building.Building, recipe building.Recipe) bool {
+	return b.OutputBuffer[recipe.Output]+recipe.OutputAmount <= b.OutputLimit()
+}
+
+func consumeInputs(b *building.Building, inputs map[resource.Type]int) {
+	for t, n := range inputs {
+		b.TakeInput(t, n)
+	}
 }

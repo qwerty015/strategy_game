@@ -22,3 +22,8 @@ in `generated/` are the assets used by the game.
 `building_fisher_hut.png`, `unit_fisherman.png`, `unit_fishing_boat.png` and
 the three-stage transparent `fish_stages.png` atlas were generated on
 2026-08-26. The fish atlas is sliced into three frames by the game at startup.
+
+`building_pig_farm.png`, `building_meat_workshop.png`, `unit_swineherd.png`
+and `unit_butcher.png` were generated with the same tool on 2026-08-26 for the
+pig and sausage production chain. They are original project art and are not
+derived from any specific commercial game's visual assets.

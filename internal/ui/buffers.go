@@ -35,7 +35,7 @@ func DrawBufferLevels(screen *ebiten.Image, buildings []*building.Building, cam 
 			line = fmt.Sprintf("%d", bufferTotal(b.InputBuffer))
 		case isLumberjackHut:
 			line = fmt.Sprintf("%d", bufferTotal(b.OutputBuffer))
-		default: // Farm: only ever fills its Wheat output
+		default: // land producers: only fill their output buffer
 			line = fmt.Sprintf("%d", bufferTotal(b.OutputBuffer))
 		}
 		DrawText(screen, line, sx, sy-14)

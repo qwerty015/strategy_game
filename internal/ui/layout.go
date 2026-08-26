@@ -86,9 +86,9 @@ func (l Layout) MapRect() image.Rectangle {
 
 // BuildIndexAt returns the building palette card under the cursor.
 func (l Layout) BuildIndexAt(x, y int, count int) (int, bool) {
-	card := image.Rect(12, 56, l.LeftWidth-12, 108)
+	card := image.Rect(12, 48, l.LeftWidth-12, 96)
 	for i := 0; i < count; i++ {
-		r := card.Add(image.Pt(0, i*58))
+		r := card.Add(image.Pt(0, i*52))
 		if image.Pt(x, y).In(r) {
 			return i, true
 		}
