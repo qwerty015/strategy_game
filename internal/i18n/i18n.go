@@ -64,16 +64,20 @@ type Catalog struct {
 	StateStarving         string
 	StateSearching        string
 	StateChopping         string
+	StateFishing          string
 	StateUnloading        string
 	UnitSerf              string
 	UnitFarmer            string
 	UnitBaker             string
 	UnitLumberjack        string
 	UnitWinemaker         string
+	UnitFisherman         string
 	HireSerf              string
 	Deleted               string
 	CannotDeleteWarehouse string
 	CannotDeleteTree      string
+	CannotDeleteFish      string
+	CatchableLabel        string
 
 	Help                  string
 	CantBuildHere         string

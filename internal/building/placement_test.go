@@ -54,6 +54,34 @@ func TestCanPlace(t *testing.T) {
 			kind: Tree, x: 8, y: 8,
 			wantValid: false,
 		},
+		{
+			name:      "fisher hut beside cardinal water",
+			kind:      FisherHut,
+			x:         8,
+			y:         7,
+			wantValid: true,
+		},
+		{
+			name:      "fisher hut cannot use diagonal water",
+			kind:      FisherHut,
+			x:         7,
+			y:         7,
+			wantValid: false,
+		},
+		{
+			name:      "fish can occupy a water cell",
+			kind:      Fish,
+			x:         8,
+			y:         8,
+			wantValid: true,
+		},
+		{
+			name:      "fish cannot occupy dry land",
+			kind:      Fish,
+			x:         7,
+			y:         8,
+			wantValid: false,
+		},
 	}
 
 	for _, tc := range tests {

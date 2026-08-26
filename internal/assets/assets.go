@@ -49,14 +49,31 @@ var (
 	Tavern        = mustLoad("generated/building_tavern.png")
 	LumberjackHut = mustLoad("generated/building_lumberjack_hut.png")
 	Winery        = mustLoad("generated/building_winery.png")
+	// The source fishing hut's pier points south. CPU-rotated variants let the
+	// renderer orient it toward whichever cardinal water tile borders the hut.
+	FisherHutFrames = [4]*ebiten.Image{
+		mustLoad("generated/building_fisher_hut.png"),
+		mustLoadRotated("generated/building_fisher_hut.png", 1),
+		mustLoadRotated("generated/building_fisher_hut.png", 2),
+		mustLoadRotated("generated/building_fisher_hut.png", 3),
+	}
 
 	// TreeFrames are the three growth stages from one transparent horizontal
 	// sprite sheet. They are sliced once at startup and then drawn with nearest
 	// neighbour scaling by the renderer.
 	TreeFrames = [3]*ebiten.Image{
-		mustLoadTreeFrame(0),
-		mustLoadTreeFrame(1),
-		mustLoadTreeFrame(2),
+		mustLoadAtlasFrame("generated/tree_stages.png", 0),
+		mustLoadAtlasFrame("generated/tree_stages.png", 1),
+		mustLoadAtlasFrame("generated/tree_stages.png", 2),
+	}
+
+	// FishFrames contains the three transparent growth stages of a fish. A
+	// sprite replaces the former procedural marker, keeping mature fish legible
+	// while letting fry remain a quiet detail of the water surface.
+	FishFrames = [3]*ebiten.Image{
+		mustLoadAtlasFrame("generated/fish_stages.png", 0),
+		mustLoadAtlasFrame("generated/fish_stages.png", 1),
+		mustLoadAtlasFrame("generated/fish_stages.png", 2),
 	}
 
 	// There is one purpose-built silhouette per profession for now. The
@@ -87,6 +104,12 @@ var (
 		mustLoad("generated/unit_winemaker.png"),
 		mustLoad("generated/unit_winemaker.png"),
 	}
+	Fisherman = [3]*ebiten.Image{
+		mustLoad("generated/unit_fisherman.png"),
+		mustLoad("generated/unit_fisherman.png"),
+		mustLoad("generated/unit_fisherman.png"),
+	}
+	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 
 func mustDecode(name string) image.Image {
@@ -105,12 +128,48 @@ func mustLoad(name string) *ebiten.Image {
 	return ebiten.NewImageFromImage(mustDecode(name))
 }
 
-func mustLoadTreeFrame(index int) *ebiten.Image {
-	src := mustDecode("generated/tree_stages.png")
+// mustLoadRotated makes a nearest-neighbour 90-degree rotation once during
+// startup. It keeps a waterside building's pier attached to its selected
+// launch tile without adding per-frame image transformations.
+func mustLoadRotated(name string, turns int) *ebiten.Image {
+	src := mustDecode(name)
+	turns %= 4
+	if turns < 0 {
+		turns += 4
+	}
+	if turns == 0 {
+		return ebiten.NewImageFromImage(src)
+	}
+	b := src.Bounds()
+	width, height := b.Dx(), b.Dy()
+	if turns%2 == 0 {
+		out := image.NewNRGBA(image.Rect(0, 0, width, height))
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				out.Set(width-1-x, height-1-y, src.At(b.Min.X+x, b.Min.Y+y))
+			}
+		}
+		return ebiten.NewImageFromImage(out)
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, height, width))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			if turns == 1 {
+				out.Set(height-1-y, x, src.At(b.Min.X+x, b.Min.Y+y))
+			} else {
+				out.Set(y, width-1-x, src.At(b.Min.X+x, b.Min.Y+y))
+			}
+		}
+	}
+	return ebiten.NewImageFromImage(out)
+}
+
+func mustLoadAtlasFrame(name string, index int) *ebiten.Image {
+	src := mustDecode(name)
 	b := src.Bounds()
 	const frameCount = 3
 	if index < 0 || index >= frameCount || b.Dx()%frameCount != 0 {
-		panic("assets: invalid tree sprite sheet")
+		panic("assets: invalid three-frame sprite sheet")
 	}
 	frameWidth := b.Dx() / frameCount
 	out := image.NewNRGBA(image.Rect(0, 0, frameWidth, b.Dy()))

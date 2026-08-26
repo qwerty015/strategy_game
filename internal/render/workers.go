@@ -7,17 +7,18 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/fishing"
 	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/villagers"
 )
 
 // DrawWorkerMarkers shows whether a worker is assigned to a Farm, Bakery,
-// Winery or Lumberjack Hut. A green plus means the worker is at work/assigned; a red
+// Winery, Lumberjack Hut or Fisher Hut. A green plus means the worker is at work/assigned; a red
 // minus means the resident worker is away or missing.
-func DrawWorkerMarkers(screen *ebiten.Image, buildings []*building.Building, vills []*villagers.Villager, jacks []*lumberjack.Lumberjack, cam *Camera) {
+func DrawWorkerMarkers(screen *ebiten.Image, buildings []*building.Building, vills []*villagers.Villager, jacks []*lumberjack.Lumberjack, fishermen []*fishing.Fisherman, cam *Camera) {
 	tilePixels := cam.TilePixels()
 	for _, b := range buildings {
-		if b.Kind != building.Farm && b.Kind != building.Bakery && b.Kind != building.Winery && b.Kind != building.LumberjackHut {
+		if b.Kind != building.Farm && b.Kind != building.Bakery && b.Kind != building.Winery && b.Kind != building.LumberjackHut && b.Kind != building.FisherHut {
 			continue
 		}
 		present := false
@@ -29,6 +30,12 @@ func DrawWorkerMarkers(screen *ebiten.Image, buildings []*building.Building, vil
 		}
 		for _, j := range jacks {
 			if j.HomeBuilding() == b && j.AtPost() {
+				present = true
+				break
+			}
+		}
+		for _, f := range fishermen {
+			if f.HomeBuilding() == b && f.AtPost() {
 				present = true
 				break
 			}

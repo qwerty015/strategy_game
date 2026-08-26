@@ -21,6 +21,13 @@ func CanPlace(g *world.Grid, existing []*Building, kind Kind, x, y int) bool {
 		}
 	}
 
+	// A fishing hut launches its boat straight from a pier. Diagonal contact
+	// is intentionally not enough: the pier needs a cardinal neighbouring
+	// water tile, not merely a corner of a pond.
+	if kind == FisherHut && !hasCardinalWaterNeighbor(g, x, y) {
+		return false
+	}
+
 	for _, b := range existing {
 		if footprintsOverlap(x, y, bt.Footprint, b.X, b.Y, Types[b.Kind].Footprint) {
 			return false
@@ -28,6 +35,16 @@ func CanPlace(g *world.Grid, existing []*Building, kind Kind, x, y int) bool {
 	}
 
 	return true
+}
+
+func hasCardinalWaterNeighbor(g *world.Grid, x, y int) bool {
+	for _, d := range [...]Point{{X: 0, Y: 1}, {X: -1, Y: 0}, {X: 0, Y: -1}, {X: 1, Y: 0}} {
+		tx, ty := x+d.X, y+d.Y
+		if g.InBounds(tx, ty) && g.At(tx, ty).Terrain == world.Water {
+			return true
+		}
+	}
+	return false
 }
 
 func footprintsOverlap(x1, y1, size1, x2, y2, size2 int) bool {

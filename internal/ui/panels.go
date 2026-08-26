@@ -10,6 +10,7 @@ import (
 	"strategy_game/internal/assets"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
+	"strategy_game/internal/fishing"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
@@ -76,6 +77,8 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		drawVillagerInspector(screen, r.Min.X+18, 62, selection.Villager)
 	case SelectionLumberjack:
 		drawLumberjackInspector(screen, r.Min.X+18, 62, selection.Lumberjack)
+	case SelectionFisherman:
+		drawFishermanInspector(screen, r.Min.X+18, 62, selection.Fisherman)
 	}
 }
 
@@ -90,10 +93,30 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		DrawText(screen, t.HarvestableLabel, float64(x), float64(y))
 		return
 	}
+	if b.Kind == building.Fish {
+		DrawText(screen, fmt.Sprintf("%s: %d%%", t.GrowthLabel, int(b.GrowthProgress()*100)), float64(x), float64(y))
+		y += 20
+		if b.GrowthStage() >= 2 {
+			DrawText(screen, t.CatchableLabel, float64(x), float64(y))
+		}
+		return
+	}
 	if b.Kind == building.LumberjackHut {
 		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
 		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Log], b.OutputBuffer[resource.Log], building.BufferCapacity), float64(x), float64(y))
+		y += 20
+		routeState := t.Disconnected
+		if connected {
+			routeState = t.Connected
+		}
+		DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		return
+	}
+	if b.Kind == building.FisherHut {
+		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		y += 20
+		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Fish], b.OutputBuffer[resource.Fish], building.BufferCapacity), float64(x), float64(y))
 		y += 20
 		routeState := t.Disconnected
 		if connected {
@@ -269,6 +292,43 @@ func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumbe
 	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(j.HungerTicks(), lumberjack.HungerInterval), lumberjack.HungerInterval), float64(x), float64(y))
 }
 
+func drawFishermanInspector(screen *ebiten.Image, x, y int, f *fishing.Fisherman) {
+	t := i18n.T()
+	DrawText(screen, t.UnitFisherman, float64(x), float64(y))
+	y += 24
+
+	state := t.StateIdle
+	switch f.State() {
+	case fishing.StateToFish, fishing.StateToHome, fishing.StateToTavern, fishing.StateToHomeAfterMeal:
+		state = t.StateWalking
+	case fishing.StateFishing:
+		state = t.StateFishing
+	case fishing.StateUnloading:
+		state = t.StateUnloading
+	}
+	if f.Starving {
+		state += " (" + t.StateStarving + ")"
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	y += 20
+
+	_, amount := f.Cargo()
+	cargo := t.NoCargo
+	if amount > 0 {
+		cargo = fmt.Sprintf("%s × %d", t.ResourceName[resource.Fish], amount)
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
+	y += 20
+
+	target := t.NoRoute
+	if f.TargetFish() != nil {
+		target = t.BuildingName[building.Fish]
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.FisherHut]), float64(x), float64(y))
+	y += 20
+	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(f.HungerTicks(), fishing.HungerInterval), fishing.HungerInterval), float64(x), float64(y))
+}
+
 // DrawSelectionMarker draws a warm outline under the selected object so the
 // player can connect the inspector to the world even when sprites overlap.
 func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Selection) {
@@ -283,6 +343,8 @@ func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Sel
 		x, y = cam.TileToScreen(selection.Villager.X, selection.Villager.Y)
 	} else if selection.Kind == SelectionLumberjack && selection.Lumberjack != nil {
 		x, y = cam.TileToScreen(selection.Lumberjack.X, selection.Lumberjack.Y)
+	} else if selection.Kind == SelectionFisherman && selection.Fisherman != nil {
+		x, y = cam.TileToScreen(selection.Fisherman.X, selection.Fisherman.Y)
 	} else {
 		return
 	}
@@ -389,6 +451,8 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.Warehouse
 	case building.LumberjackHut:
 		img = assets.LumberjackHut
+	case building.FisherHut:
+		img = assets.FisherHutFrames[0]
 	}
 	if img == nil {
 		return

@@ -2,6 +2,7 @@ package building
 
 import (
 	"strategy_game/internal/resource"
+	"strategy_game/internal/world"
 )
 
 // Types is the registry of every building kind in the game. This is the
@@ -114,5 +115,19 @@ var Types = map[Kind]Type{
 			TicksToProduce: 240, // about two minutes at normal speed
 		},
 		OutputCapacity: 8,
+	},
+	FisherHut: {
+		Kind:      FisherHut,
+		Name:      "Fisher Hut",
+		Footprint: 1,
+		// The fisherman places caught Fish in OutputBuffer; ordinary serfs
+		// collect it along the hut's normal road access point.
+	},
+	Fish: {
+		Kind:           Fish,
+		Name:           "Fish",
+		Footprint:      1,
+		AllowedTerrain: []world.TerrainType{world.Water},
+		// Fish are spawned by the water-population system, not player-built.
 	},
 }

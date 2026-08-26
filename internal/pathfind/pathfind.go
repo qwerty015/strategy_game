@@ -79,6 +79,49 @@ func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Poi
 	return path, true
 }
 
+// FindWaterPath returns a shortest route that stays entirely on Water tiles.
+// It deliberately ignores placed Fish objects: fish occupy a water cell for
+// population/rendering, not as a solid obstacle to a boat.
+func FindWaterPath(grid *world.Grid, from, to Point) ([]Point, bool) {
+	if grid == nil || !grid.InBounds(from.X, from.Y) || !grid.InBounds(to.X, to.Y) ||
+		grid.At(from.X, from.Y).Terrain != world.Water || grid.At(to.X, to.Y).Terrain != world.Water {
+		return nil, false
+	}
+	if from == to {
+		return []Point{from}, true
+	}
+
+	visited := map[Point]Point{from: from}
+	queue := []Point{from}
+	found := false
+	for i := 0; i < len(queue); i++ {
+		p := queue[i]
+		if p == to {
+			found = true
+			break
+		}
+		for _, n := range neighbors(p) {
+			if _, seen := visited[n]; seen || !grid.InBounds(n.X, n.Y) || grid.At(n.X, n.Y).Terrain != world.Water {
+				continue
+			}
+			visited[n] = p
+			queue = append(queue, n)
+		}
+	}
+	if !found {
+		return nil, false
+	}
+
+	path := []Point{to}
+	for cur := to; visited[cur] != cur; {
+		parent := visited[cur]
+		path = append(path, parent)
+		cur = parent
+	}
+	reverse(path)
+	return path, true
+}
+
 func landWalkable(grid *world.Grid, buildings []*building.Building, p, start, goal Point) bool {
 	if !grid.InBounds(p.X, p.Y) || !grid.At(p.X, p.Y).Buildable() {
 		return false

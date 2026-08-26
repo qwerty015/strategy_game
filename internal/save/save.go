@@ -45,6 +45,11 @@ type GameState struct {
 	TreeRegrowth []TreeRegrowthState
 	TreeSeed     uint32
 
+	// FishRegrowth stores delayed fry spawns after fish are caught. Each entry
+	// remembers its original water body, so fish never respawn in another pond.
+	FishRegrowth []FishRegrowthState
+	FishSeed     uint32
+
 	CameraX    float64
 	CameraY    float64
 	CameraZoom float64
@@ -60,6 +65,7 @@ const (
 	UnitBaker      UnitKind = "baker"
 	UnitLumberjack UnitKind = "lumberjack"
 	UnitWinemaker  UnitKind = "winemaker"
+	UnitFisherman  UnitKind = "fisherman"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the
@@ -86,6 +92,15 @@ type TreeRegrowthState struct {
 	Ticks       int
 	TargetTicks int
 	Seed        uint32
+}
+
+// FishRegrowthState is the persistent retry timer for one fish replacement.
+// WaterX/WaterY identify the pond or lake component where the fry belongs.
+type FishRegrowthState struct {
+	WaterX, WaterY int
+	Ticks          int
+	TargetTicks    int
+	Seed           uint32
 }
 
 // Save writes state as indented JSON to path, creating any missing

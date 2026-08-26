@@ -48,6 +48,28 @@ func TestFindLandPath_WalksWithoutRoadButNotThroughWater(t *testing.T) {
 	}
 }
 
+func TestFindWaterPath_StaysInOneWaterBody(t *testing.T) {
+	grid := world.NewGrid(7, 3)
+	for x := 0; x < grid.Width; x++ {
+		grid.Set(x, 1, world.Tile{Terrain: world.Water})
+	}
+	from, to := Point{X: 0, Y: 1}, Point{X: 6, Y: 1}
+	path, ok := FindWaterPath(grid, from, to)
+	if !ok {
+		t.Fatal("FindWaterPath() through connected water = not found")
+	}
+	for _, point := range path {
+		if grid.At(point.X, point.Y).Terrain != world.Water {
+			t.Fatalf("water path contains non-water tile %v", point)
+		}
+	}
+
+	grid.Set(3, 1, world.Tile{Terrain: world.Grass})
+	if _, ok := FindWaterPath(grid, from, to); ok {
+		t.Fatal("FindWaterPath() across a land break = found, want not found")
+	}
+}
+
 func TestFindPath_NoRoad(t *testing.T) {
 	from := &building.Building{Kind: building.Farm, X: 0, Y: 0}
 	to := &building.Building{Kind: building.Mill, X: 5, Y: 0}

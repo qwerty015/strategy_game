@@ -8,6 +8,7 @@ import (
 
 	"strategy_game/internal/assets"
 	"strategy_game/internal/building"
+	"strategy_game/internal/world"
 )
 
 // buildingHeight is how tall (in tiles) a standing building sprite is
@@ -59,7 +60,7 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // than the tile itself (see buildingHeight), with a production-progress bar
 // underneath. MillFrames contains three compact sail positions, switched
 // periodically to animate the windmill.
-func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
+func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera) {
 	tilePixels := cam.TilePixels()
 	// Ground is drawn before this function. Roads are the bottom gameplay
 	// layer, so render every road before any tree, field or standing building.
@@ -81,6 +82,9 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 		switch b.Kind {
 		case building.Tree:
 			drawTree(screen, sx, sy, tilePixels, b.GrowthStage())
+			continue
+		case building.Fish:
+			drawFish(screen, sx, sy, tilePixels, b.GrowthStage())
 			continue
 
 		case building.Farm:
@@ -135,6 +139,20 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 
 		case building.LumberjackHut:
 			drawStandingAtScale(screen, assets.LumberjackHut, sx, sy, buildingHeight, tilePixels)
+
+		case building.FisherHut:
+			frame := 0 // source sprite's pier points south
+			if water, ok := building.WaterAccessPoint(grid, b); ok {
+				switch {
+				case water.X < b.X:
+					frame = 1 // rotate south-facing pier clockwise to west
+				case water.Y < b.Y:
+					frame = 2
+				case water.X > b.X:
+					frame = 3
+				}
+			}
+			drawStandingAtScale(screen, assets.FisherHutFrames[frame], sx, sy, buildingHeight, tilePixels)
 		}
 
 		if bt.Recipe.TicksToProduce > 0 {
@@ -161,4 +179,17 @@ func drawTree(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 		stage = 2
 	}
 	drawStandingAtScale(screen, assets.TreeFrames[stage], sx, sy, 1.75, tilePixels)
+}
+
+// drawFish uses the dedicated three-stage transparent fish sprite sheet. The
+// sprite is deliberately small against a water tile: fish should read as part
+// of the pond, not as a rectangular world marker or a UI icon.
+func drawFish(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
+	if stage < 0 {
+		stage = 0
+	}
+	if stage > 2 {
+		stage = 2
+	}
+	drawStandingAtScale(screen, assets.FishFrames[stage], sx, sy, 1.7, tilePixels)
 }

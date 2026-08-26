@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/fishing"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/villagers"
@@ -18,6 +19,7 @@ const (
 	SelectionSerf
 	SelectionVillager
 	SelectionLumberjack
+	SelectionFisherman
 )
 
 // Selection is the UI-facing selection state. Only one object can be
@@ -28,6 +30,7 @@ type Selection struct {
 	Serf       *logistics.Serf
 	Villager   *villagers.Villager
 	Lumberjack *lumberjack.Lumberjack
+	Fisherman  *fishing.Fisherman
 }
 
 // Clear removes the current selection.

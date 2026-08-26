@@ -52,6 +52,14 @@ const (
 	// Winery is a vineyard and wine-making workshop. Its eight crop cells
 	// occupy the tiles around the building sprite, just like a Farm.
 	Winery
+
+	// FisherHut is a one-tile workplace for a fisherman. It must stand on dry
+	// land directly beside a water tile, which also becomes the boat launch.
+	FisherHut
+
+	// Fish is a persistent water-world object. It grows from fry to a mature
+	// catchable fish and is never exposed in the construction palette.
+	Fish
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -81,7 +89,8 @@ type Type struct {
 	AccessX, AccessY int
 
 	// AllowedTerrain lists the terrain types this building may be placed
-	// on. An empty slice means "any buildable (non-water) terrain".
+	// on. An empty slice means "any buildable (non-water) terrain". A type may
+	// explicitly list Water for a passive world object such as Fish.
 	AllowedTerrain []world.TerrainType
 
 	Recipe Recipe
@@ -109,7 +118,7 @@ func (b *Building) AccessPoint() Point {
 // see CanPlace for the full placement check.
 func (t Type) CanBuildOn(tile world.Tile) bool {
 	if !tile.Buildable() {
-		return false
+		return slices.Contains(t.AllowedTerrain, tile.Terrain)
 	}
 	if len(t.AllowedTerrain) == 0 {
 		return true
@@ -153,6 +162,12 @@ const (
 	// per second. The extra random-looking part makes a grove grow unevenly.
 	TreeGrowthMinTicks       = 240
 	TreeGrowthVariationTicks = 240
+
+	// Fish grow on the same deliberately slow 2-4 minute rhythm as trees.
+	// Initial fish are seeded at mixed stages so a new fishing hut has some
+	// immediate targets instead of waiting through an entirely empty pond.
+	FishGrowthMinTicks       = 240
+	FishGrowthVariationTicks = 240
 )
 
 // NewTree creates an indestructible tree with a stable per-coordinate growth
@@ -167,23 +182,38 @@ func NewTree(x, y int) *Building {
 	}
 }
 
-// TickGrowth advances a tree by one simulation tick. Non-tree buildings are
-// ignored so the caller can safely tick the whole building slice.
+// NewFish creates an uncatchable fry. Its deterministic growth target keeps
+// the visual stage stable across save/load just like a tree's stage.
+func NewFish(x, y int) *Building {
+	return &Building{
+		Kind:              Fish,
+		X:                 x,
+		Y:                 y,
+		GrowthTargetTicks: fishGrowthTarget(x, y),
+	}
+}
+
+// TickGrowth advances a tree or fish by one simulation tick. Other buildings
+// are ignored so the caller can safely tick the whole building slice.
 func (b *Building) TickGrowth() {
-	if b == nil || b.Kind != Tree {
+	if b == nil || (b.Kind != Tree && b.Kind != Fish) {
 		return
 	}
 	if b.GrowthTargetTicks <= 0 {
-		b.GrowthTargetTicks = treeGrowthTarget(b.X, b.Y)
+		if b.Kind == Fish {
+			b.GrowthTargetTicks = fishGrowthTarget(b.X, b.Y)
+		} else {
+			b.GrowthTargetTicks = treeGrowthTarget(b.X, b.Y)
+		}
 	}
 	if b.GrowthTicks < b.GrowthTargetTicks {
 		b.GrowthTicks++
 	}
 }
 
-// GrowthProgress returns a clamped 0..1 value for rendering and UI.
+// GrowthProgress returns a clamped 0..1 value for a growing world object.
 func (b *Building) GrowthProgress() float64 {
-	if b == nil || b.Kind != Tree || b.GrowthTargetTicks <= 0 {
+	if b == nil || (b.Kind != Tree && b.Kind != Fish) || b.GrowthTargetTicks <= 0 {
 		return 0
 	}
 	progress := float64(b.GrowthTicks) / float64(b.GrowthTargetTicks)
@@ -196,7 +226,7 @@ func (b *Building) GrowthProgress() float64 {
 	return progress
 }
 
-// GrowthStage returns 0 for a sapling and 2 for a mature tree.
+// GrowthStage returns 0 for a young object and 2 for a mature tree or fish.
 func (b *Building) GrowthStage() int {
 	progress := b.GrowthProgress()
 	switch {
@@ -212,6 +242,27 @@ func (b *Building) GrowthStage() int {
 func treeGrowthTarget(x, y int) int {
 	seed := uint32(x)*73856093 ^ uint32(y)*19349663 ^ 0x9e3779b9
 	return TreeGrowthMinTicks + int(seed%TreeGrowthVariationTicks)
+}
+
+func fishGrowthTarget(x, y int) int {
+	seed := uint32(x)*83492791 ^ uint32(y)*2654435761 ^ 0x7f4a7c15
+	return FishGrowthMinTicks + int(seed%FishGrowthVariationTicks)
+}
+
+// WaterAccessPoint returns a cardinal water tile immediately beside b. The
+// order is stable, so a hut touching several water cells keeps the same pier
+// direction after save/load. It is primarily used by FisherHut.
+func WaterAccessPoint(g *world.Grid, b *Building) (Point, bool) {
+	if g == nil || b == nil {
+		return Point{}, false
+	}
+	for _, d := range [...]Point{{X: 0, Y: 1}, {X: -1, Y: 0}, {X: 0, Y: -1}, {X: 1, Y: 0}} {
+		x, y := b.X+d.X, b.Y+d.Y
+		if g.InBounds(x, y) && g.At(x, y).Terrain == world.Water {
+			return Point{X: x, Y: y}, true
+		}
+	}
+	return Point{}, false
 }
 
 // AddOutput deposits up to n units of t into OutputBuffer, capped by the

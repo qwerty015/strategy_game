@@ -11,6 +11,7 @@ import (
 
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
+	"strategy_game/internal/fishing"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
@@ -49,11 +50,22 @@ const (
 	treeRegrowthMinTicks       int    = 180 // 90 seconds at normal speed
 	treeRegrowthVariationTicks int    = 180 // total wait is about 90–180 seconds
 	treeRegrowthRetryTicks     int    = 30  // retry every 15 seconds if the map is full
+
+	defaultFishSeed            uint32 = 0x6a09e667
+	fishRegrowthMinTicks       int    = 180 // fry appears after 90-180 seconds
+	fishRegrowthVariationTicks int    = 180
+	fishRegrowthRetryTicks     int    = 30
 )
 
 type treeRegrowth struct {
 	ticks, target int
 	seed          uint32
+}
+
+type fishRegrowth struct {
+	waterX, waterY int
+	ticks, target  int
+	seed           uint32
 }
 
 // Game implements ebiten.Game and wires the logic packages (world,
@@ -67,9 +79,12 @@ type Game struct {
 	logi      *logistics.Controller
 	vills     *villagers.Controller
 	jacks     *lumberjack.Controller
+	fishers   *fishing.Controller
 
 	treeRegrowth []treeRegrowth
 	treeSeed     uint32
+	fishRegrowth []fishRegrowth
+	fishSeed     uint32
 
 	camera        *render.Camera
 	palette       *ui.Palette
@@ -92,6 +107,7 @@ func NewGame() *Game {
 	// Trees are sparse persistent world objects, scattered across all free
 	// dry cells rather than confined to a special forest area.
 	buildings = seedTrees(grid, buildings)
+	buildings = seedFish(grid, buildings)
 
 	layout := ui.NewLayout(screenWidth, screenHeight)
 	camera := render.NewCamera()
@@ -110,7 +126,9 @@ func NewGame() *Game {
 		logi:      logistics.NewController(warehouse, startingSerfs),
 		vills:     villagers.NewController(),
 		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
 		treeSeed:  defaultTreeSeed,
+		fishSeed:  defaultFishSeed,
 		camera:    camera,
 		palette:   ui.NewPalette(),
 		layout:    layout,
@@ -133,6 +151,7 @@ func (g *Game) Update() error {
 			b.TickGrowth()
 		}
 		g.tickTreeRegrowth()
+		g.tickFishRegrowth()
 		economy.TickWithConnectivity(g.buildings, g.starvingBuildings(), g.disconnectedBuildings())
 
 		// One shared reservation ledger per simulation tick: every
@@ -144,6 +163,7 @@ func (g *Game) Update() error {
 		g.logi.Reserve(ledger)
 		g.vills.Reserve(ledger)
 		g.jacks.Reserve(ledger)
+		g.fishers.Reserve(ledger)
 
 		// Whichever controller's Tick runs first this simulation tick
 		// effectively wins any contention over shared Tavern food: its
@@ -152,6 +172,7 @@ func (g *Game) Update() error {
 		// actually been waiting longest gets first claim -- not just
 		// whichever unit type happens to be ticked first every time.
 		var jackEvents []lumberjack.Event
+		var fishEvents []fishing.Event
 		type unitStep struct {
 			hunger int
 			run    func()
@@ -160,6 +181,7 @@ func (g *Game) Update() error {
 			{g.logi.MaxWaitingHunger(), func() { g.logi.Tick(g.buildings, g.stock, ledger) }},
 			{g.vills.MaxWaitingHunger(), func() { g.vills.Tick(g.buildings, ledger) }},
 			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, g.buildings, ledger) }},
+			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, g.buildings, ledger) }},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
 		for _, step := range steps {
@@ -170,7 +192,12 @@ func (g *Game) Update() error {
 				g.cutTree(event.Tree)
 			}
 		}
-		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks)
+		for _, event := range fishEvents {
+			if event.Kind == fishing.FishCaught {
+				g.catchFish(event.Fish)
+			}
+		}
+		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
 	}
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
@@ -199,7 +226,7 @@ func (g *Game) resizeLayout(width, height int) {
 // can't get food until the Bakery makes some, and the Bakery can't
 // work while "starving".
 func (g *Game) starvingBuildings() map[*building.Building]bool {
-	m := make(map[*building.Building]bool, len(g.vills.Villagers)+len(g.jacks.Lumberjacks))
+	m := make(map[*building.Building]bool, len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen))
 	for _, v := range g.vills.Villagers {
 		if !v.Working() {
 			m[v.Home] = true
@@ -208,6 +235,11 @@ func (g *Game) starvingBuildings() map[*building.Building]bool {
 	for _, j := range g.jacks.Lumberjacks {
 		if !j.AtPost() {
 			m[j.HomeBuilding()] = true
+		}
+	}
+	for _, f := range g.fishers.Fishermen {
+		if !f.AtPost() {
+			m[f.HomeBuilding()] = true
 		}
 	}
 	return m
@@ -370,7 +402,7 @@ func (g *Game) handleUnitActions() {
 
 func (g *Game) hireSerf() {
 	g.logi.Hire()
-	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks)
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
 	g.statusMsg = ""
 }
 
@@ -390,12 +422,18 @@ func (g *Game) deleteSelectedBuilding() {
 		g.statusMsg = i18n.T().CannotDeleteTree
 		return
 	}
+	if b.Kind == building.Fish {
+		g.statusMsg = i18n.T().CannotDeleteFish
+		return
+	}
 
 	g.logi.CancelAllJobs(g.stock)
 	g.vills.RemoveHome(b)
 	g.vills.CancelRouteTo(b) // in case b is a Tavern someone is mid-trip to eat at
 	g.jacks.RemoveHome(b, g.stock)
 	g.jacks.CancelRouteTo(b) // same, for lumberjacks
+	g.fishers.RemoveHome(b, g.stock)
+	g.fishers.CancelRouteTo(b) // same, for fishermen
 	for i, candidate := range g.buildings {
 		if candidate != b {
 			continue
@@ -428,6 +466,12 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		j := g.jacks.Lumberjacks[i]
 		if j.X == tx && j.Y == ty {
 			return ui.Selection{Kind: ui.SelectionLumberjack, Lumberjack: j}
+		}
+	}
+	for i := len(g.fishers.Fishermen) - 1; i >= 0; i-- {
+		f := g.fishers.Fishermen[i]
+		if f.X == tx && f.Y == ty {
+			return ui.Selection{Kind: ui.SelectionFisherman, Fisherman: f}
 		}
 	}
 	for i := len(g.buildings) - 1; i >= 0; i-- {
@@ -465,6 +509,8 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 		g.vills.Spawn(villagers.Winemaker, b)
 	case building.LumberjackHut:
 		g.jacks.Spawn(b)
+	case building.FisherHut:
+		g.fishers.Spawn(b)
 	}
 }
 
@@ -480,6 +526,8 @@ func (g *Game) handleSaveLoad() {
 			Units:        g.serializeUnits(),
 			TreeRegrowth: g.serializeTreeRegrowth(),
 			TreeSeed:     g.treeSeed,
+			FishRegrowth: g.serializeFishRegrowth(),
+			FishSeed:     g.fishSeed,
 			CameraX:      g.camera.X,
 			CameraY:      g.camera.Y,
 			CameraZoom:   g.camera.Scale,
@@ -504,6 +552,7 @@ func (g *Game) handleSaveLoad() {
 		}
 		buildings := referenceBuildings(state.Buildings)
 		buildings, hadTrees := ensureTrees(grid, buildings, len(state.TreeRegrowth) > 0)
+		buildings, _ = ensureFish(grid, buildings, len(state.FishRegrowth) > 0)
 		warehouse := findWarehouse(buildings)
 		if warehouse == nil {
 			g.statusMsg = i18n.T().LoadFailedNoWarehouse
@@ -523,6 +572,11 @@ func (g *Game) handleSaveLoad() {
 		g.treeSeed = state.TreeSeed
 		if g.treeSeed == 0 {
 			g.treeSeed = defaultTreeSeed
+		}
+		g.fishRegrowth = restoreFishRegrowth(state.FishRegrowth)
+		g.fishSeed = state.FishSeed
+		if g.fishSeed == 0 {
+			g.fishSeed = defaultFishSeed
 		}
 		g.camera.X, g.camera.Y = state.CameraX, state.CameraY
 		if !hadTrees && g.camera.X == 0 {
@@ -550,6 +604,7 @@ func (g *Game) handleSaveLoad() {
 		}
 		g.vills = villagers.NewController()
 		g.jacks = lumberjack.NewController()
+		g.fishers = fishing.NewController()
 		if len(state.Units) == 0 {
 			// Saves from before unit persistence did not contain a roster.
 			// Keep those saves playable with the old sensible defaults.
@@ -565,7 +620,7 @@ func (g *Game) handleSaveLoad() {
 		} else {
 			g.restoreUnits(state.Units, buildings)
 		}
-		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks)
+		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
 
 		g.statusMsg = i18n.T().Loaded
 	}
@@ -589,7 +644,7 @@ func dereferenceBuildings(in []*building.Building) []building.Building {
 }
 
 func (g *Game) serializeUnits() []save.UnitState {
-	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks))
+	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen))
 	for _, s := range g.logi.Serfs {
 		units = append(units, save.UnitState{
 			Kind:        save.UnitSerf,
@@ -639,6 +694,24 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Meal:        j.Meal(),
 		})
 	}
+	for _, f := range g.fishers.Fishermen {
+		_, cargoAmount := f.Cargo()
+		targetIndex := indexOfBuilding(g.buildings, f.TargetFish())
+		units = append(units, save.UnitState{
+			Kind:        save.UnitFisherman,
+			X:           f.X,
+			Y:           f.Y,
+			HomeIndex:   indexOfBuilding(g.buildings, f.HomeBuilding()),
+			HungerTicks: f.HungerTicks(),
+			Starving:    f.Starving,
+			State:       int(f.State()),
+			TargetIndex: targetIndex,
+			WorkTicks:   f.WorkTicks(),
+			Cargo:       resource.Fish,
+			CargoAmount: cargoAmount,
+			Meal:        f.Meal(),
+		})
+	}
 	return units
 }
 
@@ -676,6 +749,15 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				target = buildings[state.TargetIndex]
 			}
 			g.jacks.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, lumberjack.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
+		case save.UnitFisherman:
+			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.FisherHut {
+				continue
+			}
+			var target *building.Building
+			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.Fish {
+				target = buildings[state.TargetIndex]
+			}
+			g.fishers.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, fishing.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
 		}
 	}
 }
@@ -742,6 +824,208 @@ func treeScatterScore(x, y int) uint32 {
 	// The hash makes the first maxTrees cells look randomly scattered without
 	// relying on runtime randomness or storing a random generator in a save.
 	return uint32(x)*73856093 ^ uint32(y)*19349663 ^ 0x85ebca6b
+}
+
+// seedFish fills each connected water body to at most 40% of its cells. A
+// one-cell minimum is deliberate: the approved small-pond exception keeps a
+// tiny usable pond from becoming permanently sterile through integer rounding.
+func seedFish(grid *world.Grid, buildings []*building.Building) []*building.Building {
+	seen := make(map[gridPoint]bool)
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			start := gridPoint{x, y}
+			if seen[start] || grid.At(x, y).Terrain != world.Water {
+				continue
+			}
+			cells := waterBodyCells(grid, start)
+			for _, cell := range cells {
+				seen[cell] = true
+			}
+			sort.Slice(cells, func(i, j int) bool {
+				return fishScatterScore(cells[i].x, cells[i].y) < fishScatterScore(cells[j].x, cells[j].y)
+			})
+			for i, cell := range cells[:fishBodyLimit(cells)] {
+				fish := building.NewFish(cell.x, cell.y)
+				// A stable mixture of young, growing and mature fish makes an
+				// initial pond immediately useful without skipping its growth loop.
+				if i == 0 || fishScatterScore(cell.x, cell.y)&3 == 0 {
+					fish.GrowthTicks = fish.GrowthTargetTicks
+				} else {
+					fish.GrowthTicks = fish.GrowthTargetTicks * int(20+fishScatterScore(cell.x, cell.y)%60) / 100
+				}
+				buildings = append(buildings, fish)
+			}
+		}
+	}
+	return buildings
+}
+
+type gridPoint struct{ x, y int }
+
+func waterBodyCells(grid *world.Grid, start gridPoint) []gridPoint {
+	if grid == nil || !grid.InBounds(start.x, start.y) || grid.At(start.x, start.y).Terrain != world.Water {
+		return nil
+	}
+	seen := map[gridPoint]bool{start: true}
+	queue := []gridPoint{start}
+	for i := 0; i < len(queue); i++ {
+		p := queue[i]
+		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			n := gridPoint{p.x + d.x, p.y + d.y}
+			if seen[n] || !grid.InBounds(n.x, n.y) || grid.At(n.x, n.y).Terrain != world.Water {
+				continue
+			}
+			seen[n] = true
+			queue = append(queue, n)
+		}
+	}
+	return queue
+}
+
+func fishBodyLimit(cells []gridPoint) int {
+	if len(cells) == 0 {
+		return 0
+	}
+	limit := len(cells) * 40 / 100
+	if limit < 1 {
+		return 1
+	}
+	return limit
+}
+
+func fishScatterScore(x, y int) uint32 {
+	return uint32(x)*83492791 ^ uint32(y)*2654435761 ^ 0xc2b2ae35
+}
+
+// ensureFish migrates saves made before fish became persistent water objects.
+// A genuine all-caught pond still has delayed FishRegrowth entries, so it is
+// not mistaken for an old save and refilled immediately.
+func ensureFish(grid *world.Grid, buildings []*building.Building, hasRegrowth bool) ([]*building.Building, bool) {
+	for _, b := range buildings {
+		if b.Kind == building.Fish {
+			return buildings, true
+		}
+	}
+	if hasRegrowth {
+		return buildings, false
+	}
+	return seedFish(grid, buildings), false
+}
+
+func (g *Game) catchFish(fish *building.Building) {
+	if fish == nil || fish.Kind != building.Fish {
+		return
+	}
+	for i, candidate := range g.buildings {
+		if candidate != fish {
+			continue
+		}
+		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+		g.scheduleFishRegrowth(fish.X, fish.Y)
+		return
+	}
+}
+
+func (g *Game) scheduleFishRegrowth(waterX, waterY int) {
+	seed := g.nextFishSeed()
+	target := fishRegrowthMinTicks + int(seed%uint32(fishRegrowthVariationTicks))
+	g.fishRegrowth = append(g.fishRegrowth, fishRegrowth{waterX: waterX, waterY: waterY, target: target, seed: seed})
+}
+
+func (g *Game) nextFishSeed() uint32 {
+	if g.fishSeed == 0 {
+		g.fishSeed = defaultFishSeed
+	}
+	g.fishSeed ^= g.fishSeed << 13
+	g.fishSeed ^= g.fishSeed >> 17
+	g.fishSeed ^= g.fishSeed << 5
+	return g.fishSeed
+}
+
+func (g *Game) tickFishRegrowth() {
+	for i := 0; i < len(g.fishRegrowth); {
+		regrowth := &g.fishRegrowth[i]
+		if regrowth.target <= 0 {
+			regrowth.target = fishRegrowthMinTicks
+		}
+		if regrowth.ticks < regrowth.target {
+			regrowth.ticks++
+			i++
+			continue
+		}
+		cells := waterBodyCells(g.grid, gridPoint{regrowth.waterX, regrowth.waterY})
+		if len(cells) == 0 || countFishInCells(g.buildings, cells) >= fishBodyLimit(cells) {
+			regrowth.ticks = regrowth.target - fishRegrowthRetryTicks
+			if regrowth.ticks < 0 {
+				regrowth.ticks = 0
+			}
+			i++
+			continue
+		}
+		if x, y, ok := g.findFishSpawnCell(cells, regrowth.seed); ok {
+			g.buildings = append(g.buildings, building.NewFish(x, y))
+			g.fishRegrowth = append(g.fishRegrowth[:i], g.fishRegrowth[i+1:]...)
+			continue
+		}
+		regrowth.ticks = regrowth.target - fishRegrowthRetryTicks
+		if regrowth.ticks < 0 {
+			regrowth.ticks = 0
+		}
+		i++
+	}
+}
+
+func countFishInCells(buildings []*building.Building, cells []gridPoint) int {
+	inBody := make(map[gridPoint]bool, len(cells))
+	for _, cell := range cells {
+		inBody[cell] = true
+	}
+	count := 0
+	for _, b := range buildings {
+		if b != nil && b.Kind == building.Fish && inBody[gridPoint{b.X, b.Y}] {
+			count++
+		}
+	}
+	return count
+}
+
+func (g *Game) findFishSpawnCell(cells []gridPoint, seed uint32) (int, int, bool) {
+	bestScore := ^uint32(0)
+	best := gridPoint{}
+	found := false
+	for _, cell := range cells {
+		if !building.CanPlace(g.grid, g.buildings, building.Fish, cell.x, cell.y) {
+			continue
+		}
+		score := fishScatterScore(cell.x, cell.y) ^ seed
+		if !found || score < bestScore {
+			bestScore, best, found = score, cell, true
+		}
+	}
+	return best.x, best.y, found
+}
+
+func (g *Game) serializeFishRegrowth() []save.FishRegrowthState {
+	states := make([]save.FishRegrowthState, 0, len(g.fishRegrowth))
+	for _, r := range g.fishRegrowth {
+		states = append(states, save.FishRegrowthState{WaterX: r.waterX, WaterY: r.waterY, Ticks: r.ticks, TargetTicks: r.target, Seed: r.seed})
+	}
+	return states
+}
+
+func restoreFishRegrowth(states []save.FishRegrowthState) []fishRegrowth {
+	regrowth := make([]fishRegrowth, 0, len(states))
+	for _, state := range states {
+		ticks, target := state.Ticks, state.TargetTicks
+		if ticks < 0 {
+			ticks = 0
+		}
+		if target <= 0 {
+			target = fishRegrowthMinTicks
+		}
+		regrowth = append(regrowth, fishRegrowth{waterX: state.WaterX, waterY: state.WaterY, ticks: ticks, target: target, seed: state.Seed})
+	}
+	return regrowth
 }
 
 // ensureTrees migrates saves created before persistent tree objects existed.
@@ -899,10 +1183,11 @@ func restoreTreeRegrowth(states []save.TreeRegrowthState) []treeRegrowth {
 func (g *Game) Draw(screen *ebiten.Image) {
 	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
-	render.DrawBuildings(screen, g.buildings, g.camera)
+	render.DrawBuildings(screen, g.grid, g.buildings, g.camera)
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
 	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera)
+	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera)
 
 	mx, my := ebiten.CursorPosition()
 	tx, ty := g.camera.ScreenToTile(mx, my)
@@ -917,11 +1202,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// connection rule visible without requiring the player to click buildings
 	// one by one; the inspector still explains the selected building in detail.
 	for _, b := range g.buildings {
-		if b.Kind != building.Road && b.Kind != building.Tree && b.Kind != building.Warehouse {
+		if b.Kind != building.Road && b.Kind != building.Tree && b.Kind != building.Fish && b.Kind != building.Warehouse {
 			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
 		}
 	}
-	render.DrawWorkerMarkers(screen, g.buildings, g.vills.Villagers, g.jacks.Lumberjacks, g.camera)
+	render.DrawWorkerMarkers(screen, g.buildings, g.vills.Villagers, g.jacks.Lumberjacks, g.fishers.Fishermen, g.camera)
 	ui.DrawSelectionMarker(screen, g.camera, g.selection)
 	connected := false
 	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil {
