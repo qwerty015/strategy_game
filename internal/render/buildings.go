@@ -191,5 +191,8 @@ func drawFish(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 	if stage > 2 {
 		stage = 2
 	}
-	drawStandingAtScale(screen, assets.FishFrames[stage], sx, sy, 1.7, tilePixels)
+	// A mature fish occupies at most about half a water cell. At the previous
+	// standing-building scale it read as a giant creature rather than a quiet
+	// population marker, especially after zooming in.
+	drawStandingAtScale(screen, assets.FishFrames[stage], sx, sy, 0.55, tilePixels)
 }

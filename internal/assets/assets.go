@@ -30,8 +30,11 @@ var (
 	Fertile = mustLoadGround("generated/terrain_fertile.png") // tilled farmland
 	Forest  = mustLoadGround("generated/terrain_forest.png")  // grass + trees, one tile
 	Stone   = mustLoadGround("generated/terrain_stone.png")
-	Water   = mustLoad("generated/terrain_water.png")
-	Road    = mustLoad("generated/terrain_road_stone.png") // cobblestone path
+	// The water export has the same bright top-edge fringe as several ground
+	// tiles. Load it through the one-time repair pass so zoomed ponds stay
+	// seamless instead of gaining horizontal white stripes.
+	Water = mustLoadGround("generated/terrain_water.png")
+	Road  = mustLoad("generated/terrain_road_stone.png") // cobblestone path
 
 	// MillFrames are flattened once on the CPU from the mill body and three
 	// blade positions. The base is the older, more detailed mill sprite; its
