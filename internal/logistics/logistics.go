@@ -5,7 +5,7 @@
 // core to how the reference genre actually plays: a building not
 // connected by road simply never gets serviced.
 //
-// Job priority (see assign): keeping the Tavern fed comes first, then a
+// Job queue order (see assign): keeping the Tavern fed comes first, then a
 // direct producer -> consumer haul (e.g. Mill's Flour straight to
 // Bakery), then draining leftover OutputBuffer to the Warehouse, then
 // pulling from the Warehouse to cover a shortage no producer can. This
@@ -98,8 +98,8 @@ type Serf struct {
 	ticksSinceMeal int
 
 	// Starving is true once HungerInterval has passed with nowhere to
-	// actually go eat (no Tavern yet, no road to one, or it's out of
-	// Bread). A starving serf keeps hauling rather than stand idle
+	// actually go eat (no Tavern yet, no road to one, or all food is gone).
+	// A starving serf keeps hauling rather than stand idle
 	// forever -- see tryStartMeal's doc comment for why.
 	Starving bool
 }
@@ -322,27 +322,29 @@ func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockp
 	}
 }
 
-// nearestTavernWithBread returns the Tavern reachable from `from` by the
-// shortest road path that also has at least one unit of Bread available
-// per the shared ledger, or false if none qualifies. A town can have
-// several Taverns; without this, every hungry unit always walked to
-// whichever Tavern happened to be first in the buildings slice, even if
-// a different one was much closer or the first one was simply empty.
-func nearestTavernWithBread(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, path []pathfind.Point, ok bool) {
+// nearestTavernWithFood returns the nearest reachable Tavern with any food.
+// Bread, fish, wine and sausage are interchangeable meals; the stable
+// resource order only makes job selection reproducible.
+func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, meal resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
 	for _, b := range buildings {
-		if b.Kind != building.Tavern || ledger.AvailableInput(b, resource.Bread) <= 0 {
+		if b.Kind != building.Tavern {
 			continue
 		}
-		p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
-		if !reachable {
-			continue
-		}
-		if bestLen == -1 || len(p) < bestLen {
-			tavern, path, bestLen = b, p, len(p)
+		for _, food := range resource.FoodTypes() {
+			if ledger != nil && ledger.AvailableInput(b, food) <= 0 {
+				continue
+			}
+			p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
+			if !reachable {
+				continue
+			}
+			if bestLen == -1 || len(p) < bestLen {
+				tavern, meal, path, bestLen = b, food, p, len(p)
+			}
 		}
 	}
-	return tavern, path, tavern != nil
+	return tavern, meal, path, tavern != nil
 }
 
 // nearestReachableWarehouse returns the warehouse in candidates with the
@@ -401,19 +403,19 @@ func (c *Controller) tryStartMeal(s *Serf, buildings []*building.Building, ledge
 	if s.ticksSinceMeal < HungerInterval {
 		return false
 	}
-	tavern, path, ok := nearestTavernWithBread(buildings, pathfind.Point{X: s.X, Y: s.Y}, ledger)
+	tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: s.X, Y: s.Y}, ledger)
 	if !ok {
 		s.Starving = true
 		return false
 	}
 	s.Starving = false
 	s.pickup = tavern
-	s.resource = resource.Bread
+	s.resource = meal
 	s.amount = 1
 	s.eating = true
 	s.path, s.pathIdx, s.tileTicks = path, 0, 0
 	s.ph = toPickup
-	ledger.ReservePickup(tavern, resource.Bread, 1)
+	ledger.ReservePickup(tavern, meal, 1)
 	return true
 }
 
@@ -454,10 +456,8 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 }
 
 // findTavernSupplyJob is deliberately separate from the general consumer
-// search. A hungry town must replenish the Tavern before it spends a serf on
-// optional warehouse cleanup or a lower-priority production input. Bread is
-// currently the only produced meal; the accepted-resource order also makes
-// Fish, Wine and Sausage ready for future production chains.
+// search. It keeps every Tavern supplied with any accepted food; Bread, Fish,
+// Wine and Sausage are all valid and none has a gameplay priority.
 //
 // A town can have several Taverns, each with its own BufferCapacity-limited
 // stock, so every one of them is considered (not just the first found in
@@ -473,7 +473,7 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 func findTavernSupplyJob(buildings []*building.Building, warehouses []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, from pathfind.Point) (pickup, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
 	accepted := building.Types[building.Tavern].AcceptedResources
 	if len(accepted) == 0 {
-		accepted = []resource.Type{resource.Bread}
+		accepted = resource.FoodTypes()
 	}
 	for _, tavern := range buildings {
 		if tavern.Kind != building.Tavern {

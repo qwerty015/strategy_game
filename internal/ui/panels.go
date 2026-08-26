@@ -133,7 +133,7 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	if bt.Recipe.TicksToProduce > 0 {
 		DrawText(screen, t.OutputLabel+":", float64(x), float64(y))
 		y += 18
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[bt.Recipe.Output], b.OutputBuffer[bt.Recipe.Output], building.BufferCapacity), float64(x+8), float64(y))
+		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[bt.Recipe.Output], b.OutputBuffer[bt.Recipe.Output], b.OutputLimit()), float64(x+8), float64(y))
 		y += 18
 	}
 	roadState := t.Disconnected
@@ -205,6 +205,8 @@ func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager
 	profession := t.UnitFarmer
 	if v.Profession == villagers.Baker {
 		profession = t.UnitBaker
+	} else if v.Profession == villagers.Winemaker {
+		profession = t.UnitWinemaker
 	}
 	DrawText(screen, profession, float64(x), float64(y))
 	y += 24
@@ -377,6 +379,8 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.MillFrames[0]
 	case building.Bakery:
 		img = assets.Bakery
+	case building.Winery:
+		img = assets.Winery
 	case building.Tavern:
 		img = assets.Tavern
 	case building.Road:

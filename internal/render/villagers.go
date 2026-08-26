@@ -10,8 +10,8 @@ import (
 	"strategy_game/internal/villagers"
 )
 
-// DrawVillagers renders every Farmer/Baker at its current tile. A farmer
-// walks a small loop over the eight field cells while working; a baker remains
+// DrawVillagers renders every Farmer/Baker/Winemaker at its current tile. A
+// field worker walks a small loop over the eight crop cells while working; a baker remains
 // represented by the building marker until it leaves for the Tavern. The
 // farmer's bobbing pose and tiny tool cue are intentionally lightweight
 // pseudo-animation, but make sowing/harvesting readable at game scale.
@@ -27,6 +27,8 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 		frames := assets.Farmer
 		if v.Profession == villagers.Baker {
 			frames = assets.Baker
+		} else if v.Profession == villagers.Winemaker {
+			frames = assets.Winemaker
 		}
 
 		sx, sy := cam.TileToScreen(v.X, v.Y)
@@ -46,7 +48,7 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 		}
 		drawStandingTintedAtScale(screen, frames[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint)
 
-		if v.Working() && v.Profession == villagers.Farmer {
+		if v.Working() && (v.Profession == villagers.Farmer || v.Profession == villagers.Winemaker) {
 			drawFarmWorkCue(screen, sx, sy+bob*tilePixels/TileSize, tilePixels)
 		}
 	}

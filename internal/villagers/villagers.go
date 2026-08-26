@@ -1,4 +1,4 @@
-// Package villagers simulates Farmer and Baker units. Unlike serfs
+// Package villagers simulates Farmer, Baker and Winemaker units. Unlike serfs
 // (package logistics) they don't haul goods -- they stand and work at
 // one building (Home) -- but per the user's request they get the same
 // treatment as every other unit "as in the reference game": they get
@@ -20,6 +20,7 @@ type Profession int
 const (
 	Farmer Profession = iota
 	Baker
+	Winemaker
 )
 
 const (
@@ -32,8 +33,8 @@ const (
 	// cross one tile of road, walking to/from the Tavern.
 	TicksPerTile = 2
 
-	// FarmWorkStepTicks controls the deliberately slow visible work loop.
-	// A farmer changes field cells every four seconds at normal speed, so the
+	// FarmWorkStepTicks controls the deliberately slow visible field-work loop.
+	// A worker changes crop cells every four seconds at normal speed, so the
 	// unit looks like it is tending the crop instead of teleporting around it.
 	FarmWorkStepTicks = 8
 )
@@ -61,7 +62,7 @@ const (
 	toHome
 )
 
-// Villager is a Farmer or Baker.
+// Villager is a Farmer, Baker or Winemaker.
 type Villager struct {
 	Profession Profession
 	Home       *building.Building
@@ -74,13 +75,14 @@ type Villager struct {
 	tileTicks int
 
 	tavern *building.Building // which Tavern this trip is headed to/from, while ph != working
+	meal   resource.Type      // food reserved for the current Tavern trip
 
 	ticksSinceMeal int
 	workTicks      int
 
 	// Starving is true once HungerInterval has passed and there was
 	// nowhere to actually go eat (no Tavern built yet, no road to one,
-	// or it's out of Bread) -- exported so cmd/game can build the
+	// or all food is unavailable) -- exported so cmd/game can build the
 	// starving-buildings map economy.Tick uses to pause this villager's
 	// building, and so rendering can show it.
 	Starving bool
@@ -113,7 +115,7 @@ func (v *Villager) HomeBuilding() *building.Building {
 
 // NewVillager creates a Villager standing at home, working.
 func NewVillager(profession Profession, home *building.Building) *Villager {
-	return &Villager{Profession: profession, Home: home, X: home.X, Y: home.Y}
+	return &Villager{Profession: profession, Home: home, X: home.X, Y: home.Y, meal: resource.Bread}
 }
 
 // Working reports whether the villager is at its post right now, as
@@ -122,15 +124,19 @@ func (v *Villager) Working() bool {
 	return v.ph == working
 }
 
-// VisibleOnMap reports whether the unit should be drawn as a person. Farmers
-// remain visible while they tend their field; bakers still use the compact
-// worker marker while working inside their bakery. Both professions appear
-// as units when walking to or from the Tavern.
+// VisibleOnMap reports whether the unit should be drawn as a person. Field
+// workers remain visible while they tend their crop cells; bakers still use
+// the compact worker marker while working inside their bakery. All workers
+// appear as units when walking to or from the Tavern.
 func (v *Villager) VisibleOnMap() bool {
-	return !v.Working() || (v.Profession == Farmer && v.Home != nil && v.Home.Kind == building.Farm)
+	return !v.Working() || ((v.Profession == Farmer && v.Home != nil && v.Home.Kind == building.Farm) ||
+		(v.Profession == Winemaker && v.Home != nil && v.Home.Kind == building.Winery))
 }
 
-// Controller owns every Farmer/Baker in town.
+// Meal returns the food reserved for the current or next Tavern trip.
+func (v *Villager) Meal() resource.Type { return v.meal }
+
+// Controller owns every Farmer/Baker/Winemaker in town.
 type Controller struct {
 	Villagers []*Villager
 }
@@ -141,8 +147,7 @@ func NewController() *Controller {
 	return &Controller{}
 }
 
-// Spawn adds a villager working at home (a Farm for Farmer, a Bakery
-// for Baker).
+// Spawn adds a villager working at home (Farm, Bakery or Winery).
 func (c *Controller) Spawn(profession Profession, home *building.Building) {
 	c.Villagers = append(c.Villagers, NewVillager(profession, home))
 }
@@ -151,9 +156,12 @@ func (c *Controller) Spawn(profession Profession, home *building.Building) {
 // Spawn, it keeps the saved map position and hunger state. If the worker was
 // walking to eat when saved, its route is rebuilt from that exact position;
 // the old tile-by-tile path itself is not part of the save format.
-func (c *Controller) RestoreVillager(profession Profession, home *building.Building, x, y, hungerTicks int, starving bool, state State, buildings []*building.Building) *Villager {
+func (c *Controller) RestoreVillager(profession Profession, home *building.Building, x, y, hungerTicks int, starving bool, state State, buildings []*building.Building, savedMeal ...resource.Type) *Villager {
 	v := NewVillager(profession, home)
 	v.X, v.Y = x, y
+	if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
+		v.meal = savedMeal[0]
+	}
 	if hungerTicks < 0 {
 		hungerTicks = 0
 	}
@@ -165,10 +173,13 @@ func (c *Controller) RestoreVillager(profession Profession, home *building.Build
 		// From the saved (x, y), not home -- the villager may already have
 		// been partway to the Tavern when the game was saved. No ledger
 		// exists yet at load time, so this searches purely by reachability
-		// (nil ledger skips the Bread-availability check).
-		if tavern, path, ok := nearestTavernWithBread(buildings, pathfind.Point{X: x, Y: y}, nil); ok {
+		// (nil ledger skips the food-availability check).
+		if tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: x, Y: y}, nil); ok {
 			v.path, v.pathIdx, v.tileTicks = path, 0, 0
 			v.tavern = tavern
+			if len(savedMeal) == 0 || !resource.IsFood(savedMeal[0]) {
+				v.meal = meal
+			}
 			v.ph = toTavern
 		}
 	case VillagerToHome:
@@ -223,7 +234,7 @@ func (c *Controller) CancelRouteTo(target *building.Building) {
 func (c *Controller) Reserve(ledger *reservations.Ledger) {
 	for _, v := range c.Villagers {
 		if v.ph == toTavern && v.tavern != nil {
-			ledger.ReservePickup(v.tavern, resource.Bread, 1)
+			ledger.ReservePickup(v.tavern, v.meal, 1)
 		}
 	}
 }
@@ -264,38 +275,36 @@ func (c *Controller) Tick(buildings []*building.Building, ledger *reservations.L
 	}
 }
 
-// nearestTavernWithBread returns the Tavern reachable from `from` by the
-// shortest road path that also has at least one unit of Bread available,
-// or false if none qualifies. A town can have several Taverns; without
-// this, every hungry villager always walked to whichever one happened to
-// be first in the buildings slice, even if a closer one existed or the
-// first one was simply empty. Pass a nil ledger to search purely by
-// reachability (used when rebuilding a route from a save, before any
-// ledger exists for this tick).
+// nearestTavernWithFood returns the nearest reachable Tavern that has any
+// available food. Bread, fish, wine and sausage are all equivalent meals;
+// the stable resource order only makes the simulation reproducible. Pass a
+// nil ledger to search by reachability while rebuilding a saved route.
 //
 // `from` is a Point rather than a building precisely so RestoreVillager
 // can search from the exact saved (x, y) -- which can differ from Home if
 // the villager was already mid-walk to eat when the game was saved.
 // Searching from Home instead used to make a restored, already-hungry
 // villager jump back to the farmhouse tile before setting off again.
-func nearestTavernWithBread(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, path []pathfind.Point, ok bool) {
+func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, meal resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
 	for _, b := range buildings {
 		if b.Kind != building.Tavern {
 			continue
 		}
-		if ledger != nil && ledger.AvailableInput(b, resource.Bread) <= 0 {
-			continue
-		}
-		p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
-		if !reachable {
-			continue
-		}
-		if bestLen == -1 || len(p) < bestLen {
-			tavern, path, bestLen = b, p, len(p)
+		for _, food := range resource.FoodTypes() {
+			if ledger != nil && ledger.AvailableInput(b, food) <= 0 {
+				continue
+			}
+			p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
+			if !reachable {
+				continue
+			}
+			if bestLen == -1 || len(p) < bestLen {
+				tavern, meal, path, bestLen = b, food, p, len(p)
+			}
 		}
 	}
-	return tavern, path, tavern != nil
+	return tavern, meal, path, tavern != nil
 }
 
 func tick(v *Villager, buildings []*building.Building, ledger *reservations.Ledger) {
@@ -314,15 +323,15 @@ func tickWorking(v *Villager, buildings []*building.Building, ledger *reservatio
 	// it for the "N/HungerInterval" display.
 	v.ticksSinceMeal++
 	if v.ticksSinceMeal < HungerInterval {
-		v.animateFarmWork()
+		v.animateFieldWork()
 		return
 	}
 
 	// Hungry enough to need a meal now.
-	tavern, path, ok := nearestTavernWithBread(buildings, pathfind.Point{X: v.Home.X, Y: v.Home.Y}, ledger)
+	tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: v.Home.X, Y: v.Home.Y}, ledger)
 	if !ok {
 		v.Starving = true
-		v.animateFarmWork()
+		v.animateFieldWork()
 		return
 	}
 	v.Starving = false
@@ -331,13 +340,20 @@ func tickWorking(v *Villager, buildings []*building.Building, ledger *reservatio
 	// before starting the meal route.
 	v.X, v.Y = v.Home.X, v.Home.Y
 	v.tavern = tavern
+	v.meal = meal
 	v.path, v.pathIdx, v.tileTicks = path, 0, 0
 	v.ph = toTavern
-	ledger.ReservePickup(tavern, resource.Bread, 1)
+	ledger.ReservePickup(tavern, meal, 1)
 }
 
-func (v *Villager) animateFarmWork() {
-	if v.Profession != Farmer || v.Home == nil || v.Home.Kind != building.Farm {
+func (v *Villager) animateFieldWork() {
+	if v.Home == nil || (v.Profession != Farmer && v.Profession != Winemaker) {
+		return
+	}
+	if v.Profession == Farmer && v.Home.Kind != building.Farm {
+		return
+	}
+	if v.Profession == Winemaker && v.Home.Kind != building.Winery {
 		return
 	}
 	v.workTicks++
@@ -362,7 +378,7 @@ func tickWalking(v *Villager, buildings []*building.Building) {
 	if v.ph == toTavern {
 		tavern := v.tavern
 		v.X, v.Y = tavern.X, tavern.Y
-		if tavern.TakeInput(resource.Bread, 1) {
+		if tavern.TakeInput(v.meal, 1) {
 			v.ticksSinceMeal = 0
 		}
 		// Whether or not there was still bread by the time we arrived,

@@ -65,9 +65,26 @@ func (t *Type) UnmarshalText(data []byte) error {
 	return nil
 }
 
-// AllTypes returns resources in a stable display and priority order. Maps
+// AllTypes returns resources in a stable display order. Maps
 // are intentionally used for buffers, but UI and service logic must not
 // change order from one frame to the next.
 func AllTypes() []Type {
 	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Log}
+}
+
+// FoodTypes returns every resource that can feed a unit in a Tavern. The
+// order is stable for reproducible job selection, but it is not a gameplay
+// priority: bread, fish, wine and sausage are interchangeable meals.
+func FoodTypes() []Type {
+	return []Type{Bread, Fish, Wine, Sausage}
+}
+
+// IsFood reports whether a resource can be consumed as a Tavern meal.
+func IsFood(t Type) bool {
+	for _, food := range FoodTypes() {
+		if food == t {
+			return true
+		}
+	}
+	return false
 }

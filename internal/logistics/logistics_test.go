@@ -126,6 +126,32 @@ func TestController_SerfEatsAtTavernWhenHungry(t *testing.T) {
 	}
 }
 
+func TestController_SerfEatsWineAtTavern(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 0}
+	tavern.AddInput(resource.Wine, 1)
+
+	buildings := append([]*building.Building{warehouse, tavern}, straightRoad(1, 5, 0)...)
+	c := NewController(warehouse, 1)
+	s := c.Serfs[0]
+	s.ticksSinceMeal = HungerInterval
+	stock := resource.NewStockpile(100)
+
+	for range 100 {
+		tick(c, buildings, stock)
+		if s.ticksSinceMeal == 0 {
+			break
+		}
+	}
+
+	if got := tavern.InputBuffer[resource.Wine]; got != 0 {
+		t.Fatalf("tavern Wine = %d, want 0 (wine is a valid meal)", got)
+	}
+	if s.Starving {
+		t.Fatal("Starving = true after a successful wine meal")
+	}
+}
+
 func TestController_CollectsFromProducerToWarehouse(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0} // (0,0)-(1,1)
 	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}           // (5,0)-(6,1)

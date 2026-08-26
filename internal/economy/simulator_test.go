@@ -28,6 +28,22 @@ func TestTick_FarmProducesIntoOwnOutputBuffer(t *testing.T) {
 	}
 }
 
+func TestTick_WineryProducesWine(t *testing.T) {
+	winery := &building.Building{Kind: building.Winery}
+	recipe := building.Types[building.Winery].Recipe
+
+	for i := 0; i < recipe.TicksToProduce; i++ {
+		Tick([]*building.Building{winery}, nil)
+	}
+
+	if got, want := winery.OutputBuffer[resource.Wine], recipe.OutputAmount; got != want {
+		t.Fatalf("after %d ticks: OutputBuffer[Wine] = %d, want %d", recipe.TicksToProduce, got, want)
+	}
+	if winery.ProgressTicks != 0 {
+		t.Fatalf("Winery ProgressTicks after producing = %d, want 0", winery.ProgressTicks)
+	}
+}
+
 func TestTick_MillHoldsWhenInputBufferEmpty(t *testing.T) {
 	mill := &building.Building{Kind: building.Mill}
 	recipe := building.Types[building.Mill].Recipe

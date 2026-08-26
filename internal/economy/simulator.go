@@ -128,7 +128,7 @@ func TickWithConnectivity(buildings []*building.Building, starving, disconnected
 		if !hasAllInputs(b, recipe.Inputs) {
 			continue
 		}
-		if b.OutputBuffer[recipe.Output]+recipe.OutputAmount > building.BufferCapacity {
+		if b.OutputBuffer[recipe.Output]+recipe.OutputAmount > b.OutputLimit() {
 			continue
 		}
 

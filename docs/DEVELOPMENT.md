@@ -66,7 +66,7 @@
    только там обнаружить, что доставить некуда (страховка в
    `arriveAtPickup` не теряет груз в этом случае, но сам поход впустую).
    Если в городе несколько харчевен или складов, выбирается ближайший
-   **достижимый до цели** — см. `nearestTavernWithBread`,
+   **достижимый до цели** — см. `nearestTavernWithFood`,
    `nearestReachableWarehouse`/`nearestReachableWarehouseTo` в
    `logistics`/`villagers`/`lumberjack`.
 

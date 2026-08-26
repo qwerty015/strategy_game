@@ -139,14 +139,14 @@ func (g *Game) Update() error {
 		// controller first reports its own pre-existing in-flight units
 		// (Reserve), then all three consume the same ledger in Tick, so
 		// a serf and a hungry farmer never both set off for the
-		// Tavern's last loaf of Bread at once. See package reservations.
+		// Tavern's last meal at once. See package reservations.
 		ledger := reservations.New()
 		g.logi.Reserve(ledger)
 		g.vills.Reserve(ledger)
 		g.jacks.Reserve(ledger)
 
 		// Whichever controller's Tick runs first this simulation tick
-		// effectively wins any contention over shared Tavern Bread: its
+		// effectively wins any contention over shared Tavern food: its
 		// claims land in the ledger before the next controller even
 		// looks. Ordering by MaxWaitingHunger means the unit that's
 		// actually been waiting longest gets first claim -- not just
@@ -461,6 +461,8 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 		g.vills.Spawn(villagers.Farmer, b)
 	case building.Bakery:
 		g.vills.Spawn(villagers.Baker, b)
+	case building.Winery:
+		g.vills.Spawn(villagers.Winemaker, b)
 	case building.LumberjackHut:
 		g.jacks.Spawn(b)
 	}
@@ -602,6 +604,8 @@ func (g *Game) serializeUnits() []save.UnitState {
 		kind := save.UnitFarmer
 		if v.Profession == villagers.Baker {
 			kind = save.UnitBaker
+		} else if v.Profession == villagers.Winemaker {
+			kind = save.UnitWinemaker
 		}
 		units = append(units, save.UnitState{
 			Kind:        kind,
@@ -611,6 +615,7 @@ func (g *Game) serializeUnits() []save.UnitState {
 			HungerTicks: v.HungerTicks(),
 			Starving:    v.Starving,
 			State:       int(v.State()),
+			Meal:        v.Meal(),
 		})
 	}
 	for _, j := range g.jacks.Lumberjacks {
@@ -638,7 +643,7 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 		switch state.Kind {
 		case save.UnitSerf:
 			g.logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving)
-		case save.UnitFarmer, save.UnitBaker:
+		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker:
 			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) {
 				continue
 			}
@@ -646,12 +651,15 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 			profession := villagers.Farmer
 			if state.Kind == save.UnitBaker {
 				profession = villagers.Baker
+			} else if state.Kind == save.UnitWinemaker {
+				profession = villagers.Winemaker
 			}
 			if (profession == villagers.Farmer && home.Kind != building.Farm) ||
-				(profession == villagers.Baker && home.Kind != building.Bakery) {
+				(profession == villagers.Baker && home.Kind != building.Bakery) ||
+				(profession == villagers.Winemaker && home.Kind != building.Winery) {
 				continue
 			}
-			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings)
+			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings, state.Meal)
 		case save.UnitLumberjack:
 			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.LumberjackHut {
 				continue

@@ -28,6 +28,7 @@ func init() {
 			building.Tavern:        "Харчевня",
 			building.Tree:          "Дерево",
 			building.LumberjackHut: "Хижина лесоруба",
+			building.Winery:        "Винодельня",
 		},
 
 		BuildMenuTitle: "Строительство",
@@ -71,6 +72,7 @@ func init() {
 		UnitFarmer:            "Фермер",
 		UnitBaker:             "Пекарь",
 		UnitLumberjack:        "Лесоруб",
+		UnitWinemaker:         "Винодел",
 		HireSerf:              "Нанять слугу [H]",
 		Deleted:               "Удалено.",
 		CannotDeleteWarehouse: "Склад нельзя удалить",

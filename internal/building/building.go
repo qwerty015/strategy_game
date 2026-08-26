@@ -49,6 +49,10 @@ const (
 	// lumberjack. It is appended after Tree to preserve the numeric Tree value
 	// in existing save files.
 	LumberjackHut
+
+	// Winery is a vineyard and wine-making workshop. Its eight crop cells
+	// occupy the tiles around the building sprite, just like a Farm.
+	Winery
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -83,10 +87,13 @@ type Type struct {
 
 	Recipe Recipe
 
+	// OutputCapacity overrides the normal small production buffer when a
+	// building harvests several field cells at once. Zero uses BufferCapacity.
+	OutputCapacity int
+
 	// AcceptedResources is used by service buildings that can consume more
-	// than one food type. Tavern currently consumes Bread, but declaring the
-	// complete future menu here lets logistics and the inspector already
-	// understand Fish, Wine and Sausage without pretending they are produced.
+	// than one food type. Tavern accepts every current and planned food type;
+	// the menu is deliberately not ordered by gameplay value.
 	AcceptedResources []resource.Type
 }
 
@@ -208,10 +215,23 @@ func treeGrowthTarget(x, y int) int {
 	return TreeGrowthMinTicks + int(seed%TreeGrowthVariationTicks)
 }
 
-// AddOutput deposits up to n units of t into OutputBuffer, capped by
-// BufferCapacity, and returns how many units actually fit.
+// AddOutput deposits up to n units of t into OutputBuffer, capped by the
+// building's output limit, and returns how many units actually fit.
 func (b *Building) AddOutput(t resource.Type, n int) int {
-	return addCapped(&b.OutputBuffer, t, n)
+	capacity := BufferCapacity
+	if b != nil && Types[b.Kind].OutputCapacity > 0 {
+		capacity = Types[b.Kind].OutputCapacity
+	}
+	return addCapped(&b.OutputBuffer, t, n, capacity)
+}
+
+// OutputLimit returns the maximum amount of one product this building can
+// keep in its output buffer.
+func (b *Building) OutputLimit() int {
+	if b != nil && Types[b.Kind].OutputCapacity > 0 {
+		return Types[b.Kind].OutputCapacity
+	}
+	return BufferCapacity
 }
 
 // TakeOutput removes n units of t from OutputBuffer if available
@@ -223,7 +243,7 @@ func (b *Building) TakeOutput(t resource.Type, n int) bool {
 // AddInput deposits up to n units of t into InputBuffer, capped by
 // BufferCapacity, and returns how many units actually fit.
 func (b *Building) AddInput(t resource.Type, n int) int {
-	return addCapped(&b.InputBuffer, t, n)
+	return addCapped(&b.InputBuffer, t, n, BufferCapacity)
 }
 
 // TakeInput removes n units of t from InputBuffer if available
@@ -232,14 +252,14 @@ func (b *Building) TakeInput(t resource.Type, n int) bool {
 	return takeAvailable(b.InputBuffer, t, n)
 }
 
-func addCapped(buf *map[resource.Type]int, t resource.Type, n int) int {
+func addCapped(buf *map[resource.Type]int, t resource.Type, n, capacity int) int {
 	if n <= 0 {
 		return 0
 	}
 	if *buf == nil {
 		*buf = make(map[resource.Type]int)
 	}
-	room := BufferCapacity - (*buf)[t]
+	room := capacity - (*buf)[t]
 	if room <= 0 {
 		return 0
 	}

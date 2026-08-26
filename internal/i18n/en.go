@@ -28,6 +28,7 @@ func init() {
 			building.Tavern:        "Tavern",
 			building.Tree:          "Tree",
 			building.LumberjackHut: "Lumberjack Hut",
+			building.Winery:        "Winery",
 		},
 
 		BuildMenuTitle: "Build",
@@ -71,6 +72,7 @@ func init() {
 		UnitFarmer:            "Farmer",
 		UnitBaker:             "Baker",
 		UnitLumberjack:        "Lumberjack",
+		UnitWinemaker:         "Winemaker",
 		HireSerf:              "Hire serf [H]",
 		Deleted:               "Deleted.",
 		CannotDeleteWarehouse: "The warehouse cannot be deleted",

@@ -30,6 +30,7 @@ func Tick() {
 var (
 	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}   // freshly tilled earth (tints assets.Fertile)
 	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255} // golden, ready to harvest
+	vineyardSoil   = color.RGBA{R: 80, G: 61, B: 38, A: 255}   // darker soil for grape rows
 )
 
 // lerpColor blends from a to b as t goes from 0 to 1, clamped.
@@ -100,6 +101,24 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 				}
 			}
 			drawStandingAtScale(screen, assets.FarmHouse, sx, sy, buildingHeight, tilePixels)
+
+		case building.Winery:
+			growth := float32(0)
+			if bt.Recipe.TicksToProduce > 0 {
+				growth = float32(b.ProgressTicks) / float32(bt.Recipe.TicksToProduce)
+			}
+			for dy := range bt.Footprint {
+				for dx := range bt.Footprint {
+					if dx == 0 && dy == 0 {
+						continue // the winery sprite occupies this corner
+					}
+					fieldX := sx + float64(dx)*tilePixels
+					fieldY := sy + float64(dy)*tilePixels
+					drawStandingTintedAtScale(screen, assets.Fertile, fieldX, fieldY, 1, tilePixels, vineyardSoil)
+					drawVineyardGrowth(screen, fieldX, fieldY, growth, dx, dy, tilePixels)
+				}
+			}
+			drawStandingAtScale(screen, assets.Winery, sx, sy, buildingHeight, tilePixels)
 
 		case building.Mill:
 			drawStandingAtScale(screen, assets.MillFrames[(animFrame/12)%len(assets.MillFrames)], sx, sy, buildingHeight, tilePixels)

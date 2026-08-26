@@ -70,9 +70,8 @@ var Types = map[Kind]Type{
 		Footprint: 1,
 		Recipe: Recipe{
 			// TicksToProduce: 0 means economy.Tick skips it (it makes
-			// nothing) -- but logistics still reads Inputs to know the
-			// Tavern wants to be kept stocked with Bread, the same way
-			// it reads any real consumer's Inputs. See AGENTS.md.
+			// nothing) -- but logistics still reads the accepted menu to
+			// keep the Tavern stocked. Every food type is equally valid.
 			Inputs: map[resource.Type]int{resource.Bread: BufferCapacity},
 		},
 		AcceptedResources: []resource.Type{
@@ -96,5 +95,19 @@ var Types = map[Kind]Type{
 		// The hut has no recipe: the lumberjack physically walks to a tree
 		// and deposits finished Logs into OutputBuffer. Serfs collect them
 		// through the hut's road access point.
+	},
+	Winery: {
+		Kind:      Winery,
+		Name:      "Winery",
+		Footprint: 3,
+		Recipe: Recipe{
+			// The eight vineyard cells appear immediately with the building.
+			// Progress is the shared grape-growing/harvest cycle; the raw
+			// grapes stay internal and only finished Wine enters logistics.
+			Output:         resource.Wine,
+			OutputAmount:   8,
+			TicksToProduce: 240, // about two minutes at normal speed
+		},
+		OutputCapacity: 8,
 	},
 }

@@ -59,6 +59,7 @@ const (
 	UnitFarmer     UnitKind = "farmer"
 	UnitBaker      UnitKind = "baker"
 	UnitLumberjack UnitKind = "lumberjack"
+	UnitWinemaker  UnitKind = "winemaker"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the
@@ -76,6 +77,7 @@ type UnitState struct {
 	WorkTicks   int
 	Cargo       resource.Type
 	CargoAmount int
+	Meal        resource.Type
 }
 
 // TreeRegrowthState is the persistent part of one delayed tree respawn.

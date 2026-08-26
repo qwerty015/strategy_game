@@ -55,6 +55,51 @@ func drawCropGrowth(screen *ebiten.Image, sx, sy float64, growth float32, tileX,
 	}
 }
 
+// drawVineyardGrowth renders one of the eight permanent grape plots. The
+// vines exist immediately after construction; the growth value only changes
+// their height, leaf density and purple fruit. The last stage gently shimmers
+// so a ripe vineyard does not look like a static checkerboard.
+func drawVineyardGrowth(screen *ebiten.Image, sx, sy float64, growth float32, tileX, tileY int, tilePixels float64) {
+	if growth < 0 {
+		growth = 0
+	}
+	if growth > 1 {
+		growth = 1
+	}
+	scale := tilePixels / TileSize
+	seed := tileX*13 + tileY*19
+	rowY := sy + 43*scale
+	postColor := color.RGBA{R: 91, G: 63, B: 33, A: 255}
+	vineColor := color.RGBA{R: 49, G: 112, B: 49, A: 235}
+	leafColor := color.RGBA{R: 75, G: 143, B: 57, A: 245}
+	fruitColor := color.RGBA{R: 111, G: 47, B: 101, A: 250}
+
+	// Three low trellis rows make the crop readable even when zoomed out.
+	for row := 0; row < 3; row++ {
+		y := rowY - float64(row*11)*scale
+		vector.FillRect(screen, float32(sx+5*scale), float32(y), float32(18*scale), float32(maxPixel(scale)), postColor, false)
+		if growth < 0.08 {
+			continue
+		}
+		vineHeight := float64(2+int(growth*8)) * scale
+		for col := 0; col < 3; col++ {
+			x := sx + float64(7+col*6+(seed+row+col)%2)*scale
+			vector.FillRect(screen, float32(x), float32(y-vineHeight), float32(maxPixel(scale)), float32(vineHeight), vineColor, false)
+			if growth >= 0.32 {
+				vector.FillRect(screen, float32(x-1*scale), float32(y-vineHeight+2*scale), float32(3*scale), float32(maxPixel(scale)), leafColor, false)
+			}
+			if growth >= 0.68 && (row+col+seed)%2 == 0 {
+				vector.FillCircle(screen, float32(x+2*scale), float32(y-vineHeight+4*scale), float32(maxPixel(scale)), fruitColor, false)
+			}
+		}
+	}
+
+	if growth >= 0.68 {
+		wave := float64((animFrame/16+seed)%16) * scale
+		vector.FillRect(screen, float32(sx+4*scale+wave), float32(sy+7*scale), float32(maxPixel(scale)), float32(maxPixel(scale)), color.RGBA{R: 167, G: 207, B: 106, A: 120}, false)
+	}
+}
+
 // drawFire is a three-frame procedural hearth effect. The building sprites
 // provide the oven/chimney; these small layered shapes add a readable glow
 // without another atlas or a texture-loading path.

@@ -48,6 +48,7 @@ var (
 	FarmHouse     = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
 	Tavern        = mustLoad("generated/building_tavern.png")
 	LumberjackHut = mustLoad("generated/building_lumberjack_hut.png")
+	Winery        = mustLoad("generated/building_winery.png")
 
 	// TreeFrames are the three growth stages from one transparent horizontal
 	// sprite sheet. They are sliced once at startup and then drawn with nearest
@@ -80,6 +81,11 @@ var (
 		mustLoad("generated/unit_lumberjack.png"),
 		mustLoad("generated/unit_lumberjack.png"),
 		mustLoad("generated/unit_lumberjack.png"),
+	}
+	Winemaker = [3]*ebiten.Image{
+		mustLoad("generated/unit_winemaker.png"),
+		mustLoad("generated/unit_winemaker.png"),
+		mustLoad("generated/unit_winemaker.png"),
 	}
 )
 

@@ -69,6 +69,7 @@ type Catalog struct {
 	UnitFarmer            string
 	UnitBaker             string
 	UnitLumberjack        string
+	UnitWinemaker         string
 	HireSerf              string
 	Deleted               string
 	CannotDeleteWarehouse string
