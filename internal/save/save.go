@@ -45,6 +45,11 @@ type GameState struct {
 	// state stay where the player saved them.
 	Units []UnitState
 
+	// BuildingPriority stores every building kind the player gave a
+	// non-default supply priority (see logistics.Controller.SetPriority).
+	// A kind absent from this list stays at the default priority.
+	BuildingPriority []BuildingPriorityState
+
 	// TreeRegrowth stores delayed random respawn attempts after a tree was cut.
 	// The queue is kept in the save so loading cannot silently reset the forest
 	// cycle or create more trees than the map limit.
@@ -107,6 +112,13 @@ type UnitState struct {
 
 // TreeRegrowthState is the persistent part of one delayed tree respawn.
 // Seed chooses a reproducible random-looking free cell when the delay ends.
+// BuildingPriorityState is one entry of a saved supply-priority setting:
+// every building of Kind gets Level (see logistics.Controller.SetPriority).
+type BuildingPriorityState struct {
+	Kind  building.Kind
+	Level int
+}
+
 type TreeRegrowthState struct {
 	Ticks       int
 	TargetTicks int

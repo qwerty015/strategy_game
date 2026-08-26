@@ -168,7 +168,7 @@ func paletteShortcut(index int) string {
 // DrawInspectorPanel renders the currently selected object. It reads only
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, occupants int) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, occupants int, showPriority bool, priorityLevel int) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -187,6 +187,38 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		drawLumberjackInspector(screen, r.Min.X+18, 62, selection.Lumberjack)
 	case SelectionFisherman:
 		drawFishermanInspector(screen, r.Min.X+18, 62, selection.Fisherman)
+	}
+	if showPriority {
+		drawPriorityControl(screen, layout, priorityLevel)
+	}
+}
+
+// drawPriorityControl draws the five-segment supply-priority slider docked
+// at the bottom of the inspector panel, for a building kind that actually
+// competes for a limited input (see cmd/game's eligibility check -- only
+// building kinds with a non-empty Recipe.Inputs get this control). The
+// selected segment is the currently set level (see
+// logistics.Controller.SetPriority); Layout.PriorityLevelAt hit-tests the
+// identical geometry, so the two can never drift apart.
+func drawPriorityControl(screen *ebiten.Image, layout Layout, current int) {
+	r := layout.RightPanel()
+	rowY := r.Max.Y - priorityRowHeight - priorityBottomGap
+	startX := r.Min.X + priorityMargin
+	segW := (r.Dx() - 2*priorityMargin) / 5
+
+	t := i18n.T()
+	DrawText(screen, t.PriorityLabel, float64(r.Min.X+priorityMargin), float64(rowY-18))
+
+	labels := [5]string{"--", "-", "•", "+", "++"}
+	for i, label := range labels {
+		level := i - 2
+		x := startX + i*segW
+		fill := panelInnerColor
+		if level == current {
+			fill = selectedColor
+		}
+		vector.FillRect(screen, float32(x), float32(rowY), float32(segW-2), float32(priorityRowHeight), fill, false)
+		DrawText(screen, label, float64(x+segW/2-6), float64(rowY+7))
 	}
 }
 

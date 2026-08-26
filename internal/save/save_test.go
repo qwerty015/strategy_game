@@ -38,6 +38,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 			{Kind: UnitFarmer, X: 4, Y: 5, HomeIndex: 0, HungerTicks: 21, State: 0},
 			{Kind: UnitLumberjack, X: 9, Y: 4, HomeIndex: 2, HungerTicks: 44, State: 2, TargetIndex: 3, WorkTicks: 7, Cargo: resource.Log, CargoAmount: 1},
 		},
+		BuildingPriority:   []BuildingPriorityState{{Kind: building.Mill, Level: -1}, {Kind: building.PigFarm, Level: 2}},
 		TreeRegrowth:       []TreeRegrowthState{{Ticks: 20, TargetTicks: 200, Seed: 42}},
 		TreeSeed:           12345,
 		SerfMealSeed:       11,

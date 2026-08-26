@@ -665,3 +665,84 @@ func TestController_PrioritizesTavernSupply(t *testing.T) {
 		t.Fatalf("first job = %v -> %v, want bakery -> tavern", s.PickupBuilding(), s.DropoffBuilding())
 	}
 }
+
+// TestController_PriorityAPI covers Controller.SetPriority/Priority/
+// Priorities directly: default is PriorityNormal, setting a level is
+// reflected back, and resetting to PriorityNormal clears the entry
+// entirely rather than storing a redundant zero.
+func TestController_PriorityAPI(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	c := NewController(warehouse, 0)
+
+	if got := c.Priority(building.Mill); got != PriorityNormal {
+		t.Fatalf("default priority = %d, want PriorityNormal", got)
+	}
+	c.SetPriority(building.Mill, PriorityHigh)
+	if got := c.Priority(building.Mill); got != PriorityHigh {
+		t.Fatalf("priority after SetPriority = %d, want PriorityHigh", got)
+	}
+	if got := c.Priorities(); len(got) != 1 || got[building.Mill] != PriorityHigh {
+		t.Fatalf("Priorities() = %v, want {Mill: PriorityHigh}", got)
+	}
+	c.SetPriority(building.Mill, PriorityNormal)
+	if got := c.Priorities(); len(got) != 0 {
+		t.Fatalf("Priorities() after resetting to PriorityNormal = %v, want empty", got)
+	}
+}
+
+// TestController_PriorityBreaksDirectHaulTie covers the exact scenario the
+// user asked about: a Farm's Wheat could go to either the Mill or the Pig
+// Farm this tick -- without a priority set, the first one in the
+// buildings slice wins (an accident of build order); with the Pig Farm
+// prioritized, it wins instead, regardless of slice order.
+func TestController_PriorityBreaksDirectHaulTie(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20} // off to the side, irrelevant here
+	farm := &building.Building{Kind: building.Farm, X: 0, Y: 1}
+	farm.AddOutput(resource.Wheat, 5)
+	mill := &building.Building{Kind: building.Mill, X: 5, Y: 1}
+	pigFarm := &building.Building{Kind: building.PigFarm, X: 8, Y: 1}
+
+	buildings := append([]*building.Building{warehouse, farm, mill, pigFarm}, straightRoad(0, 9, 0)...)
+
+	c := NewController(warehouse, 1)
+	c.Serfs[0].X, c.Serfs[0].Y = farm.X, farm.Y
+	tick(c, buildings, resource.NewStockpile(100))
+	if got := c.Serfs[0].DropoffBuilding(); got != mill {
+		t.Fatalf("without priority, dropoff = %v, want mill (first in buildings, tie-broken by order)", got)
+	}
+
+	c2 := NewController(warehouse, 1)
+	c2.Serfs[0].X, c2.Serfs[0].Y = farm.X, farm.Y
+	c2.SetPriority(building.PigFarm, PriorityHigh)
+	tick(c2, buildings, resource.NewStockpile(100))
+	if got := c2.Serfs[0].DropoffBuilding(); got != pigFarm {
+		t.Fatalf("with Pig Farm prioritized, dropoff = %v, want pigFarm", got)
+	}
+}
+
+// TestController_PriorityBreaksSupplyTie is the same scenario one queue
+// tier down: no direct producer, both buildings short on Wheat the
+// Warehouse could cover.
+func TestController_PriorityBreaksSupplyTie(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	mill := &building.Building{Kind: building.Mill, X: 5, Y: 1}
+	pigFarm := &building.Building{Kind: building.PigFarm, X: 8, Y: 1}
+	buildings := append([]*building.Building{warehouse, mill, pigFarm}, straightRoad(0, 9, 0)...)
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+	stock.Add(resource.Wheat, 20)
+	tick(c, buildings, stock)
+	if got := c.Serfs[0].DropoffBuilding(); got != mill {
+		t.Fatalf("without priority, dropoff = %v, want mill (first in buildings, tie-broken by order)", got)
+	}
+
+	c2 := NewController(warehouse, 1)
+	c2.SetPriority(building.PigFarm, PriorityHigh)
+	stock2 := resource.NewStockpile(100)
+	stock2.Add(resource.Wheat, 20)
+	tick(c2, buildings, stock2)
+	if got := c2.Serfs[0].DropoffBuilding(); got != pigFarm {
+		t.Fatalf("with Pig Farm prioritized, dropoff = %v, want pigFarm", got)
+	}
+}

@@ -158,3 +158,35 @@ func (l Layout) HireAt(x, y int) bool {
 func (l Layout) speedStartX() int {
 	return l.Width - 5*62 - 12
 }
+
+const (
+	priorityRowHeight = 30
+	priorityMargin    = 18
+	priorityBottomGap = 12
+)
+
+// PriorityLevelAt returns the supply-priority segment under the cursor,
+// from the fixed five-segment control docked at the bottom of the
+// inspector panel (see DrawPriorityControl). Segments map to the five
+// levels PriorityLowest..PriorityHighest (-2..2) left to right. Docking
+// the control at a fixed offset from the panel's bottom edge -- rather
+// than after the building's own dynamic info text -- means drawing and
+// hit-testing share the exact same geometry without needing to agree on
+// how tall that text block happened to be this frame.
+func (l Layout) PriorityLevelAt(x, y int) (int, bool) {
+	r := l.RightPanel()
+	rowY := r.Max.Y - priorityRowHeight - priorityBottomGap
+	if y < rowY || y >= rowY+priorityRowHeight {
+		return 0, false
+	}
+	startX := r.Min.X + priorityMargin
+	segW := (r.Dx() - 2*priorityMargin) / 5
+	if segW <= 0 || x < startX {
+		return 0, false
+	}
+	index := (x - startX) / segW
+	if index < 0 || index > 4 || x >= startX+(index+1)*segW {
+		return 0, false
+	}
+	return index - 2, true
+}

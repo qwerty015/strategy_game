@@ -61,6 +61,7 @@ func init() {
 		OutputLabel:           "Выход",
 		ContentsLabel:         "Внутри",
 		PeopleInsideLabel:     "Людей внутри",
+		PriorityLabel:         "Приоритет снабжения",
 		UnlimitedLabel:        "без лимита",
 		GrowthLabel:           "Рост",
 		HarvestableLabel:      "Срубается лесорубом",

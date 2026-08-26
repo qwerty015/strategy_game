@@ -196,7 +196,23 @@ type Controller struct {
 	Warehouses []*building.Building
 	Serfs      []*Serf
 	meals      meal.Selector
+
+	// priority holds a per-building-kind supply priority, set by the
+	// player (see SetPriority). A kind with no entry defaults to
+	// PriorityNormal (0).
+	priority map[building.Kind]int
 }
+
+// Supply priority levels a player can assign to a building kind, from a
+// five-step scale. Anything in between or beyond also works -- higher
+// always wins a tie -- but these are what the UI slider offers.
+const (
+	PriorityLowest  = -2
+	PriorityLow     = -1
+	PriorityNormal  = 0
+	PriorityHigh    = 1
+	PriorityHighest = 2
+)
 
 // NewController spawns count serfs standing at the warehouse.
 func NewController(warehouse *building.Building, count int) *Controller {
@@ -205,6 +221,41 @@ func NewController(warehouse *building.Building, count int) *Controller {
 		c.Hire()
 	}
 	return c
+}
+
+// SetPriority sets the supply priority for every building of kind. It
+// breaks ties when several consumer kinds compete for the same limited
+// resource -- e.g. a Mill and a Pig Farm both short on Wheat with only
+// one batch available this tick: whichever kind has the higher priority
+// gets served first, instead of whichever happens to be earlier in the
+// buildings slice by accident of build order. Setting PriorityNormal (0)
+// clears the entry rather than storing a redundant zero.
+func (c *Controller) SetPriority(kind building.Kind, level int) {
+	if level == PriorityNormal {
+		delete(c.priority, kind)
+		return
+	}
+	if c.priority == nil {
+		c.priority = make(map[building.Kind]int)
+	}
+	c.priority[kind] = level
+}
+
+// Priority returns the current supply priority for a building kind
+// (PriorityNormal if never set).
+func (c *Controller) Priority(kind building.Kind) int {
+	return c.priority[kind]
+}
+
+// Priorities returns every building kind with a non-default priority, for
+// save serialization. The map is a copy; mutating it has no effect on the
+// controller.
+func (c *Controller) Priorities() map[building.Kind]int {
+	out := make(map[building.Kind]int, len(c.priority))
+	for k, v := range c.priority {
+		out[k] = v
+	}
+	return out
 }
 
 // MealSeed returns the persistent pseudo-random state for serf meal choices.
@@ -536,11 +587,11 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
 		return
 	}
-	if pickup, dropoff, t, n, path, ok := findDirectJob(buildings, c.Warehouse, ledger, from); ok {
+	if pickup, dropoff, t, n, path, ok := findDirectJob(buildings, c.Warehouse, ledger, from, c.priority); ok {
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
 		return
 	}
-	if b, t, n, path, ok := findCollectJob(buildings, c.Warehouse, ledger, from); ok {
+	if b, t, n, path, ok := findCollectJob(buildings, c.Warehouse, ledger, from, c.priority); ok {
 		// The pickup (b) is already confirmed reachable from the serf;
 		// only the dropoff warehouse still needs picking, from wherever
 		// b itself can reach.
@@ -550,7 +601,7 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 			return
 		}
 	}
-	if b, t, n, ok := findSupplyJob(buildings, stock, ledger); ok {
+	if b, t, n, ok := findSupplyJob(buildings, stock, ledger, c.priority); ok {
 		// Here it's the pickup side (which warehouse) that varies, so pick
 		// whichever registered warehouse is actually nearest the serf
 		// right now AND can still reach b -- not just the one nearest the
@@ -629,8 +680,10 @@ func findTavernSupplyJob(buildings []*building.Building, warehouses []*building.
 // several at once, is stable from tick to tick. Each candidate producer is
 // also checked for reachability from the serf's current position before
 // being accepted, so an unreachable producer never blocks trying the next
-// one.
-func findDirectJob(buildings []*building.Building, warehouse *building.Building, ledger *reservations.Ledger, from pathfind.Point) (pickup, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
+// one. When more than one consumer wants the same producer's output,
+// priority (see Controller.SetPriority) picks the winner; consumers tied
+// on priority keep the original first-found-in-buildings-order behavior.
+func findDirectJob(buildings []*building.Building, warehouse *building.Building, ledger *reservations.Ledger, from pathfind.Point, priority map[building.Kind]int) (pickup, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
 	for _, producer := range buildings {
 		if producer == warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
 			continue
@@ -644,6 +697,9 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 			if !reachable {
 				continue // not reachable from here right now -- try the next producer
 			}
+			var bestConsumer *building.Building
+			var bestAmt int
+			bestPriority := 0
 			for _, consumer := range buildings {
 				if consumer == warehouse || consumer == producer || consumer.Kind == building.Road || consumer.Kind == building.Tree {
 					continue
@@ -660,10 +716,16 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 				if amt <= 0 {
 					continue
 				}
+				if bestConsumer != nil && priority[consumer.Kind] <= bestPriority {
+					continue // a candidate at least as prioritized already won
+				}
 				if _, deliverable := pathfind.FindPath(buildings, producer, consumer); !deliverable {
 					continue // this producer can't actually deliver to this consumer -- try the next consumer
 				}
-				return producer, consumer, rt, amt, p, true
+				bestConsumer, bestAmt, bestPriority = consumer, amt, priority[consumer.Kind]
+			}
+			if bestConsumer != nil {
+				return producer, bestConsumer, rt, bestAmt, p, true
 			}
 		}
 	}
@@ -672,11 +734,17 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 
 // findCollectJob looks for any building with surplus output to drain to a
 // warehouse. Resource types are visited in a fixed sorted order, and each
-// candidate is checked for reachability before being accepted.
-func findCollectJob(buildings []*building.Building, warehouse *building.Building, ledger *reservations.Ledger, from pathfind.Point) (b *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
+// candidate is checked for reachability before being accepted. Among
+// several candidates with surplus, priority (see Controller.SetPriority)
+// picks which one gets cleared out first.
+func findCollectJob(buildings []*building.Building, warehouse *building.Building, ledger *reservations.Ledger, from pathfind.Point, priority map[building.Kind]int) (b *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
+	bestPriority := 0
 	for _, cand := range buildings {
 		if cand == warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
+		}
+		if b != nil && priority[cand.Kind] <= bestPriority {
+			continue // a candidate at least as prioritized already won
 		}
 		for _, rt := range sortedResourceTypes(cand.OutputBuffer) {
 			n := ledger.AvailableOutput(cand, rt)
@@ -687,10 +755,12 @@ func findCollectJob(buildings []*building.Building, warehouse *building.Building
 			if !reachable {
 				continue // not reachable from here right now -- try the next candidate
 			}
-			return cand, rt, min(n, CarryCapacity), p, true
+			b, t, amount, path, ok = cand, rt, min(n, CarryCapacity), p, true
+			bestPriority = priority[cand.Kind]
+			break
 		}
 	}
-	return nil, 0, 0, nil, false
+	return
 }
 
 // findSupplyJob looks for a building falling short on an input that the
@@ -699,17 +769,24 @@ func findCollectJob(buildings []*building.Building, warehouse *building.Building
 // registered warehouse as the pickup point, since which one is actually
 // reachable depends on the serf's position, not on which building is short
 // on input. Resource types are visited in a fixed sorted order for the
-// same reason as the other job searches.
+// same reason as the other job searches. Among several buildings short on
+// input, priority (see Controller.SetPriority) picks which one gets
+// resupplied first -- this is the one that resolves "свиноферма/мельница"
+// style contention over a shared input like Wheat.
 //
 // A shortage is only accepted if stock actually has some of that resource
 // available (per the shared ledger): a building short on a resource
 // nobody has any of yet must not block trying the next shortage, whether
 // that's a different resource at the same building or a different
 // building entirely.
-func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) (b *building.Building, t resource.Type, amount int, ok bool) {
+func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, priority map[building.Kind]int) (b *building.Building, t resource.Type, amount int, ok bool) {
+	bestPriority := 0
 	for _, cand := range buildings {
 		if cand.Kind == building.Warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
+		}
+		if b != nil && priority[cand.Kind] <= bestPriority {
+			continue // a candidate at least as prioritized already won
 		}
 		recipe := building.Types[cand.Kind].Recipe
 		for _, rt := range sortedResourceTypes(recipe.Inputs) {
@@ -717,14 +794,16 @@ func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, le
 			if short <= 0 {
 				continue
 			}
-			amount := min(CarryCapacity, short, ledger.AvailableStock(stock, rt))
-			if amount <= 0 {
+			amt := min(CarryCapacity, short, ledger.AvailableStock(stock, rt))
+			if amt <= 0 {
 				continue // nothing in stock for this shortage -- try the next one
 			}
-			return cand, rt, amount, true
+			b, t, amount, ok = cand, rt, amt, true
+			bestPriority = priority[cand.Kind]
+			break
 		}
 	}
-	return nil, 0, 0, false
+	return
 }
 
 func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ledger *reservations.Ledger) {

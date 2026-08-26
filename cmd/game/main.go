@@ -514,6 +514,12 @@ func (g *Game) handleMouse() {
 		g.hireSerf()
 		return
 	}
+	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil && priorityEligible(g.selection.Building.Kind) {
+		if level, ok := g.layout.PriorityLevelAt(mx, my); ok {
+			g.logi.SetPriority(g.selection.Building.Kind, level)
+			return
+		}
+	}
 	point := image.Pt(mx, my)
 	if point.In(g.layout.LeftPanel()) ||
 		point.In(g.layout.RightPanel()) ||
@@ -778,6 +784,7 @@ func (g *Game) handleSaveLoad() {
 			Stockpile:          *g.stock,
 			Population:         *g.pop,
 			Units:              g.serializeUnits(),
+			BuildingPriority:   g.serializeBuildingPriorities(),
 			TreeRegrowth:       g.serializeTreeRegrowth(),
 			TreeSeed:           g.treeSeed,
 			FishRegrowth:       g.serializeFishRegrowth(),
@@ -890,6 +897,9 @@ func (g *Game) handleSaveLoad() {
 		if state.FishermanMealSeed != 0 {
 			g.fishers.SetMealSeed(state.FishermanMealSeed)
 		}
+		for _, p := range state.BuildingPriority {
+			g.logi.SetPriority(p.Kind, p.Level)
+		}
 		g.refreshPopulation()
 
 		g.statusMsg = i18n.T().Loaded
@@ -909,6 +919,24 @@ func dereferenceBuildings(in []*building.Building) []building.Building {
 	out := make([]building.Building, len(in))
 	for i, b := range in {
 		out[i] = *b
+	}
+	return out
+}
+
+// serializeBuildingPriorities converts the controller's priority map into
+// a stable, sorted slice for the save file. Go map iteration order is
+// randomized; sorting by Kind keeps the saved file (and therefore
+// TestSaveLoadRoundTrip-style comparisons) reproducible from run to run.
+func (g *Game) serializeBuildingPriorities() []save.BuildingPriorityState {
+	priorities := g.logi.Priorities()
+	kinds := make([]building.Kind, 0, len(priorities))
+	for kind := range priorities {
+		kinds = append(kinds, kind)
+	}
+	sort.Slice(kinds, func(i, j int) bool { return kinds[i] < kinds[j] })
+	out := make([]save.BuildingPriorityState, 0, len(kinds))
+	for _, kind := range kinds {
+		out = append(out, save.BuildingPriorityState{Kind: kind, Level: priorities[kind]})
 	}
 	return out
 }
@@ -1428,6 +1456,14 @@ func (g *Game) findTreeSpawnCell(seed uint32) (int, int, bool) {
 	return bestX, bestY, found
 }
 
+// priorityEligible reports whether a building kind actually competes for a
+// limited input, and so gets the supply-priority control in its
+// inspector. A building with no Recipe.Inputs (a Farm gathering from the
+// land, a Warehouse, ...) has nothing to prioritize against.
+func priorityEligible(kind building.Kind) bool {
+	return len(building.Types[kind].Recipe.Inputs) > 0
+}
+
 func countTrees(buildings []*building.Building) int {
 	count := 0
 	for _, b := range buildings {
@@ -1490,13 +1526,19 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	ui.DrawSelectionMarker(screen, g.camera, g.selection)
 	connected := false
 	occupants := 0
+	showPriority := false
+	priorityLevel := 0
 	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil {
 		connected = g.buildingConnected(g.selection.Building)
 		occupants = g.unitsAt(g.selection.Building)
+		if priorityEligible(g.selection.Building.Kind) {
+			showPriority = true
+			priorityLevel = g.logi.Priority(g.selection.Building.Kind)
+		}
 	}
 	ui.DrawResourceBarAt(screen, g.stock, g.pop, float64(g.layout.LeftWidth+16), 10)
 	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions())
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, occupants)
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, occupants, showPriority, priorityLevel)
 	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
 	ui.DrawSpeedPanel(screen, g.layout, g.sim.Speed())
 
