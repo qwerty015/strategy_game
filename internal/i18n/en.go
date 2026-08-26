@@ -60,6 +60,7 @@ func init() {
 		InputLabel:            "Input",
 		OutputLabel:           "Output",
 		ContentsLabel:         "Contents",
+		PeopleInsideLabel:     "People inside",
 		UnlimitedLabel:        "unlimited",
 		GrowthLabel:           "Growth",
 		HarvestableLabel:      "Harvested by lumberjack",

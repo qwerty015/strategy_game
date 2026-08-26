@@ -653,11 +653,18 @@ func (g *Game) refreshPopulation() {
 // selectionAt resolves map coordinates to a live game object. Units have
 // priority over buildings because a worker standing beside a building is the
 // more useful thing to inspect on a click.
+// selectionAt resolves map coordinates to a live game object. A unit only
+// takes priority over a building at the same tile while it's actually
+// drawn there (VisibleOnMap): a worker standing beside a building is the
+// more useful thing to inspect on a click, but a resident merely stationed
+// inside its workplace (invisible, per the same rule the renderer uses)
+// must not steal a click meant for the building itself. Serfs have no
+// building to hide inside, so they're always eligible.
 func (g *Game) selectionAt(mx, my int) ui.Selection {
 	tx, ty := g.camera.ScreenToTile(mx, my)
 	for i := len(g.vills.Villagers) - 1; i >= 0; i-- {
 		v := g.vills.Villagers[i]
-		if v.X == tx && v.Y == ty {
+		if v.X == tx && v.Y == ty && v.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionVillager, Villager: v}
 		}
 	}
@@ -669,13 +676,13 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 	}
 	for i := len(g.jacks.Lumberjacks) - 1; i >= 0; i-- {
 		j := g.jacks.Lumberjacks[i]
-		if j.X == tx && j.Y == ty {
+		if j.X == tx && j.Y == ty && j.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionLumberjack, Lumberjack: j}
 		}
 	}
 	for i := len(g.fishers.Fishermen) - 1; i >= 0; i-- {
 		f := g.fishers.Fishermen[i]
-		if f.X == tx && f.Y == ty {
+		if f.X == tx && f.Y == ty && f.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionFisherman, Fisherman: f}
 		}
 	}
@@ -687,6 +694,44 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		}
 	}
 	return ui.Selection{}
+}
+
+// unitsAt counts every unit (serf, villager, lumberjack, fisherman)
+// currently standing somewhere on b's footprint, for the inspector's
+// "people inside" line. This is a raw position count, not just an
+// assigned resident: it works the same way for a Tavern or Warehouse
+// (neither has a dedicated worker) as it does for a workplace, and also
+// counts a serf momentarily standing there mid-delivery.
+func (g *Game) unitsAt(b *building.Building) int {
+	if b == nil {
+		return 0
+	}
+	footprint := building.Types[b.Kind].Footprint
+	within := func(x, y int) bool {
+		return x >= b.X && x < b.X+footprint && y >= b.Y && y < b.Y+footprint
+	}
+	count := 0
+	for _, s := range g.logi.Serfs {
+		if within(s.X, s.Y) {
+			count++
+		}
+	}
+	for _, v := range g.vills.Villagers {
+		if within(v.X, v.Y) {
+			count++
+		}
+	}
+	for _, j := range g.jacks.Lumberjacks {
+		if within(j.X, j.Y) {
+			count++
+		}
+	}
+	for _, f := range g.fishers.Fishermen {
+		if within(f.X, f.Y) {
+			count++
+		}
+	}
+	return count
 }
 
 func (g *Game) buildingConnected(b *building.Building) bool {
@@ -1442,15 +1487,16 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
 		}
 	}
-	render.DrawWorkerMarkers(screen, g.buildings, g.vills.Villagers, g.jacks.Lumberjacks, g.fishers.Fishermen, g.camera)
 	ui.DrawSelectionMarker(screen, g.camera, g.selection)
 	connected := false
+	occupants := 0
 	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil {
 		connected = g.buildingConnected(g.selection.Building)
+		occupants = g.unitsAt(g.selection.Building)
 	}
 	ui.DrawResourceBarAt(screen, g.stock, g.pop, float64(g.layout.LeftWidth+16), 10)
 	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions())
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock)
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, occupants)
 	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
 	ui.DrawSpeedPanel(screen, g.layout, g.sim.Speed())
 

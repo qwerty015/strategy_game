@@ -52,6 +52,7 @@ type Catalog struct {
 	InputLabel            string
 	OutputLabel           string
 	ContentsLabel         string
+	PeopleInsideLabel     string
 	UnlimitedLabel        string
 	GrowthLabel           string
 	HarvestableLabel      string

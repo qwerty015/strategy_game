@@ -168,7 +168,7 @@ func paletteShortcut(index int) string {
 // DrawInspectorPanel renders the currently selected object. It reads only
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, occupants int) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -178,7 +178,7 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 
 	switch selection.Kind {
 	case SelectionBuilding:
-		drawBuildingInspector(screen, r.Min.X+18, 62, selection.Building, connected, stock)
+		drawBuildingInspector(screen, r.Min.X+18, 62, selection.Building, connected, stock, occupants)
 	case SelectionSerf:
 		drawSerfInspector(screen, r.Min.X+18, 62, selection.Serf)
 	case SelectionVillager:
@@ -190,7 +190,7 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	}
 }
 
-func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool, stock *resource.Stockpile) {
+func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool, stock *resource.Stockpile, occupants int) {
 	t := i18n.T()
 	bt := building.Types[b.Kind]
 	DrawText(screen, t.BuildingName[b.Kind], float64(x), float64(y))
@@ -209,6 +209,13 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		}
 		return
 	}
+	// Every real building, from here on: how many units currently stand
+	// on its footprint. Not just an assigned resident -- a serf mid-drop
+	// off or a hungry unit eating at the Tavern counts too, so it works
+	// the same way on buildings that never have a dedicated resident
+	// (Tavern, Warehouse) as it does on a workplace (Farm, Bakery, ...).
+	DrawText(screen, fmt.Sprintf("%s: %d", t.PeopleInsideLabel, occupants), float64(x), float64(y))
+	y += 20
 	if b.Kind == building.LumberjackHut {
 		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20

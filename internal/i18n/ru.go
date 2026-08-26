@@ -39,6 +39,8 @@ func init() {
 		},
 
 		BuildMenuTitle: "Строительство",
+		BuildTab:       "Стройка",
+		HireTab:        "Юниты",
 		InspectorTitle: "Сведения",
 		InspectorHint:  "Выберите здание или юнита",
 		SpeedTitle:     "Скорость",
@@ -58,6 +60,7 @@ func init() {
 		InputLabel:            "Вход",
 		OutputLabel:           "Выход",
 		ContentsLabel:         "Внутри",
+		PeopleInsideLabel:     "Людей внутри",
 		UnlimitedLabel:        "без лимита",
 		GrowthLabel:           "Рост",
 		HarvestableLabel:      "Срубается лесорубом",

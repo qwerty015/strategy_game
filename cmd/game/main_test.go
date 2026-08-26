@@ -8,6 +8,7 @@ import (
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
+	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
@@ -62,6 +63,98 @@ func TestFishRegrowthRespectsBodyCap(t *testing.T) {
 	}
 	if len(game.fishRegrowth) != 1 {
 		t.Fatal("regrowth entry disappeared even though the pond is at its cap")
+	}
+}
+
+// TestSelectionAt_BuildingWinsOverInvisibleResident covers "нажатие на
+// здание открывает NPC, а не здание": a resident stationed at its post
+// (e.g. a baker inside its Bakery) sits on the building's own tile but is
+// deliberately not drawn there -- see Villager.VisibleOnMap. A click on
+// that tile must resolve to the building, not steal the click for an
+// invisible worker the player can't even see standing there.
+func TestSelectionAt_BuildingWinsOverInvisibleResident(t *testing.T) {
+	bakery := &building.Building{Kind: building.Bakery, X: 2, Y: 0}
+	game := &Game{
+		buildings: []*building.Building{bakery},
+		vills:     villagers.NewController(),
+		logi:      logistics.NewController(&building.Building{Kind: building.Warehouse}, 0),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		camera:    render.NewCamera(),
+	}
+	game.vills.Spawn(villagers.Baker, bakery)
+	baker := game.vills.Villagers[0]
+	if baker.VisibleOnMap() {
+		t.Fatal("test setup: baker unexpectedly visible while working")
+	}
+
+	sx, sy := game.camera.TileToScreen(bakery.X, bakery.Y)
+	got := game.selectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionBuilding || got.Building != bakery {
+		t.Fatalf("selection = %+v, want the Bakery building", got)
+	}
+}
+
+// TestSelectionAt_VisibleFarmerStillSelectable is the companion case: a
+// farmer actively tending a field cell IS drawn there, so clicking that
+// exact tile should still select the farmer, not fall through to the
+// Farm building underneath.
+func TestSelectionAt_VisibleFarmerStillSelectable(t *testing.T) {
+	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
+	game := &Game{
+		buildings: []*building.Building{farm},
+		vills:     villagers.NewController(),
+		logi:      logistics.NewController(&building.Building{Kind: building.Warehouse}, 0),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		camera:    render.NewCamera(),
+	}
+	game.vills.Spawn(villagers.Farmer, farm)
+	farmer := game.vills.Villagers[0]
+	farmer.X, farmer.Y = farm.X+1, farm.Y // a field cell, not the farmhouse tile
+	if !farmer.VisibleOnMap() {
+		t.Fatal("test setup: farmer unexpectedly hidden while tending the field")
+	}
+
+	sx, sy := game.camera.TileToScreen(farmer.X, farmer.Y)
+	got := game.selectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionVillager || got.Villager != farmer {
+		t.Fatalf("selection = %+v, want the visible farmer", got)
+	}
+}
+
+// TestUnitsAt_CountsAnyoneOnTheFootprintEvenWithoutADedicatedResident
+// covers "показывать сколько внутри людей ... в т.ч. харчевне и складе":
+// unitsAt must work on buildings that never get an assigned resident
+// (Tavern, Warehouse), counting whoever is physically standing there right
+// now, not just a workplace's one dedicated worker.
+func TestUnitsAt_CountsAnyoneOnTheFootprintEvenWithoutADedicatedResident(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 10, Y: 0} // 3x3 footprint
+	game := &Game{
+		buildings: []*building.Building{warehouse, tavern, farm},
+		logi:      logistics.NewController(warehouse, 0),
+		vills:     villagers.NewController(),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+	}
+	game.logi.Hire()
+	game.logi.Hire()
+	game.logi.Serfs[0].X, game.logi.Serfs[0].Y = warehouse.X, warehouse.Y
+	game.logi.Serfs[1].X, game.logi.Serfs[1].Y = tavern.X, tavern.Y
+
+	game.vills.Spawn(villagers.Farmer, farm)
+	game.vills.Villagers[0].X, game.vills.Villagers[0].Y = farm.X+1, farm.Y // a field cell, still inside the footprint
+
+	if got := game.unitsAt(warehouse); got != 1 {
+		t.Errorf("unitsAt(warehouse) = %d, want 1 (a serf standing there, no dedicated resident)", got)
+	}
+	if got := game.unitsAt(tavern); got != 1 {
+		t.Errorf("unitsAt(tavern) = %d, want 1 (a serf eating there, no dedicated resident)", got)
+	}
+	if got := game.unitsAt(farm); got != 1 {
+		t.Errorf("unitsAt(farm) = %d, want 1 (the farmer, standing on a field cell inside the footprint)", got)
 	}
 }
 
