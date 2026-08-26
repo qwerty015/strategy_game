@@ -48,6 +48,15 @@ var (
 	FarmHouse = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
 	Tavern    = mustLoad("generated/building_tavern.png")
 
+	// TreeFrames are the three growth stages from one transparent horizontal
+	// sprite sheet. They are sliced once at startup and then drawn with nearest
+	// neighbour scaling by the renderer.
+	TreeFrames = [3]*ebiten.Image{
+		mustLoadTreeFrame(0),
+		mustLoadTreeFrame(1),
+		mustLoadTreeFrame(2),
+	}
+
 	// There is one purpose-built silhouette per profession for now. The
 	// renderer still exposes frame arrays so directional/walking variants can
 	// be added without changing the simulation packages.
@@ -82,6 +91,19 @@ func mustDecode(name string) image.Image {
 
 func mustLoad(name string) *ebiten.Image {
 	return ebiten.NewImageFromImage(mustDecode(name))
+}
+
+func mustLoadTreeFrame(index int) *ebiten.Image {
+	src := mustDecode("generated/tree_stages.png")
+	b := src.Bounds()
+	const frameCount = 3
+	if index < 0 || index >= frameCount || b.Dx()%frameCount != 0 {
+		panic("assets: invalid tree sprite sheet")
+	}
+	frameWidth := b.Dx() / frameCount
+	out := image.NewNRGBA(image.Rect(0, 0, frameWidth, b.Dy()))
+	draw.Draw(out, out.Bounds(), src, image.Point{X: index * frameWidth, Y: 0}, draw.Src)
+	return ebiten.NewImageFromImage(out)
 }
 
 // mustLoadGround repairs a one-pixel white export fringe present in a few of

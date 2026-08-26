@@ -128,9 +128,9 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 	}
 }
 
-// drawTree is a deliberately small procedural sprite. The terrain already
-// contains background forest art; this separate silhouette represents the
-// persistent object that can grow and later become a lumberjack target.
+// drawTree uses the dedicated three-stage transparent sprite sheet. Keeping
+// the growth stage in the building object means the visual survives save/load
+// together with the tree's growth timer.
 func drawTree(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 	if stage < 0 {
 		stage = 0
@@ -138,25 +138,5 @@ func drawTree(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 	if stage > 2 {
 		stage = 2
 	}
-	scale := tilePixels / TileSize
-	baseX := sx + tilePixels/2
-	baseY := sy + tilePixels
-	trunkWidth := float32(2+stage) * float32(scale)
-	trunkHeight := float32(5+stage*3) * float32(scale)
-	vector.FillRect(screen, float32(baseX)-trunkWidth/2, float32(baseY)-trunkHeight, trunkWidth, trunkHeight, color.RGBA{R: 106, G: 65, B: 35, A: 255}, false)
-
-	if stage == 0 {
-		vector.FillCircle(screen, float32(baseX), float32(baseY)-trunkHeight-float32(2*scale), float32(4*scale), color.RGBA{R: 91, G: 142, B: 53, A: 240}, false)
-		return
-	}
-
-	radius := float32(5+stage*2) * float32(scale)
-	foliage := color.RGBA{R: 55, G: 123, B: 54, A: 245}
-	light := color.RGBA{R: 89, G: 157, B: 66, A: 235}
-	vector.FillCircle(screen, float32(baseX), float32(baseY)-trunkHeight-radius, radius, foliage, false)
-	vector.FillCircle(screen, float32(baseX)-radius*0.75, float32(baseY)-trunkHeight-radius*0.65, radius*0.72, light, false)
-	vector.FillCircle(screen, float32(baseX)+radius*0.72, float32(baseY)-trunkHeight-radius*0.58, radius*0.68, foliage, false)
-	if stage == 2 {
-		vector.FillCircle(screen, float32(baseX), float32(baseY)-trunkHeight-radius*1.7, radius*0.72, light, false)
-	}
+	drawStandingAtScale(screen, assets.TreeFrames[stage], sx, sy, 1.75, tilePixels)
 }

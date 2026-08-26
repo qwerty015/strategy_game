@@ -43,6 +43,17 @@ func TestCanPlace(t *testing.T) {
 			existing:  []*Building{{Kind: Mill, X: 0, Y: 0}},
 			wantValid: true,
 		},
+		{
+			name: "only one tree per cell",
+			kind: Tree, x: 6, y: 6,
+			existing:  []*Building{{Kind: Tree, X: 6, Y: 6}},
+			wantValid: false,
+		},
+		{
+			name: "tree cannot grow on water",
+			kind: Tree, x: 8, y: 8,
+			wantValid: false,
+		},
 	}
 
 	for _, tc := range tests {

@@ -81,7 +81,9 @@ func NewGridFromTiles(width, height int, tiles []Tile) (*Grid, error) {
 }
 
 // NewTestGrid builds a small hardcoded map for early development: mostly
-// grass, with a fertile patch (for farms), a forest patch, and a pond.
+// grass, with a fertile patch (for farms), a pond, and a stone deposit.
+// Trees are independent world objects and are scattered by the game layer;
+// the map does not reserve a special forest area for them.
 func NewTestGrid() *Grid {
 	g := NewGrid(40, 30)
 
@@ -89,13 +91,6 @@ func NewTestGrid() *Grid {
 	for y := 4; y < 9; y++ {
 		for x := 3; x < 12; x++ {
 			g.Set(x, y, Tile{Terrain: Fertile})
-		}
-	}
-
-	// Forest patch.
-	for y := 15; y < 25; y++ {
-		for x := 25; x < 35; x++ {
-			g.Set(x, y, Tile{Terrain: Forest})
 		}
 	}
 

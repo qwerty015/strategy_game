@@ -4,6 +4,7 @@ package main
 import (
 	"image"
 	"log"
+	"sort"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -72,21 +73,18 @@ func NewGame() *Game {
 	initialRoad := &building.Building{Kind: building.Road, X: warehouseX, Y: warehouseY + 1}
 
 	buildings := []*building.Building{warehouse, initialRoad}
-	// Forest terrain gets a few persistent tree objects. Their growth target
-	// is stored on each object, so the grove keeps growing at different
-	// quiet intervals and remains stable after save/load.
-	for y := 15; y < 25; y++ {
-		for x := 25; x < 35; x++ {
-			if (x+y)%3 == 0 {
-				buildings = append(buildings, building.NewTree(x, y))
-			}
-		}
-	}
+	// Trees are sparse persistent world objects, scattered across all free
+	// dry cells rather than confined to a special forest area.
+	buildings = seedTrees(grid, buildings)
 
 	layout := ui.NewLayout(screenWidth, screenHeight)
 	camera := render.NewCamera()
 	mapRect := layout.MapRect()
 	camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
+	// The grove starts just beyond the warehouse area at x=25. Shift the
+	// initial view four tiles right so at least its near edge is visible without
+	// requiring the player to discover camera panning first.
+	camera.Pan(float64(4*render.TileSize), 0, grid.Width, grid.Height, mapRect.Dx(), mapRect.Dy())
 
 	return &Game{
 		grid:      grid,
@@ -434,6 +432,7 @@ func (g *Game) handleSaveLoad() {
 			return
 		}
 		buildings := referenceBuildings(state.Buildings)
+		buildings, hadTrees := ensureTrees(grid, buildings)
 		warehouse := findWarehouse(buildings)
 		if warehouse == nil {
 			g.statusMsg = i18n.T().LoadFailedNoWarehouse
@@ -450,6 +449,11 @@ func (g *Game) handleSaveLoad() {
 		pop := state.Population
 		g.pop = &pop
 		g.camera.X, g.camera.Y = state.CameraX, state.CameraY
+		if !hadTrees && g.camera.X == 0 {
+			// Old saves were usually made from the original left-aligned view;
+			// keep the newly migrated grove visible after the first load too.
+			g.camera.X = float64(4 * render.TileSize)
+		}
 		g.camera.Scale = state.CameraZoom
 		if g.camera.Scale <= 0 {
 			g.camera.Scale = 1
@@ -575,6 +579,78 @@ func referenceBuildings(in []building.Building) []*building.Building {
 		out[i] = &in[i]
 	}
 	return out
+}
+
+// seedTrees adds no more than one percent of the map area in trees. Candidate
+// cells are ordered by a stable coordinate hash, so the selection looks
+// scattered while old-save migration remains reproducible. CanPlace also
+// protects against roads, buildings, and trees already occupying a cell.
+func seedTrees(grid *world.Grid, buildings []*building.Building) []*building.Building {
+	maxTrees := grid.Width * grid.Height / 100
+	if maxTrees == 0 {
+		return buildings
+	}
+
+	type candidate struct {
+		x, y  int
+		score uint32
+	}
+	candidates := make([]candidate, 0, maxTrees*4)
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			if !grid.At(x, y).Buildable() {
+				continue
+			}
+			candidates = append(candidates, candidate{x: x, y: y, score: treeScatterScore(x, y)})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score < candidates[j].score
+	})
+
+	planted := 0
+	for _, c := range candidates {
+		if planted >= maxTrees {
+			break
+		}
+		if !building.CanPlace(grid, buildings, building.Tree, c.x, c.y) {
+			continue
+		}
+		buildings = append(buildings, building.NewTree(c.x, c.y))
+		planted++
+	}
+	return buildings
+}
+
+func treeScatterScore(x, y int) uint32 {
+	// The hash makes the first maxTrees cells look randomly scattered without
+	// relying on runtime randomness or storing a random generator in a save.
+	return uint32(x)*73856093 ^ uint32(y)*19349663 ^ 0x85ebca6b
+}
+
+// ensureTrees migrates saves created before persistent tree objects existed.
+// Current saves already contain at least one Tree and are left untouched so
+// each tree's individual growth timer remains authoritative.
+func ensureTrees(grid *world.Grid, buildings []*building.Building) ([]*building.Building, bool) {
+	for _, b := range buildings {
+		if b.Kind == building.Tree {
+			return buildings, true
+		}
+	}
+
+	// The pre-tree prototype represented a forest as a 10x10 terrain patch.
+	// Convert that legacy decoration back to ordinary grass before scattering
+	// real tree objects, so loading an old save does not preserve a fake forest.
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			if grid.At(x, y).Terrain != world.Forest {
+				continue
+			}
+			grid.Set(x, y, world.Tile{Terrain: world.Grass})
+		}
+	}
+
+	return seedTrees(grid, buildings), false
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {

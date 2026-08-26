@@ -75,9 +75,9 @@ func drawGrassSway(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePixels 
 	vector.FillRect(screen, baseX+width-xOffset, baseY-3*width, width, 3*width, blade, false)
 }
 
-// terrainImage returns the ground sprite for a tile. Forest's sprite
-// already combines grass and trees in one image (see assets.Forest), so
-// there's no separate overlay draw needed.
+// terrainImage returns the ground sprite for a tile. Tree world objects are
+// rendered separately above the ground, so a map does not need a reserved
+// forest area for them to appear.
 func terrainImage(t world.TerrainType) *ebiten.Image {
 	switch t {
 	case world.Fertile:
