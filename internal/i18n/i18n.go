@@ -81,6 +81,7 @@ type Catalog struct {
 	UnitFisherman         string
 	UnitSwineherd         string
 	UnitButcher           string
+	UnitCarpenter         string
 	HireSerf              string
 	Deleted               string
 	SerfDismissRequested  string

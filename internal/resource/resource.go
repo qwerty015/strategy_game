@@ -16,6 +16,7 @@ const (
 	Sausage
 	Carcass
 	Log
+	Plank
 )
 
 var typeNames = map[Type]string{
@@ -27,6 +28,7 @@ var typeNames = map[Type]string{
 	Sausage: "sausage",
 	Carcass: "carcass",
 	Log:     "log",
+	Plank:   "plank",
 }
 
 var namesToType = func() map[string]Type {
@@ -71,7 +73,7 @@ func (t *Type) UnmarshalText(data []byte) error {
 // are intentionally used for buffers, but UI and service logic must not
 // change order from one frame to the next.
 func AllTypes() []Type {
-	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log}
+	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log, Plank}
 }
 
 // FoodTypes returns every resource that can feed a unit in a Tavern. The

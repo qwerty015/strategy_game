@@ -332,6 +332,7 @@ func (g *Game) hireOptions() []ui.HireOption {
 		limited(ui.HireFisherman, building.FisherHut, len(g.fishers.Fishermen)),
 		limited(ui.HireSwineherd, building.PigFarm, countProfession(villagers.Swineherd)),
 		limited(ui.HireButcher, building.MeatWorkshop, countProfession(villagers.Butcher)),
+		limited(ui.HireCarpenter, building.CarpentryWorkshop, countProfession(villagers.Carpenter)),
 	}
 }
 
@@ -354,6 +355,8 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 		g.hireVillagerInto(villagers.Swineherd, building.PigFarm)
 	case ui.HireButcher:
 		g.hireVillagerInto(villagers.Butcher, building.MeatWorkshop)
+	case ui.HireCarpenter:
+		g.hireVillagerInto(villagers.Carpenter, building.CarpentryWorkshop)
 	case ui.HireLumberjack:
 		for _, b := range g.buildings {
 			if b.Kind == building.LumberjackHut && !g.jacks.HasHome(b) {
@@ -767,6 +770,8 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 		g.vills.Spawn(villagers.Swineherd, b)
 	case building.MeatWorkshop:
 		g.vills.Spawn(villagers.Butcher, b)
+	case building.CarpentryWorkshop:
+		g.vills.Spawn(villagers.Carpenter, b)
 	case building.LumberjackHut:
 		g.jacks.Spawn(b)
 	case building.FisherHut:
@@ -965,6 +970,8 @@ func (g *Game) serializeUnits() []save.UnitState {
 			kind = save.UnitSwineherd
 		case villagers.Butcher:
 			kind = save.UnitButcher
+		case villagers.Carpenter:
+			kind = save.UnitCarpenter
 		default:
 			kind = save.UnitFarmer
 		}
@@ -1023,7 +1030,7 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 		switch state.Kind {
 		case save.UnitSerf:
 			g.logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving, state.Dismissing)
-		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher:
+		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher, save.UnitCarpenter:
 			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) {
 				continue
 			}
@@ -1038,6 +1045,8 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				profession = villagers.Swineherd
 			case save.UnitButcher:
 				profession = villagers.Butcher
+			case save.UnitCarpenter:
+				profession = villagers.Carpenter
 			default:
 				profession = villagers.Farmer
 			}
@@ -1045,7 +1054,8 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				(profession == villagers.Baker && home.Kind != building.Bakery) ||
 				(profession == villagers.Winemaker && home.Kind != building.Winery) ||
 				(profession == villagers.Swineherd && home.Kind != building.PigFarm) ||
-				(profession == villagers.Butcher && home.Kind != building.MeatWorkshop) {
+				(profession == villagers.Butcher && home.Kind != building.MeatWorkshop) ||
+				(profession == villagers.Carpenter && home.Kind != building.CarpentryWorkshop) {
 				continue
 			}
 			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings, state.Meal)

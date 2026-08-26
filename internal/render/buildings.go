@@ -131,6 +131,9 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		case building.MeatWorkshop:
 			drawStandingAtScale(screen, assets.MeatWorkshop, sx, sy, buildingHeight, tilePixels)
 
+		case building.CarpentryWorkshop:
+			drawStandingAtScale(screen, assets.CarpentryWorkshop, sx, sy, buildingHeight, tilePixels)
+
 		case building.Mill:
 			drawStandingAtScale(screen, assets.MillFrames[(animFrame/12)%len(assets.MillFrames)], sx, sy, buildingHeight, tilePixels)
 

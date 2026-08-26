@@ -46,4 +46,18 @@ func TestProductionRatios(t *testing.T) {
 	if meatWorkshop.Output != resource.Sausage || meatWorkshop.OutputAmount != 2 {
 		t.Fatalf("meat workshop recipe = %+v, want 1 Carcass -> 2 Sausage", meatWorkshop)
 	}
+
+	carpentry := Types[CarpentryWorkshop].Recipe
+	if got := carpentry.Inputs[resource.Log]; got != 1 {
+		t.Fatalf("carpentry workshop Log input = %d, want 1", got)
+	}
+	if carpentry.Output != resource.Plank || carpentry.OutputAmount != 2 {
+		t.Fatalf("carpentry workshop recipe = %+v, want 1 Log -> 2 Plank", carpentry)
+	}
+	if Types[CarpentryWorkshop].Footprint != 1 || !Types[CarpentryWorkshop].RequiresWorker {
+		t.Fatalf("carpentry workshop type = %+v, want 1x1 footprint with a resident worker", Types[CarpentryWorkshop])
+	}
+	if Types[CarpentryWorkshop].OutputCapacity != 0 {
+		t.Fatalf("carpentry workshop OutputCapacity = %d, want 0 (default BufferCapacity, same as everywhere else)", Types[CarpentryWorkshop].OutputCapacity)
+	}
 }

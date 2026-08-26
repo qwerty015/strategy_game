@@ -66,6 +66,10 @@ const (
 	// Building.Kind directly.
 	PigFarm
 	MeatWorkshop
+
+	// CarpentryWorkshop turns Log into Planks. Appended last for the same
+	// save-compatibility reason as PigFarm/MeatWorkshop above.
+	CarpentryWorkshop
 )
 
 // Recipe describes how a building turns raw resources into a product

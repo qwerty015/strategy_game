@@ -14,9 +14,11 @@ import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/logistics"
+	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/villagers"
+	"strategy_game/internal/world"
 )
 
 func TestFullChain_FarmToMillToBakeryToTavern(t *testing.T) {
@@ -163,6 +165,83 @@ func TestFullChain_FarmToPigFarmToMeatWorkshopToTavern(t *testing.T) {
 	}
 	if got := pigFarm.InputBuffer[resource.Wheat]; got > building.BufferCapacity {
 		t.Fatalf("pig farm Wheat buffer = %d, want <= %d", got, building.BufferCapacity)
+	}
+}
+
+// TestFullChain_LumberjackHutToCarpentryWorkshopToWarehouse covers the new
+// wood chain: a lumberjack cuts a tree and stores a Log in the hut, a serf
+// hauls it to the Carpentry Workshop, the carpenter turns it into Plank,
+// and -- since nothing consumes Plank yet -- a serf eventually drains the
+// surplus to the Warehouse. Exercises all three unit controllers
+// (logistics, villagers, lumberjack) together, the way cmd/game does.
+func TestFullChain_LumberjackHutToCarpentryWorkshopToWarehouse(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	hut := &building.Building{Kind: building.LumberjackHut, X: 2, Y: 0}
+	carpentry := &building.Building{Kind: building.CarpentryWorkshop, X: 4, Y: 0}
+	tree := building.NewTree(2, 2) // reachable on land from the hut, off the road
+	tree.GrowthTicks = tree.GrowthTargetTicks
+
+	var roads []*building.Building
+	for x := 0; x <= 4; x++ {
+		roads = append(roads, &building.Building{Kind: building.Road, X: x, Y: 1})
+	}
+	buildings := append([]*building.Building{warehouse, hut, carpentry, tree}, roads...)
+	grid := world.NewGrid(10, 6)
+
+	logi := logistics.NewController(warehouse, 3)
+	vills := villagers.NewController()
+	vills.Spawn(villagers.Carpenter, carpentry)
+	jacks := lumberjack.NewController()
+	jacks.Spawn(hut)
+	stock := resource.NewStockpile(200)
+
+	starving := func() map[*building.Building]bool {
+		m := make(map[*building.Building]bool)
+		for _, v := range vills.Villagers {
+			if !v.Working() {
+				m[v.HomeBuilding()] = true
+			}
+		}
+		for _, j := range jacks.Lumberjacks {
+			if !j.AtPost() {
+				m[j.HomeBuilding()] = true
+			}
+		}
+		return m
+	}
+
+	var sawPlank bool
+	for range 3000 {
+		economy.Tick(buildings, starving())
+
+		ledger := reservations.New()
+		logi.Reserve(ledger)
+		vills.Reserve(ledger)
+		jacks.Reserve(ledger)
+		logi.Tick(buildings, stock, ledger)
+		vills.Tick(buildings, ledger)
+		for _, event := range jacks.Tick(grid, buildings, ledger) {
+			if event.Kind == lumberjack.TreeCut {
+				for i, b := range buildings {
+					if b == event.Tree {
+						buildings = append(buildings[:i], buildings[i+1:]...)
+						break
+					}
+				}
+			}
+		}
+
+		if carpentry.OutputBuffer[resource.Plank] > 0 || stock.Amount(resource.Plank) > 0 {
+			sawPlank = true
+			break
+		}
+	}
+
+	if !sawPlank {
+		t.Fatal("plank never appeared: log -> carpentry chain is broken")
+	}
+	if got := carpentry.InputBuffer[resource.Log]; got > building.BufferCapacity {
+		t.Fatalf("carpentry Log buffer = %d, want <= %d", got, building.BufferCapacity)
 	}
 }
 

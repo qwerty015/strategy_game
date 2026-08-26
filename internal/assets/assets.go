@@ -54,6 +54,11 @@ var (
 	Winery        = mustLoad("generated/building_winery.png")
 	PigFarm       = mustLoad("generated/building_pig_farm.png")
 	MeatWorkshop  = mustLoad("generated/building_meat_workshop.png")
+	// CarpentryWorkshop temporarily reuses the Lumberjack Hut sprite --
+	// there is no dedicated art for it yet. Swap this for its own
+	// mustLoad("generated/building_carpentry_workshop.png") once that
+	// exists; nothing else needs to change.
+	CarpentryWorkshop = LumberjackHut
 	// The source fishing hut's pier points south. CPU-rotated variants let the
 	// renderer orient it toward whichever cardinal water tile borders the hut.
 	FisherHutFrames = [4]*ebiten.Image{
@@ -124,6 +129,9 @@ var (
 		mustLoad("generated/unit_butcher.png"),
 		mustLoad("generated/unit_butcher.png"),
 	}
+	// Carpenter temporarily reuses the Baker sprite -- no dedicated art yet.
+	// Swap for its own unit_carpenter.png once that exists.
+	Carpenter   = Baker
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 

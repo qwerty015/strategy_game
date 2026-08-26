@@ -90,12 +90,15 @@ strategy_game/
 Ключевые принципы архитектуры:
 
 - **Рецепты производства — это данные, не код.** `building.Recipe{Inputs,
-  Output, OutputAmount, TicksToProduce}`. Добавить новую цепочку (например,
-  будущую столярку из `docs/ROADMAP.md`) — значит добавить новые значения
-  `Recipe` и, если у здания появляется свой рабочий, новую `Profession` —
-  а не писать новую логику движка. Уже так добавлены винодельня,
-  свиноферма+мясной цех и рыбак — ни один не потребовал менять `economy`
-  или `internal/reservations`.
+  Output, OutputAmount, TicksToProduce}`. Добавить новую цепочку — значит
+  добавить новые значения `Recipe` и, если у здания появляется свой
+  рабочий, новую `Profession` — а не писать новую логику движка. Уже так
+  добавлены винодельня, свиноферма+мясной цех, рыбак и столярная
+  мастерская (`resource.Plank`, профессия `villagers.Carpenter`) — ни один
+  не потребовал менять `economy` или `internal/reservations`. Столярка
+  временно рисуется чужим спрайтом (`internal/assets/assets.go`,
+  переменные `CarpentryWorkshop`/`Carpenter` — заглушка на хижину
+  лесоруба/пекаря, заменить одной строкой, когда появится свой арт).
 - **Игровая логика отделена от Ebiten.** Пакеты `economy`, `building`,
   `resource`, `pathfind`, `logistics`, `villagers`, `lumberjack`, `fishing`,
   `reservations`, `meal`, `hunger`, `save`, `i18n` не импортируют ebiten —

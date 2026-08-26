@@ -118,6 +118,8 @@ func hireName(kind HireKind) string {
 		return t.UnitSwineherd
 	case HireButcher:
 		return t.UnitButcher
+	case HireCarpenter:
+		return t.UnitCarpenter
 	default:
 		return t.UnitSerf
 	}
@@ -140,6 +142,8 @@ func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
 		img = assets.Swineherd[0]
 	case HireButcher:
 		img = assets.Butcher[0]
+	case HireCarpenter:
+		img = assets.Carpenter[0]
 	default:
 		img = assets.Serf[0]
 	}
@@ -384,6 +388,8 @@ func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager
 		profession = t.UnitSwineherd
 	case villagers.Butcher:
 		profession = t.UnitButcher
+	case villagers.Carpenter:
+		profession = t.UnitCarpenter
 	}
 	DrawText(screen, profession, float64(x), float64(y))
 	y += 24
@@ -601,6 +607,8 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.PigFarm
 	case building.MeatWorkshop:
 		img = assets.MeatWorkshop
+	case building.CarpentryWorkshop:
+		img = assets.CarpentryWorkshop
 	case building.Tavern:
 		img = assets.Tavern
 	case building.Road:

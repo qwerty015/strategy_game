@@ -193,6 +193,35 @@ func TestSerializeAndRestorePigChainWorkers(t *testing.T) {
 	}
 }
 
+func TestSerializeAndRestoreCarpenter(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	carpentry := &building.Building{Kind: building.CarpentryWorkshop, X: 2, Y: 0}
+	buildings := []*building.Building{warehouse, carpentry}
+
+	makeGame := func() *Game {
+		return &Game{
+			buildings: buildings,
+			stock:     resource.NewStockpile(0),
+			logi:      logistics.NewController(warehouse, 0),
+			vills:     villagers.NewController(),
+			jacks:     lumberjack.NewController(),
+			fishers:   fishing.NewController(),
+		}
+	}
+	source := makeGame()
+	source.vills.Spawn(villagers.Carpenter, carpentry)
+	source.vills.Villagers[0].X, source.vills.Villagers[0].Y = 2, 1
+
+	restored := makeGame()
+	restored.restoreUnits(source.serializeUnits(), buildings)
+	if got := len(restored.vills.Villagers); got != 1 {
+		t.Fatalf("restored carpentry workers = %d, want 1", got)
+	}
+	if got := restored.vills.Villagers[0]; got.Profession != villagers.Carpenter || got.HomeBuilding() != carpentry || got.X != 2 || got.Y != 1 {
+		t.Fatalf("restored carpenter = profession %v home %v at (%d,%d), want CarpentryWorkshop worker at (2,1)", got.Profession, got.HomeBuilding(), got.X, got.Y)
+	}
+}
+
 func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	buildings := []*building.Building{warehouse}

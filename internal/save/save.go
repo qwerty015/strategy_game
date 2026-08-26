@@ -87,6 +87,7 @@ const (
 	UnitFisherman  UnitKind = "fisherman"
 	UnitSwineherd  UnitKind = "swineherd"
 	UnitButcher    UnitKind = "butcher"
+	UnitCarpenter  UnitKind = "carpenter"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the

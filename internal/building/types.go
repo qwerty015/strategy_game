@@ -164,4 +164,18 @@ var Types = map[Kind]Type{
 			TicksToProduce: 72,
 		},
 	},
+	CarpentryWorkshop: {
+		Kind:           CarpentryWorkshop,
+		Name:           "Carpentry Workshop",
+		Footprint:      1,
+		RequiresWorker: true,
+		Recipe: Recipe{
+			// One log becomes two planks. Input buffer stays at the default
+			// BufferCapacity (6), same as every other consumer -- no override.
+			Inputs:         map[resource.Type]int{resource.Log: 1},
+			Output:         resource.Plank,
+			OutputAmount:   2,
+			TicksToProduce: 72,
+		},
+	},
 }
