@@ -432,6 +432,123 @@ func TestController_CollectsToNearestReachableWarehouse(t *testing.T) {
 	}
 }
 
+// TestController_TavernSupplySkipsProducerThatCannotReachTavern covers
+// "проверка только пути слуги к производителю, но не производителя к
+// харчевне": producer1 sits on a dead-end spur reachable from the serf but
+// with no road continuing on to the Tavern; producer2 shares the Tavern's
+// through-road, so it can actually deliver. producer1 is listed first, so
+// a naive "first match with surplus and a reachable first leg" search
+// would commit to it, walk there, then discover on arrival it can't
+// deliver (goods get returned safely, but the whole trip was wasted).
+func TestController_TavernSupplySkipsProducerThatCannotReachTavern(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	producer1 := &building.Building{Kind: building.Bakery, X: 0, Y: 2}
+	producer1.AddOutput(resource.Bread, 5)
+	spur := &building.Building{Kind: building.Road, X: 0, Y: 1} // dead end, connects nowhere else
+
+	producer2 := &building.Building{Kind: building.Bakery, X: 5, Y: 1}
+	producer2.AddOutput(resource.Bread, 5)
+	tavern := &building.Building{Kind: building.Tavern, X: 10, Y: 1}
+
+	mainRoad := straightRoad(1, 11, 0) // x=1..10 at y=0, touches producer2 and the Tavern
+
+	buildings := append([]*building.Building{warehouse, producer1, spur, producer2, tavern}, mainRoad...)
+
+	c := NewController(warehouse, 1)
+	c.Serfs[0].X, c.Serfs[0].Y = 0, 0
+	tick(c, buildings, resource.NewStockpile(100))
+
+	s := c.Serfs[0]
+	if s.PickupBuilding() != producer2 {
+		t.Fatalf("pickup = %v, want producer2 (bug: committed to a producer that can't actually deliver to the Tavern)", s.PickupBuilding())
+	}
+}
+
+// TestController_DirectHaulSkipsProducerThatCannotReachConsumer is the
+// same fix for direct producer->consumer hauls: producer1 is reachable
+// from the serf but sits on a dead-end spur with no road onward to the
+// Mill; producer2 shares the Mill's through-road.
+func TestController_DirectHaulSkipsProducerThatCannotReachConsumer(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20} // off to the side, irrelevant here
+	producer1 := &building.Building{Kind: building.Farm, X: 0, Y: 2}
+	producer1.AddOutput(resource.Wheat, 5)
+	spur := &building.Building{Kind: building.Road, X: 0, Y: 1}
+
+	producer2 := &building.Building{Kind: building.Farm, X: 5, Y: 1}
+	producer2.AddOutput(resource.Wheat, 5)
+	mill := &building.Building{Kind: building.Mill, X: 10, Y: 1}
+
+	mainRoad := straightRoad(1, 11, 0)
+
+	buildings := append([]*building.Building{warehouse, producer1, spur, producer2, mill}, mainRoad...)
+
+	c := NewController(warehouse, 1)
+	c.Serfs[0].X, c.Serfs[0].Y = 0, 0
+	tick(c, buildings, resource.NewStockpile(100))
+
+	s := c.Serfs[0]
+	if s.PickupBuilding() != producer2 || s.DropoffBuilding() != mill {
+		t.Fatalf("job = %v -> %v, want producer2 -> mill (bug: committed to a producer that can't actually deliver to the consumer)", s.PickupBuilding(), s.DropoffBuilding())
+	}
+}
+
+// TestController_SupplySkipsShortageNotInStock covers "findSupplyJob
+// может выбрать первую нехватку ресурса, которого нет на складе": the
+// Mill is listed first and short on Wheat, but the warehouse has none at
+// all; the Bakery is short on Flour, which the warehouse does have. The
+// search must not get stuck on the Mill's unfulfillable shortage.
+func TestController_SupplySkipsShortageNotInStock(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	mill := &building.Building{Kind: building.Mill, X: 5, Y: 1}     // short on Wheat; none in stock
+	bakery := &building.Building{Kind: building.Bakery, X: 9, Y: 1} // short on Flour; in stock
+
+	buildings := append([]*building.Building{warehouse, mill, bakery}, straightRoad(1, 10, 0)...)
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+	stock.Add(resource.Flour, 20) // no Wheat anywhere
+
+	for range 500 {
+		tick(c, buildings, stock)
+		if bakery.InputBuffer[resource.Flour] > 0 {
+			break
+		}
+	}
+
+	if got := bakery.InputBuffer[resource.Flour]; got != 1 {
+		t.Fatalf("bakery InputBuffer[Flour] = %d, want 1 (serf should have skipped the Mill's Wheat shortage -- nothing in stock for it -- and supplied the Bakery instead)", got)
+	}
+	if got := mill.InputBuffer[resource.Wheat]; got != 0 {
+		t.Fatalf("mill InputBuffer[Wheat] = %d, want 0 (no Wheat was ever in stock to deliver)", got)
+	}
+}
+
+// TestController_MaxWaitingHungerKeepsGrowingPastInterval covers "счётчик
+// голода ограничивается HungerInterval, поэтому несколько голодных юнитов
+// получают одинаковый приоритет": with no Tavern reachable at all, the
+// serf stays hungry indefinitely: HungerTicks (and MaxWaitingHunger) must
+// keep growing past HungerInterval instead of saturating there, or the
+// cross-controller priority ordering degrades back into ties broken by
+// call order.
+func TestController_MaxWaitingHungerKeepsGrowingPastInterval(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	buildings := []*building.Building{warehouse} // no Tavern at all
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+
+	for range HungerInterval + 50 {
+		tick(c, buildings, stock)
+	}
+
+	if got := c.Serfs[0].HungerTicks(); got <= HungerInterval {
+		t.Fatalf("HungerTicks() = %d, want > %d (the counter must keep counting past HungerInterval instead of saturating there)", got, HungerInterval)
+	}
+	if got := c.MaxWaitingHunger(); got != c.Serfs[0].HungerTicks() {
+		t.Fatalf("MaxWaitingHunger() = %d, want %d (should reflect the true uncapped wait time)", got, c.Serfs[0].HungerTicks())
+	}
+}
+
 func TestController_PrioritizesTavernSupply(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	bakery := &building.Building{Kind: building.Bakery, X: 5, Y: 0}

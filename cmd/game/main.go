@@ -393,7 +393,9 @@ func (g *Game) deleteSelectedBuilding() {
 
 	g.logi.CancelAllJobs(g.stock)
 	g.vills.RemoveHome(b)
+	g.vills.CancelRouteTo(b) // in case b is a Tavern someone is mid-trip to eat at
 	g.jacks.RemoveHome(b, g.stock)
+	g.jacks.CancelRouteTo(b) // same, for lumberjacks
 	for i, candidate := range g.buildings {
 		if candidate != b {
 			continue

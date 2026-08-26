@@ -171,6 +171,23 @@ func (c *Controller) RemoveHome(home *building.Building, stock *resource.Stockpi
 	c.Lumberjacks = kept
 }
 
+// CancelRouteTo resets any lumberjack currently walking toward target as a
+// Tavern back to idle at its hut, instead of leaving it holding a
+// dangling pointer to a building that's about to be removed from the
+// world. Call this before deleting a building, in case it's a Tavern
+// someone is mid-trip to eat at -- RemoveHome alone doesn't cover this,
+// since a lumberjack's Home is its hut, never the Tavern it eats at. A
+// no-op for anyone not currently walking toward target.
+func (c *Controller) CancelRouteTo(target *building.Building) {
+	for _, j := range c.Lumberjacks {
+		if j.state != StateToTavern || j.tavern != target {
+			continue
+		}
+		j.tavern = nil
+		j.resetToIdle()
+	}
+}
+
 // State reports what the lumberjack is doing.
 func (j *Lumberjack) State() State { return j.state }
 
@@ -221,6 +238,13 @@ func (c *Controller) Reserve(ledger *reservations.Ledger) {
 // scarce -- the unit that's been waiting longest gets first claim,
 // instead of whichever controller happens to be first in a fixed call
 // order.
+//
+// This only works because hungerTick keeps counting past HungerInterval
+// instead of saturating there: once several units across different
+// controllers are simultaneously overdue, a counter capped at
+// HungerInterval would tie them all at the same value, and the ordering
+// would silently fall back to the fixed call order it was built to
+// replace.
 func (c *Controller) MaxWaitingHunger() int {
 	best := -1
 	for _, j := range c.Lumberjacks {
@@ -240,9 +264,11 @@ func (c *Controller) MaxWaitingHunger() int {
 func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) []Event {
 	var events []Event
 	for _, j := range c.Lumberjacks {
-		if j.hungerTick < HungerInterval {
-			j.hungerTick++
-		}
+		// Deliberately uncapped: see MaxWaitingHunger's doc comment for
+		// why this must keep counting past HungerInterval instead of
+		// saturating there. HungerTicks() still returns the true value;
+		// UI code clamps it for the "N/HungerInterval" display.
+		j.hungerTick++
 
 		switch j.state {
 		case StateIdle:

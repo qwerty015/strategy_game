@@ -197,7 +197,7 @@ func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
 		DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, fromName, toName), float64(x), float64(y))
 		y += 20
 	}
-	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, s.HungerTicks(), logistics.HungerInterval), float64(x), float64(y))
+	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(s.HungerTicks(), logistics.HungerInterval), logistics.HungerInterval), float64(x), float64(y))
 }
 
 func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager) {
@@ -223,7 +223,7 @@ func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager
 		DrawText(screen, fmt.Sprintf("%s: %s", t.HomeLabel, t.BuildingName[v.HomeBuilding().Kind]), float64(x), float64(y))
 		y += 20
 	}
-	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, v.HungerTicks(), villagers.HungerInterval), float64(x), float64(y))
+	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(v.HungerTicks(), villagers.HungerInterval), villagers.HungerInterval), float64(x), float64(y))
 }
 
 func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumberjack) {
@@ -264,7 +264,7 @@ func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumbe
 	}
 	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.LumberjackHut]), float64(x), float64(y))
 	y += 20
-	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, j.HungerTicks(), lumberjack.HungerInterval), float64(x), float64(y))
+	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(j.HungerTicks(), lumberjack.HungerInterval), lumberjack.HungerInterval), float64(x), float64(y))
 }
 
 // DrawSelectionMarker draws a warm outline under the selected object so the

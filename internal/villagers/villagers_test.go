@@ -80,6 +80,61 @@ func TestVillager_StarvingWhenNoTavernReachable(t *testing.T) {
 	}
 }
 
+// TestRestoreVillager_SearchesFromSavedPositionNotHome reproduces the
+// "визуально прыгает после загрузки" report: RestoreVillager used to
+// search for a Tavern from v.Home instead of from the saved (x, y), so a
+// villager saved mid-walk with an unreachable Home would fail to resume
+// its route (or, if Home happened to be reachable via a different route,
+// silently rebuild the wrong one) instead of continuing from where it
+// actually stood. Home is placed with no road connection at all, while
+// the saved position sits right next to a Tavern -- only searching from
+// the saved position succeeds.
+func TestRestoreVillager_SearchesFromSavedPositionNotHome(t *testing.T) {
+	farm := &building.Building{Kind: building.Farm, X: 10, Y: 10} // no road anywhere near it
+	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 1}
+	tavern.AddInput(resource.Bread, 3)
+
+	buildings := append([]*building.Building{farm, tavern}, straightRoad(1, 6, 0)...)
+
+	c := NewController()
+	v := c.RestoreVillager(Farmer, farm, 4, 0, HungerInterval, false, VillagerToTavern, buildings)
+
+	if v.X != 4 || v.Y != 0 {
+		t.Fatalf("villager position after restore = (%d,%d), want to stay at the saved (4,0) instead of jumping", v.X, v.Y)
+	}
+	if v.State() != VillagerToTavern {
+		t.Fatalf("villager state = %v, want VillagerToTavern (bug: searched for a route from the unreachable Home instead of the saved position)", v.State())
+	}
+}
+
+// TestController_CancelRouteToResetsVillagerWithoutDanglingPointer covers
+// "при удалении харчевни уже идущие к ней фермеры не получают отмену
+// маршрута": deleting a Tavern a villager is mid-walk to eat at used to
+// leave v.tavern pointing at a building no longer in the world.
+func TestController_CancelRouteToResetsVillagerWithoutDanglingPointer(t *testing.T) {
+	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 0}
+
+	c := NewController()
+	c.Spawn(Farmer, farm)
+	v := c.Villagers[0]
+	v.ph = toTavern
+	v.tavern = tavern
+	v.X, v.Y = 3, 0
+
+	c.CancelRouteTo(tavern)
+
+	if v.ph != working {
+		t.Fatalf("villager phase = %v, want working (back at post)", v.ph)
+	}
+	if v.tavern != nil {
+		t.Fatal("v.tavern is still set after CancelRouteTo -- dangling pointer to the deleted Tavern")
+	}
+	if v.X != farm.X || v.Y != farm.Y {
+		t.Fatalf("villager position = (%d,%d), want back at home (%d,%d)", v.X, v.Y, farm.X, farm.Y)
+	}
+}
+
 // TestVillager_EatsAtNearestReachableTavern covers "NPC кушают только в
 // одной харчевне": a hungry farmer/baker used to always walk to whichever
 // Tavern happened to be first in the buildings slice, no matter how far

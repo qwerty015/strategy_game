@@ -282,6 +282,13 @@ func (c *Controller) Reserve(ledger *reservations.Ledger) {
 // simulation tick when the Tavern's Bread is scarce -- the unit that's
 // been waiting longest gets first claim, instead of whichever controller
 // happens to be first in a fixed call order.
+//
+// This only works because ticksSinceMeal keeps counting past
+// HungerInterval instead of saturating there: once several units across
+// different controllers are simultaneously overdue, a counter capped at
+// HungerInterval would tie them all at the same value, and the ordering
+// would silently fall back to the fixed call order it was built to
+// replace.
 func (c *Controller) MaxWaitingHunger() int {
 	best := -1
 	for _, s := range c.Serfs {
@@ -301,9 +308,11 @@ func (c *Controller) MaxWaitingHunger() int {
 // own pre-existing in-flight units.
 func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) {
 	for _, s := range c.Serfs {
-		if s.ticksSinceMeal < HungerInterval {
-			s.ticksSinceMeal++
-		}
+		// Deliberately uncapped: see MaxWaitingHunger's doc comment for
+		// why this must keep counting past HungerInterval instead of
+		// saturating there. HungerTicks() still returns the true value;
+		// UI code clamps it for the "N/HungerInterval" display.
+		s.ticksSinceMeal++
 		if s.ph == idle {
 			if !c.tryStartMeal(s, buildings, ledger) {
 				c.assign(s, buildings, stock, ledger)
@@ -348,6 +357,29 @@ func nearestReachableWarehouse(buildings []*building.Building, candidates []*bui
 	for _, w := range candidates {
 		p, reachable := pathfind.FindPathFromPoint(buildings, from, w)
 		if !reachable {
+			continue
+		}
+		if bestLen == -1 || len(p) < bestLen {
+			warehouse, path, bestLen = w, p, len(p)
+		}
+	}
+	return warehouse, path, warehouse != nil
+}
+
+// nearestReachableWarehouseTo is like nearestReachableWarehouse but also
+// requires the candidate to be able to deliver onward to dest (e.g. the
+// Tavern the pulled stock is meant for) -- both legs of the trip must
+// work, not just the one from the serf's current position. Picking the
+// nearest warehouse to the serf and only then discovering it can't reach
+// the destination would waste the serf's whole walk there for nothing.
+func nearestReachableWarehouseTo(buildings []*building.Building, candidates []*building.Building, from pathfind.Point, dest *building.Building) (warehouse *building.Building, path []pathfind.Point, ok bool) {
+	bestLen := -1
+	for _, w := range candidates {
+		p, reachable := pathfind.FindPathFromPoint(buildings, from, w)
+		if !reachable {
+			continue
+		}
+		if _, deliverable := pathfind.FindPath(buildings, w, dest); !deliverable {
 			continue
 		}
 		if bestLen == -1 || len(p) < bestLen {
@@ -409,15 +441,14 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 			return
 		}
 	}
-	if b, t, n, ok := findSupplyJob(buildings, ledger); ok {
-		// Here it's the pickup side (which warehouse) that varies, so
-		// pick whichever registered warehouse is actually nearest the
-		// serf right now.
-		if warehouse, path, ok := nearestReachableWarehouse(buildings, c.warehouses(), from); ok {
-			if amount := min(n, ledger.AvailableStock(stock, t)); amount > 0 {
-				c.startLeg(s, warehouse, b, t, amount, path, ledger)
-				return
-			}
+	if b, t, n, ok := findSupplyJob(buildings, stock, ledger); ok {
+		// Here it's the pickup side (which warehouse) that varies, so pick
+		// whichever registered warehouse is actually nearest the serf
+		// right now AND can still reach b -- not just the one nearest the
+		// serf.
+		if warehouse, path, ok := nearestReachableWarehouseTo(buildings, c.warehouses(), from, b); ok {
+			c.startLeg(s, warehouse, b, t, n, path, ledger)
+			return
 		}
 	}
 }
@@ -430,11 +461,15 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 //
 // A town can have several Taverns, each with its own BufferCapacity-limited
 // stock, so every one of them is considered (not just the first found in
-// buildings). Every candidate source and warehouse is also checked for
-// reachability from the serf's current position (from) before being
-// accepted: a producer or Tavern that merely looks promising on paper but
-// sits on the far side of a broken road must not block a serf from trying
-// the next one.
+// buildings). Every candidate source and warehouse is checked for BOTH legs
+// of the trip -- serf to pickup (from), and pickup to the Tavern -- before
+// being accepted: a producer or warehouse that merely looks promising on
+// paper but can't actually reach this particular Tavern (a broken road
+// between the two, even if each is independently reachable from the serf)
+// must not block a serf from trying the next one. Without the second leg
+// check, a serf could pick up a load, walk all the way to the producer,
+// and only then discover it can't actually deliver -- the goods get
+// returned safely (see arriveAtPickup), but the whole trip was wasted.
 func findTavernSupplyJob(buildings []*building.Building, warehouses []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, from pathfind.Point) (pickup, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
 	accepted := building.Types[building.Tavern].AcceptedResources
 	if len(accepted) == 0 {
@@ -461,10 +496,13 @@ func findTavernSupplyJob(buildings []*building.Building, warehouses []*building.
 				if !reachable {
 					continue // not reachable from here right now -- try the next source
 				}
+				if _, deliverable := pathfind.FindPath(buildings, producer, tavern); !deliverable {
+					continue // can't actually deliver from here to this Tavern -- try the next source
+				}
 				return producer, tavern, rt, min(have, CarryCapacity, room), p, true
 			}
 			if avail := ledger.AvailableStock(stock, rt); avail > 0 {
-				if warehouse, p, ok := nearestReachableWarehouse(buildings, warehouses, from); ok {
+				if warehouse, p, ok := nearestReachableWarehouseTo(buildings, warehouses, from, tavern); ok {
 					return warehouse, tavern, rt, min(CarryCapacity, room, avail), p, true
 				}
 			}
@@ -495,6 +533,10 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 			if have <= 0 {
 				continue
 			}
+			p, reachable := pathfind.FindPathFromPoint(buildings, from, producer)
+			if !reachable {
+				continue // not reachable from here right now -- try the next producer
+			}
 			for _, consumer := range buildings {
 				if consumer == warehouse || consumer == producer || consumer.Kind == building.Road || consumer.Kind == building.Tree {
 					continue
@@ -511,9 +553,8 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 				if amt <= 0 {
 					continue
 				}
-				p, reachable := pathfind.FindPathFromPoint(buildings, from, producer)
-				if !reachable {
-					continue // not reachable from here right now -- try the next producer
+				if _, deliverable := pathfind.FindPath(buildings, producer, consumer); !deliverable {
+					continue // this producer can't actually deliver to this consumer -- try the next consumer
 				}
 				return producer, consumer, rt, amt, p, true
 			}
@@ -546,13 +587,19 @@ func findCollectJob(buildings []*building.Building, warehouse *building.Building
 }
 
 // findSupplyJob looks for a building falling short on an input that the
-// Warehouse could cover. It deliberately doesn't pick a specific warehouse
-// or check reachability itself -- assign tries every registered warehouse
-// as the pickup point, since which one is actually reachable depends on
-// the serf's position, not on which building is short on input. Resource
-// types are visited in a fixed sorted order for the same reason as the
-// other job searches.
-func findSupplyJob(buildings []*building.Building, ledger *reservations.Ledger) (b *building.Building, t resource.Type, amount int, ok bool) {
+// Warehouse could actually cover right now. It deliberately doesn't pick a
+// specific warehouse or check reachability itself -- assign tries every
+// registered warehouse as the pickup point, since which one is actually
+// reachable depends on the serf's position, not on which building is short
+// on input. Resource types are visited in a fixed sorted order for the
+// same reason as the other job searches.
+//
+// A shortage is only accepted if stock actually has some of that resource
+// available (per the shared ledger): a building short on a resource
+// nobody has any of yet must not block trying the next shortage, whether
+// that's a different resource at the same building or a different
+// building entirely.
+func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) (b *building.Building, t resource.Type, amount int, ok bool) {
 	for _, cand := range buildings {
 		if cand.Kind == building.Warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
@@ -563,7 +610,11 @@ func findSupplyJob(buildings []*building.Building, ledger *reservations.Ledger) 
 			if short <= 0 {
 				continue
 			}
-			return cand, rt, min(CarryCapacity, short), true
+			amount := min(CarryCapacity, short, ledger.AvailableStock(stock, rt))
+			if amount <= 0 {
+				continue // nothing in stock for this shortage -- try the next one
+			}
+			return cand, rt, amount, true
 		}
 	}
 	return nil, 0, 0, false

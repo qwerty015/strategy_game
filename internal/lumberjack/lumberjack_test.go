@@ -9,6 +9,33 @@ import (
 	"strategy_game/internal/world"
 )
 
+// TestController_CancelRouteToResetsLumberjackWithoutDanglingPointer
+// covers "при удалении харчевни уже идущие к ней лесорубы не получают
+// отмену маршрута": deleting a Tavern a lumberjack is mid-walk to eat at
+// used to leave j.tavern pointing at a building no longer in the world.
+func TestController_CancelRouteToResetsLumberjackWithoutDanglingPointer(t *testing.T) {
+	hut := &building.Building{Kind: building.LumberjackHut, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 0}
+
+	controller := NewController()
+	j := controller.Spawn(hut)
+	j.state = StateToTavern
+	j.tavern = tavern
+	j.X, j.Y = 3, 0
+
+	controller.CancelRouteTo(tavern)
+
+	if j.state != StateIdle {
+		t.Fatalf("lumberjack state = %v, want StateIdle", j.state)
+	}
+	if j.tavern != nil {
+		t.Fatal("j.tavern is still set after CancelRouteTo -- dangling pointer to the deleted Tavern")
+	}
+	if j.X != hut.X || j.Y != hut.Y {
+		t.Fatalf("lumberjack position = (%d,%d), want back at hut (%d,%d)", j.X, j.Y, hut.X, hut.Y)
+	}
+}
+
 // TestLumberjack_EatsAtNearestReachableTavern covers "NPC кушают только в
 // одной харчевне": a hungry lumberjack used to always walk to whichever
 // Tavern happened to be first in the buildings slice, no matter how far
