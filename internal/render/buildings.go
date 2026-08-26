@@ -211,9 +211,8 @@ func drawTree(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 	drawStandingAtScale(screen, assets.TreeFrames[stage], sx, sy, 1.75, tilePixels)
 }
 
-// drawStoneDeposit draws a flat ground-level tile, like a field, rather than
-// a standing object -- it's terrain-scale scenery, not a creature or
-// building. The tint drifts from full-Reserve gray toward a sun-bleached
+// drawStoneDeposit draws a ground-level boulder cluster rather than a standing
+// object. The tint drifts from full-reserve gray toward a sun-bleached
 // tone as it depletes, so a partly-worked deposit reads at a glance without
 // needing dedicated multi-stage art.
 func drawStoneDeposit(screen *ebiten.Image, sx, sy, tilePixels float64, reserve int) {
@@ -225,7 +224,7 @@ func drawStoneDeposit(screen *ebiten.Image, sx, sy, tilePixels float64, reserve 
 		fraction = 1
 	}
 	tint := lerpColor(stoneWornColor, stoneFullColor, fraction)
-	drawStandingTintedAtScale(screen, assets.Stone, sx, sy, 1, tilePixels, tint)
+	drawStandingTintedAtScale(screen, assets.StoneDeposit, sx, sy, 1, tilePixels, tint)
 }
 
 // drawFish uses the dedicated three-stage transparent fish sprite sheet. The

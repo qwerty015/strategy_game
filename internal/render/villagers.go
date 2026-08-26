@@ -34,6 +34,8 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 			frames = assets.Swineherd
 		case villagers.Butcher:
 			frames = assets.Butcher
+		case villagers.Carpenter:
+			frames = assets.Carpenter
 		}
 
 		sx, sy := cam.TileToScreen(v.X, v.Y)

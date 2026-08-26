@@ -30,6 +30,8 @@ var (
 	Fertile = mustLoadGround("generated/terrain_fertile.png") // tilled farmland
 	Forest  = mustLoadGround("generated/terrain_forest.png")  // grass + trees, one tile
 	Stone   = mustLoadGround("generated/terrain_stone.png")
+	// StoneDeposit is the mineable boulder cluster placed on top of stone terrain.
+	StoneDeposit = mustLoad("generated/terrain_stone_deposit.png")
 	// The water export has the same bright top-edge fringe as several ground
 	// tiles. Load it through the one-time repair pass so zoomed ponds stay
 	// seamless instead of gaining horizontal white stripes.
@@ -46,23 +48,16 @@ var (
 		mustCompositeLegacyMill("tiles/mill_blades3.png"),
 	}
 
-	Bakery        = mustLoad("generated/building_bakery.png")
-	Warehouse     = mustLoad("generated/building_warehouse.png")
-	FarmHouse     = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
-	Tavern        = mustLoad("generated/building_tavern.png")
-	LumberjackHut = mustLoad("generated/building_lumberjack_hut.png")
-	Winery        = mustLoad("generated/building_winery.png")
-	PigFarm       = mustLoad("generated/building_pig_farm.png")
-	MeatWorkshop  = mustLoad("generated/building_meat_workshop.png")
-	// CarpentryWorkshop temporarily reuses the Lumberjack Hut sprite --
-	// there is no dedicated art for it yet. Swap this for its own
-	// mustLoad("generated/building_carpentry_workshop.png") once that
-	// exists; nothing else needs to change.
-	CarpentryWorkshop = LumberjackHut
-	// QuarryHut temporarily reuses the Lumberjack Hut sprite -- there is no
-	// dedicated art for it yet. Swap this for its own
-	// mustLoad("generated/building_quarry_hut.png") once that exists.
-	QuarryHut = LumberjackHut
+	Bakery            = mustLoad("generated/building_bakery.png")
+	Warehouse         = mustLoad("generated/building_warehouse.png")
+	FarmHouse         = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
+	Tavern            = mustLoad("generated/building_tavern.png")
+	LumberjackHut     = mustLoad("generated/building_lumberjack_hut.png")
+	Winery            = mustLoad("generated/building_winery.png")
+	PigFarm           = mustLoad("generated/building_pig_farm.png")
+	MeatWorkshop      = mustLoad("generated/building_meat_workshop.png")
+	CarpentryWorkshop = mustLoad("generated/building_carpentry_workshop.png")
+	QuarryHut         = mustLoad("generated/building_quarry_hut.png")
 	// The source fishing hut's pier points south. CPU-rotated variants let the
 	// renderer orient it toward whichever cardinal water tile borders the hut.
 	FisherHutFrames = [4]*ebiten.Image{
@@ -133,13 +128,16 @@ var (
 		mustLoad("generated/unit_butcher.png"),
 		mustLoad("generated/unit_butcher.png"),
 	}
-	// Carpenter temporarily reuses the Baker sprite -- no dedicated art yet.
-	// Swap for its own unit_carpenter.png once that exists.
-	Carpenter = Baker
-	// Quarryman temporarily reuses the Lumberjack sprite -- both are workers
-	// who roam free land gathering a raw material. Swap for its own
-	// unit_quarryman.png once that exists.
-	Quarryman   = Lumberjack
+	Carpenter = [3]*ebiten.Image{
+		mustLoad("generated/unit_carpenter.png"),
+		mustLoad("generated/unit_carpenter.png"),
+		mustLoad("generated/unit_carpenter.png"),
+	}
+	Quarryman = [3]*ebiten.Image{
+		mustLoad("generated/unit_quarryman.png"),
+		mustLoad("generated/unit_quarryman.png"),
+		mustLoad("generated/unit_quarryman.png"),
+	}
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 

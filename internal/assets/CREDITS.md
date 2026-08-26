@@ -27,3 +27,10 @@ the three-stage transparent `fish_stages.png` atlas were generated on
 and `unit_butcher.png` were generated with the same tool on 2026-08-26 for the
 pig and sausage production chain. They are original project art and are not
 derived from any specific commercial game's visual assets.
+
+`terrain_stone_deposit.png`, `building_quarry_hut.png`,
+`building_carpentry_workshop.png`, `unit_quarryman.png` and
+`unit_carpenter.png` were generated with the same tool on 2026-08-26 for
+the stone and wood-processing chains. The deposit sprite is a transparent
+object drawn over the stone terrain; the buildings and professions use their
+own distinct silhouettes and are original project art.

@@ -93,12 +93,12 @@ strategy_game/
   Output, OutputAmount, TicksToProduce}`. Добавить новую цепочку — значит
   добавить новые значения `Recipe` и, если у здания появляется свой
   рабочий, новую `Profession` — а не писать новую логику движка. Уже так
-  добавлены винодельня, свиноферма+мясной цех, рыбак и столярная
-  мастерская (`resource.Plank`, профессия `villagers.Carpenter`) — ни один
-  не потребовал менять `economy` или `internal/reservations`. Столярка
-  временно рисуется чужим спрайтом (`internal/assets/assets.go`,
-  переменные `CarpentryWorkshop`/`Carpenter` — заглушка на хижину
-  лесоруба/пекаря, заменить одной строкой, когда появится свой арт).
+  добавлены винодельня, свиноферма+мясной цех, рыбак, столярная
+  мастерская (`resource.Plank`, профессия `villagers.Carpenter`) и
+  каменоломня (`resource.StoneBlock`, пакет `quarry`). Ни одна из этих
+  цепочек не потребовала менять `economy` или
+  `internal/reservations`; у столярки, каменоломни и обоих работников есть
+  собственные спрайты из `internal/assets/generated`.
 - **Игровая логика отделена от Ebiten.** Пакеты `economy`, `building`,
   `resource`, `pathfind`, `logistics`, `villagers`, `lumberjack`, `fishing`,
   `reservations`, `meal`, `hunger`, `save`, `i18n` не импортируют ebiten —
