@@ -26,8 +26,10 @@ func DrawResourceBar(screen *ebiten.Image, stock *resource.Stockpile, pop *econo
 func DrawResourceBarAt(screen *ebiten.Image, stock *resource.Stockpile, pop *economy.Population, x, y float64) {
 	t := i18n.T()
 	line := fmt.Sprintf(
-		"%s: %d | %s: %d  %s: %d  %s: %d",
+		"%s: %d  %s: %d  %s: %d | %s: %d  %s: %d  %s: %d",
 		t.Population, pop.Count,
+		t.DeathsLabel, pop.Deaths,
+		t.RemovedLabel, pop.Removed,
 		t.ResourceName[resource.Wheat], stock.Amount(resource.Wheat),
 		t.ResourceName[resource.Flour], stock.Amount(resource.Flour),
 		t.ResourceName[resource.Bread], stock.Amount(resource.Bread),

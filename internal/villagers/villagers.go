@@ -9,6 +9,7 @@ package villagers
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
@@ -28,10 +29,9 @@ const (
 )
 
 const (
-	// HungerInterval is how many simulation ticks a villager can go
-	// between meals before heading to the Tavern. At normal speed this
-	// is about 90 seconds, so eating does not dominate the work cycle.
-	HungerInterval = 180
+	// HungerInterval is the 20% satiety threshold at which a villager
+	// starts walking to the Tavern. Death happens at hunger.MaxTicks.
+	HungerInterval = hunger.MealThresholdTicks
 
 	// TicksPerTile is how many simulation ticks it takes a villager to
 	// cross one tile of road, walking to/from the Tavern.
@@ -112,6 +112,11 @@ func (v *Villager) HungerTicks() int {
 	return v.ticksSinceMeal
 }
 
+// SatietyPercent returns the player-facing 0-100 satiety value.
+func (v *Villager) SatietyPercent() int {
+	return hunger.Percent(v.ticksSinceMeal)
+}
+
 // HomeBuilding returns the building where this villager works.
 func (v *Villager) HomeBuilding() *building.Building {
 	return v.Home
@@ -161,6 +166,17 @@ func (c *Controller) SetMealSeed(seed uint32) { c.meals.SetSeed(seed) }
 // Spawn adds a villager working at home.
 func (c *Controller) Spawn(profession Profession, home *building.Building) {
 	c.Villagers = append(c.Villagers, NewVillager(profession, home))
+}
+
+// HasHome reports whether a worker is already assigned to home. One
+// production building may employ only its matching single resident.
+func (c *Controller) HasHome(home *building.Building) bool {
+	for _, v := range c.Villagers {
+		if v.Home == home {
+			return true
+		}
+	}
+	return false
 }
 
 // RestoreVillager recreates a worker from a save snapshot. Unlike a new
@@ -284,10 +300,20 @@ func (c *Controller) MaxWaitingHunger() int {
 // Tick advances hunger and movement for every villager. Call once per
 // simulation tick, after every controller sharing ledger has had a
 // chance to Reserve its own pre-existing in-flight units.
-func (c *Controller) Tick(buildings []*building.Building, ledger *reservations.Ledger) {
+func (c *Controller) Tick(buildings []*building.Building, ledger *reservations.Ledger) int {
+	deaths := 0
+	remaining := c.Villagers[:0]
 	for _, v := range c.Villagers {
+		v.ticksSinceMeal++
+		if hunger.Dead(v.ticksSinceMeal) {
+			deaths++
+			continue
+		}
 		c.tick(v, buildings, ledger)
+		remaining = append(remaining, v)
 	}
+	c.Villagers = remaining
+	return deaths
 }
 
 // nearestTavernWithFood returns the nearest reachable Tavern that has any
@@ -352,12 +378,7 @@ func (c *Controller) tick(v *Villager, buildings []*building.Building, ledger *r
 }
 
 func (c *Controller) tickWorking(v *Villager, buildings []*building.Building, ledger *reservations.Ledger) {
-	// Deliberately uncapped: see MaxWaitingHunger's doc comment for why
-	// this must keep counting past HungerInterval instead of saturating
-	// there. HungerTicks() still returns the true value; UI code clamps
-	// it for the "N/HungerInterval" display.
-	v.ticksSinceMeal++
-	if v.ticksSinceMeal < HungerInterval {
+	if !hunger.NeedsMeal(v.ticksSinceMeal) {
 		v.animateFieldWork()
 		return
 	}

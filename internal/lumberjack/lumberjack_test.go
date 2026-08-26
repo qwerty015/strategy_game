@@ -55,7 +55,7 @@ func TestLumberjack_EatsAtNearestReachableTavern(t *testing.T) {
 	j := controller.Spawn(hut)
 
 	var ate bool
-	for range 500 {
+	for range HungerInterval + 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
 		controller.Tick(grid, buildings, ledger)
@@ -66,7 +66,7 @@ func TestLumberjack_EatsAtNearestReachableTavern(t *testing.T) {
 	}
 
 	if !ate {
-		t.Fatal("lumberjack never ate in 500 ticks")
+		t.Fatal("lumberjack never ate in time")
 	}
 	if got := tavernNear.InputBuffer[resource.Bread]; got != 2 {
 		t.Fatalf("nearer tavern Bread = %d, want 2 (lumberjack should have eaten there)", got)
@@ -147,5 +147,30 @@ func TestLumberjackCutsNearestTreeAndStoresLogAtHut(t *testing.T) {
 	_, got := jack.Cargo()
 	if got != 0 {
 		t.Fatalf("lumberjack cargo after unloading = %d, want 0", got)
+	}
+}
+
+// TestController_SurvivesManyIdleTicksWithNoWork guards the "filter in
+// place" roster bug directly: Tick used to append a survivor to the kept
+// slice only when its state-machine switch fell through to the bottom of
+// the loop body, but nearly every branch (still walking, still chopping,
+// nothing to do yet) exits early via `continue` -- which skipped the
+// append and silently dropped a perfectly alive, non-hungry worker from
+// the roster after its very first tick.
+func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
+	grid := world.NewGrid(8, 4)
+	hut := &building.Building{Kind: building.LumberjackHut, X: 0, Y: 0}
+	buildings := []*building.Building{hut} // no trees at all -- StateIdle finds nothing every tick
+	controller := NewController()
+	controller.Spawn(hut)
+
+	for range 50 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+	}
+
+	if got := len(controller.Lumberjacks); got != 1 {
+		t.Fatalf("lumberjacks after 50 idle ticks = %d, want 1 (worker must not vanish while merely idle)", got)
 	}
 }

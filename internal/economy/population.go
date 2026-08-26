@@ -7,5 +7,7 @@ package economy
 // AGENTS.md. The caller (cmd/game) sets Count each frame to the number
 // of actual units in play.
 type Population struct {
-	Count int
+	Count   int
+	Deaths  int // starvation deaths across all living unit types
+	Removed int // player-initiated building removals and completed dismissals
 }

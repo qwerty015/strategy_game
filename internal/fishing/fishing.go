@@ -5,6 +5,7 @@ package fishing
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
@@ -15,7 +16,7 @@ import (
 const (
 	// HungerInterval matches the other town workers. Hunger is checked between
 	// fishing trips and never teleports a fisherman out of a boat.
-	HungerInterval = 180
+	HungerInterval = hunger.MealThresholdTicks
 	TicksPerTile   = 2
 	CatchTicks     = 12
 )
@@ -38,13 +39,15 @@ type EventKind int
 
 const (
 	FishCaught EventKind = iota
+	WorkerDied
 )
 
 // Event tells the game layer to remove the caught Fish and schedule its
 // delayed fry replacement. The controller never owns the buildings slice.
 type Event struct {
-	Kind EventKind
-	Fish *building.Building
+	Kind  EventKind
+	Fish  *building.Building
+	Cargo int
 }
 
 // Fisherman is one worker assigned to one waterside hut.
@@ -101,6 +104,16 @@ func (c *Controller) Spawn(home *building.Building) *Fisherman {
 	f := NewFisherman(home)
 	c.Fishermen = append(c.Fishermen, f)
 	return f
+}
+
+// HasHome reports whether a fisherman is already assigned to home.
+func (c *Controller) HasHome(home *building.Building) bool {
+	for _, f := range c.Fishermen {
+		if f.Home == home {
+			return true
+		}
+	}
+	return false
 }
 
 // Restore recreates a fisherman from a save snapshot. A saved meal is kept
@@ -204,6 +217,9 @@ func (f *Fisherman) Meal() resource.Type { return f.meal }
 // HungerTicks returns simulation ticks since the last meal.
 func (f *Fisherman) HungerTicks() int { return f.hungerTick }
 
+// SatietyPercent returns the player-facing 0-100 satiety value.
+func (f *Fisherman) SatietyPercent() int { return hunger.Percent(f.hungerTick) }
+
 // WorkTicks returns progress through the net-casting animation.
 func (f *Fisherman) WorkTicks() int { return f.workTicks }
 
@@ -243,8 +259,20 @@ func (c *Controller) MaxWaitingHunger() int {
 // step and returns every fish caught this tick.
 func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) []Event {
 	var events []Event
+	remaining := c.Fishermen[:0]
 	for _, f := range c.Fishermen {
 		f.hungerTick++
+		if hunger.Dead(f.hungerTick) {
+			events = append(events, Event{Kind: WorkerDied, Cargo: f.cargo})
+			continue
+		}
+		// Appended here, before the switch below, because that switch is
+		// full of `continue` statements for the ordinary "still in
+		// progress this tick" case (walking, fishing, ...) -- each of
+		// those used to skip straight past a trailing append and silently
+		// drop a perfectly alive worker from the roster.
+		remaining = append(remaining, f)
+
 		switch f.state {
 		case StateIdle:
 			if f.cargo > 0 {
@@ -310,6 +338,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			}
 		}
 	}
+	c.Fishermen = remaining
 	return events
 }
 

@@ -32,6 +32,7 @@ var (
 	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}   // freshly tilled earth (tints assets.Fertile)
 	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255} // golden, ready to harvest
 	vineyardSoil   = color.RGBA{R: 80, G: 61, B: 38, A: 255}   // darker soil for grape rows
+	unstaffedTint  = color.RGBA{R: 214, G: 63, B: 55, A: 90}   // translucent red over a workerless building
 )
 
 // lerpColor blends from a to b as t goes from 0 to 1, clamped.
@@ -60,7 +61,7 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // than the tile itself (see buildingHeight), with a production-progress bar
 // underneath. MillFrames contains three compact sail positions, switched
 // periodically to animate the windmill.
-func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera) {
+func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera, unstaffed map[*building.Building]bool) {
 	tilePixels := cam.TilePixels()
 	// Ground is drawn before this function. Roads are the bottom gameplay
 	// layer, so render every road before any tree, field or standing building.
@@ -170,6 +171,15 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			barY := float32(sy) + float32(bt.Footprint)*float32(tilePixels) - float32(3*tilePixels/TileSize)
 			barHeight := float32(3 * tilePixels / TileSize)
 			vector.FillRect(screen, float32(sx), barY, barWidth*progress, barHeight, color.RGBA{R: 255, G: 255, B: 0, A: 220}, false)
+		}
+
+		// A production building with no resident worker at all (as opposed
+		// to one merely away eating) is tinted red across its whole
+		// footprint, so an empty workplace reads at a glance instead of
+		// only being discoverable by opening the inspector.
+		if unstaffed[b] {
+			size := float32(bt.Footprint) * float32(tilePixels)
+			vector.FillRect(screen, float32(sx), float32(sy), size, size, unstaffedTint, false)
 		}
 	}
 }

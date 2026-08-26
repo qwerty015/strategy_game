@@ -37,13 +37,21 @@ func drawPanel(screen *ebiten.Image, r imageRect, title string) {
 // from image.Rectangle arithmetic and make the intended pixel layout clear.
 type imageRect struct{ x, y, w, h int }
 
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette) {
+// DrawBuildPanel renders both construction and NPC hiring in the same left
+// panel. A professional card is muted when every matching workplace already
+// has a resident, making the one-worker-per-building limit visible.
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, options []HireOption) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
+	drawMenuTabs(screen, layout, tab)
+	if tab == HireTab {
+		drawHireCards(screen, layout, options)
+		return
+	}
 	for i, kind := range p.Kinds {
-		x, y := 12, 48+i*52
-		w, h := layout.LeftWidth-24, 48
+		x, y := 12, leftCardsStartY+i*leftCardStride
+		w, h := layout.LeftWidth-24, leftCardHeight
 		fill := panelInnerColor
 		if i == p.Selected {
 			fill = selectedColor
@@ -51,11 +59,97 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette) {
 		vector.FillRect(screen, float32(x), float32(y), float32(w), float32(h), fill, false)
 		vector.FillRect(screen, float32(x), float32(y+h-3), float32(w), 3, panelEdgeColor, false)
 
-		drawBuildingIcon(screen, kind, x+8, y+10, 32)
-		DrawText(screen, i18n.T().BuildingName[kind], float64(x+50), float64(y+8))
+		drawBuildingIcon(screen, kind, x+8, y+6, 28)
+		DrawText(screen, i18n.T().BuildingName[kind], float64(x+44), float64(y+5))
 		shortcut := paletteShortcut(i)
 		DrawText(screen, fmt.Sprintf("%d×%d%s", building.Types[kind].Footprint, building.Types[kind].Footprint, shortcut), float64(x+50), float64(y+27))
 	}
+}
+
+func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
+	labels := []string{i18n.T().BuildTab, i18n.T().HireTab}
+	width := (layout.LeftWidth - 30) / 2
+	for i, label := range labels {
+		x := 12 + i*(width+6)
+		fill := panelInnerColor
+		if LeftTab(i) == active {
+			fill = selectedColor
+		}
+		vector.FillRect(screen, float32(x), leftTabY, float32(width), leftTabHeight, fill, false)
+		DrawText(screen, label, float64(x+8), float64(leftTabY+7))
+	}
+}
+
+func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {
+	for i, option := range options {
+		x, y := 12, leftCardsStartY+i*leftCardStride
+		w, h := layout.LeftWidth-24, leftCardHeight
+		fill := panelInnerColor
+		if !option.Available {
+			fill = color.RGBA{R: 69, G: 50, B: 48, A: 245}
+		}
+		vector.FillRect(screen, float32(x), float32(y), float32(w), float32(h), fill, false)
+		vector.FillRect(screen, float32(x), float32(y+h-3), float32(w), 3, panelEdgeColor, false)
+
+		drawHireIcon(screen, option.Kind, x+8, y+6, 28)
+		DrawText(screen, hireName(option.Kind), float64(x+44), float64(y+5))
+		count := fmt.Sprintf("%d", option.Current)
+		if option.Limit > 0 {
+			count = fmt.Sprintf("%d/%d", option.Current, option.Limit)
+		}
+		DrawText(screen, count, float64(x+44), float64(y+21))
+	}
+}
+
+func hireName(kind HireKind) string {
+	t := i18n.T()
+	switch kind {
+	case HireFarmer:
+		return t.UnitFarmer
+	case HireBaker:
+		return t.UnitBaker
+	case HireWinemaker:
+		return t.UnitWinemaker
+	case HireLumberjack:
+		return t.UnitLumberjack
+	case HireFisherman:
+		return t.UnitFisherman
+	case HireSwineherd:
+		return t.UnitSwineherd
+	case HireButcher:
+		return t.UnitButcher
+	default:
+		return t.UnitSerf
+	}
+}
+
+func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
+	var img *ebiten.Image
+	switch kind {
+	case HireFarmer:
+		img = assets.Farmer[0]
+	case HireBaker:
+		img = assets.Baker[0]
+	case HireWinemaker:
+		img = assets.Winemaker[0]
+	case HireLumberjack:
+		img = assets.Lumberjack[0]
+	case HireFisherman:
+		img = assets.Fisherman[0]
+	case HireSwineherd:
+		img = assets.Swineherd[0]
+	case HireButcher:
+		img = assets.Butcher[0]
+	default:
+		img = assets.Serf[0]
+	}
+	b := img.Bounds()
+	scale := float64(size) / float64(b.Dy())
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(scale, scale)
+	op.GeoM.Translate(float64(x), float64(y))
+	op.Blend = ebiten.BlendSourceOver
+	screen.DrawImage(img, op)
 }
 
 func paletteShortcut(index int) string {
@@ -236,7 +330,7 @@ func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
 		DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, fromName, toName), float64(x), float64(y))
 		y += 20
 	}
-	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(s.HungerTicks(), logistics.HungerInterval), logistics.HungerInterval), float64(x), float64(y))
+	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, s.SatietyPercent()), float64(x), float64(y))
 }
 
 func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager) {
@@ -269,7 +363,7 @@ func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager
 		DrawText(screen, fmt.Sprintf("%s: %s", t.HomeLabel, t.BuildingName[v.HomeBuilding().Kind]), float64(x), float64(y))
 		y += 20
 	}
-	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(v.HungerTicks(), villagers.HungerInterval), villagers.HungerInterval), float64(x), float64(y))
+	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, v.SatietyPercent()), float64(x), float64(y))
 }
 
 func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumberjack) {

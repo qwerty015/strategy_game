@@ -6,6 +6,7 @@ package lumberjack
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
@@ -14,9 +15,9 @@ import (
 )
 
 const (
-	// HungerInterval matches the other town units: hunger is checked between
-	// jobs and never interrupts a tree-cutting or return trip.
-	HungerInterval = 180
+	// HungerInterval is the shared 20% satiety threshold. Hunger is checked
+	// between jobs and never interrupts a tree-cutting or return trip.
+	HungerInterval = hunger.MealThresholdTicks
 	TicksPerTile   = 2
 
 	// ChopTicks is six seconds at normal speed (two simulation ticks/sec).
@@ -41,14 +42,16 @@ type EventKind int
 
 const (
 	TreeCut EventKind = iota
+	WorkerDied
 )
 
 // Event is returned after a worker finishes a world interaction. The game
 // layer owns the building slice, so it removes the cut tree and schedules its
 // regrowth after receiving TreeCut.
 type Event struct {
-	Kind EventKind
-	Tree *building.Building
+	Kind  EventKind
+	Tree  *building.Building
+	Cargo int
 }
 
 // Lumberjack is one physical worker assigned to a Lumberjack Hut.
@@ -107,6 +110,16 @@ func (c *Controller) Spawn(home *building.Building) *Lumberjack {
 	j := NewLumberjack(home)
 	c.Lumberjacks = append(c.Lumberjacks, j)
 	return j
+}
+
+// HasHome reports whether a lumberjack is already assigned to home.
+func (c *Controller) HasHome(home *building.Building) bool {
+	for _, j := range c.Lumberjacks {
+		if j.Home == home {
+			return true
+		}
+	}
+	return false
 }
 
 // Restore recreates a lumberjack while preserving position, hunger, cargo,
@@ -224,6 +237,9 @@ func (j *Lumberjack) Meal() resource.Type { return j.meal }
 // HungerTicks returns simulation ticks since the last meal.
 func (j *Lumberjack) HungerTicks() int { return j.hungerTick }
 
+// SatietyPercent returns the player-facing 0-100 satiety value.
+func (j *Lumberjack) SatietyPercent() int { return hunger.Percent(j.hungerTick) }
+
 // WorkTicks returns progress through the current chopping animation.
 func (j *Lumberjack) WorkTicks() int { return j.workTicks }
 
@@ -284,12 +300,19 @@ func (c *Controller) MaxWaitingHunger() int {
 // has had a chance to Reserve its own pre-existing in-flight units.
 func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) []Event {
 	var events []Event
+	remaining := c.Lumberjacks[:0]
 	for _, j := range c.Lumberjacks {
-		// Deliberately uncapped: see MaxWaitingHunger's doc comment for
-		// why this must keep counting past HungerInterval instead of
-		// saturating there. HungerTicks() still returns the true value;
-		// UI code clamps it for the "N/HungerInterval" display.
 		j.hungerTick++
+		if hunger.Dead(j.hungerTick) {
+			events = append(events, Event{Kind: WorkerDied, Cargo: j.cargo})
+			continue
+		}
+		// Appended here, before the switch below, because that switch is
+		// full of `continue` statements for the ordinary "still in
+		// progress this tick" case (walking, chopping, ...) -- each of
+		// those used to skip straight past a trailing append and silently
+		// drop a perfectly alive worker from the roster.
+		remaining = append(remaining, j)
 
 		switch j.state {
 		case StateIdle:
@@ -383,6 +406,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			}
 		}
 	}
+	c.Lumberjacks = remaining
 	return events
 }
 

@@ -9,7 +9,9 @@ func init() {
 	register(RU, Catalog{
 		WindowTitle: "Градостроитель",
 
-		Population: "Население",
+		Population:   "Население",
+		DeathsLabel:  "Смертей",
+		RemovedLabel: "Удалено",
 		ResourceName: map[resource.Type]string{
 			resource.Wheat:   "Пшеница",
 			resource.Flour:   "Мука",

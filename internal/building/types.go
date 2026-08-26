@@ -11,9 +11,10 @@ import (
 // needs to change.
 var Types = map[Kind]Type{
 	Farm: {
-		Kind:      Farm,
-		Name:      "Farm",
-		Footprint: 3, // one tile is the farmhouse, the rest is tilled field around it -- see render/buildings.go
+		Kind:           Farm,
+		Name:           "Farm",
+		Footprint:      3, // one tile is the farmhouse, the rest is tilled field around it -- see render/buildings.go
+		RequiresWorker: true,
 		Recipe: Recipe{
 			// No Inputs: a Farm gathers Wheat from the land itself.
 			Output:       resource.Wheat,
@@ -39,9 +40,10 @@ var Types = map[Kind]Type{
 		},
 	},
 	Bakery: {
-		Kind:      Bakery,
-		Name:      "Bakery",
-		Footprint: 1,
+		Kind:           Bakery,
+		Name:           "Bakery",
+		Footprint:      1,
+		RequiresWorker: true,
 		Recipe: Recipe{
 			// One unit of Flour bakes into two units of Bread.
 			Inputs:       map[resource.Type]int{resource.Flour: 1},
@@ -95,17 +97,19 @@ var Types = map[Kind]Type{
 		// build palette. They still use normal occupancy rules.
 	},
 	LumberjackHut: {
-		Kind:      LumberjackHut,
-		Name:      "Lumberjack Hut",
-		Footprint: 1,
+		Kind:           LumberjackHut,
+		Name:           "Lumberjack Hut",
+		Footprint:      1,
+		RequiresWorker: true,
 		// The hut has no recipe: the lumberjack physically walks to a tree
 		// and deposits finished Logs into OutputBuffer. Serfs collect them
 		// through the hut's road access point.
 	},
 	Winery: {
-		Kind:      Winery,
-		Name:      "Winery",
-		Footprint: 3,
+		Kind:           Winery,
+		Name:           "Winery",
+		Footprint:      3,
+		RequiresWorker: true,
 		Recipe: Recipe{
 			// The eight vineyard cells appear immediately with the building.
 			// Progress is the shared grape-growing/harvest cycle; the raw
@@ -117,9 +121,10 @@ var Types = map[Kind]Type{
 		OutputCapacity: 8,
 	},
 	FisherHut: {
-		Kind:      FisherHut,
-		Name:      "Fisher Hut",
-		Footprint: 1,
+		Kind:           FisherHut,
+		Name:           "Fisher Hut",
+		Footprint:      1,
+		RequiresWorker: true,
 		// The fisherman places caught Fish in OutputBuffer; ordinary serfs
 		// collect it along the hut's normal road access point.
 	},
@@ -131,9 +136,10 @@ var Types = map[Kind]Type{
 		// Fish are spawned by the water-population system, not player-built.
 	},
 	PigFarm: {
-		Kind:      PigFarm,
-		Name:      "Pig Farm",
-		Footprint: 1,
+		Kind:           PigFarm,
+		Name:           "Pig Farm",
+		Footprint:      1,
+		RequiresWorker: true,
 		Recipe: Recipe{
 			// Feed is consumed before growth begins: without all three units
 			// of Wheat there is no pig being raised yet.
@@ -145,9 +151,10 @@ var Types = map[Kind]Type{
 		},
 	},
 	MeatWorkshop: {
-		Kind:      MeatWorkshop,
-		Name:      "Meat Workshop",
-		Footprint: 1,
+		Kind:           MeatWorkshop,
+		Name:           "Meat Workshop",
+		Footprint:      1,
+		RequiresWorker: true,
 		Recipe: Recipe{
 			// A single generic carcass becomes two sausage portions. Keeping
 			// Carcass unified makes future animals add producers, not recipes.

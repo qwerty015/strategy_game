@@ -9,6 +9,7 @@ import (
 
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
 )
@@ -78,6 +79,51 @@ func TestLoad_RejectsWrongVersion(t *testing.T) {
 
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load() with mismatched version succeeded, want error")
+	}
+}
+
+// TestLoad_MigratesV1HungerToSatietyScale covers the version-1 compatibility
+// path: an old save's 180-tick hunger gauge must be rescaled onto the
+// 1000-tick satiety model, not loaded as-is (which would misread, say, a
+// unit at the old "just started walking to eat" point as already almost
+// starved to death on the new scale).
+func TestLoad_MigratesV1HungerToSatietyScale(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "slot1.json")
+	state := GameState{
+		GridWidth:  1,
+		GridHeight: 1,
+		Tiles:      []world.Tile{{}},
+		Units: []UnitState{
+			{Kind: UnitSerf, HomeIndex: -1, HungerTicks: 90},    // halfway to the old meal point
+			{Kind: UnitFarmer, HomeIndex: -1, HungerTicks: 500}, // far past the old 180-tick cap
+		},
+	}
+	if err := Save(path, state); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	writeVersion(t, path, previousFormatVersion)
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if got.Version != FormatVersion {
+		t.Fatalf("Version after migration = %d, want %d", got.Version, FormatVersion)
+	}
+	// 90/180 of the old scale becomes 90/180 of the new meal threshold.
+	if got, want := got.Units[0].HungerTicks, 90*hunger.MealThresholdTicks/previousHungerTicks; got != want {
+		t.Errorf("migrated HungerTicks[0] = %d, want %d", got, want)
+	}
+	// A value already past the old cap is clamped to it first, so it lands
+	// exactly at the new meal threshold -- nowhere near hunger.MaxTicks
+	// (death). Scaling onto MaxTicks instead would kill this unit the
+	// instant the save loads, which is exactly the bug this guards.
+	if got, want := got.Units[1].HungerTicks, hunger.MealThresholdTicks; got != want {
+		t.Errorf("migrated HungerTicks[1] = %d, want %d (clamped-then-scaled onto the meal threshold, not death)", got, want)
+	}
+	if hunger.Dead(got.Units[1].HungerTicks) {
+		t.Fatal("migrated unit is already dead on load")
 	}
 }
 

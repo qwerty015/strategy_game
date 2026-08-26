@@ -17,6 +17,14 @@ type Layout struct {
 	BottomHeight int
 }
 
+const (
+	leftTabY        = 44
+	leftTabHeight   = 30
+	leftCardsStartY = 82
+	leftCardHeight  = 40
+	leftCardStride  = 44
+)
+
 func NewLayout(width, height int) Layout {
 	left := width / 5
 	if left < 180 {
@@ -84,11 +92,32 @@ func (l Layout) MapRect() image.Rectangle {
 	return image.Rect(l.LeftWidth, 0, l.Width-l.RightWidth, l.Height-l.BottomHeight)
 }
 
+// MenuTabAt returns the left-panel category button under the cursor.
+func (l Layout) MenuTabAt(x, y int) (LeftTab, bool) {
+	if y < leftTabY || y >= leftTabY+leftTabHeight || x < 12 || x >= l.LeftWidth-12 {
+		return BuildTab, false
+	}
+	mid := l.LeftWidth / 2
+	if x < mid {
+		return BuildTab, true
+	}
+	return HireTab, true
+}
+
 // BuildIndexAt returns the building palette card under the cursor.
 func (l Layout) BuildIndexAt(x, y int, count int) (int, bool) {
-	card := image.Rect(12, 48, l.LeftWidth-12, 96)
+	return l.menuIndexAt(x, y, count)
+}
+
+// HireIndexAt returns the hire-menu card under the cursor.
+func (l Layout) HireIndexAt(x, y int, count int) (int, bool) {
+	return l.menuIndexAt(x, y, count)
+}
+
+func (l Layout) menuIndexAt(x, y int, count int) (int, bool) {
+	card := image.Rect(12, leftCardsStartY, l.LeftWidth-12, leftCardsStartY+leftCardHeight)
 	for i := 0; i < count; i++ {
-		r := card.Add(image.Pt(0, i*52))
+		r := card.Add(image.Pt(0, i*leftCardStride))
 		if image.Pt(x, y).In(r) {
 			return i, true
 		}

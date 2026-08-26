@@ -89,6 +89,7 @@ type Game struct {
 	camera        *render.Camera
 	palette       *ui.Palette
 	layout        ui.Layout
+	leftTab       ui.LeftTab
 	buildMode     bool
 	selection     ui.Selection
 	middlePanning bool
@@ -117,7 +118,7 @@ func NewGame() *Game {
 	// are visible without requiring the player to discover camera panning first.
 	camera.Pan(float64(4*render.TileSize), 0, grid.Width, grid.Height, mapRect.Dx(), mapRect.Dy())
 
-	return &Game{
+	game := &Game{
 		grid:      grid,
 		buildings: buildings,
 		stock:     resource.NewStockpile(stockpileCapacity),
@@ -133,6 +134,8 @@ func NewGame() *Game {
 		palette:   ui.NewPalette(),
 		layout:    layout,
 	}
+	game.refreshPopulation()
+	return game
 }
 
 func (g *Game) Update() error {
@@ -152,7 +155,7 @@ func (g *Game) Update() error {
 		}
 		g.tickTreeRegrowth()
 		g.tickFishRegrowth()
-		economy.TickWithConnectivity(g.buildings, g.starvingBuildings(), g.disconnectedBuildings())
+		economy.TickWithConnectivity(g.buildings, g.inactiveWorkerBuildings(), g.disconnectedBuildings())
 
 		// One shared reservation ledger per simulation tick: every
 		// controller first reports its own pre-existing in-flight units
@@ -173,13 +176,15 @@ func (g *Game) Update() error {
 		// whichever unit type happens to be ticked first every time.
 		var jackEvents []lumberjack.Event
 		var fishEvents []fishing.Event
+		var serfResult logistics.TickResult
+		var villagerDeaths int
 		type unitStep struct {
 			hunger int
 			run    func()
 		}
 		steps := []unitStep{
-			{g.logi.MaxWaitingHunger(), func() { g.logi.Tick(g.buildings, g.stock, ledger) }},
-			{g.vills.MaxWaitingHunger(), func() { g.vills.Tick(g.buildings, ledger) }},
+			{g.logi.MaxWaitingHunger(), func() { serfResult = g.logi.Tick(g.buildings, g.stock, ledger) }},
+			{g.vills.MaxWaitingHunger(), func() { villagerDeaths = g.vills.Tick(g.buildings, ledger) }},
 			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, g.buildings, ledger) }},
 			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, g.buildings, ledger) }},
 		}
@@ -187,18 +192,32 @@ func (g *Game) Update() error {
 		for _, step := range steps {
 			step.run()
 		}
-		g.clearDismissedSerfSelection()
+		g.pop.Deaths += serfResult.Deaths + villagerDeaths
+		g.pop.Removed += serfResult.Dismissed
 		for _, event := range jackEvents {
-			if event.Kind == lumberjack.TreeCut {
+			switch event.Kind {
+			case lumberjack.TreeCut:
 				g.cutTree(event.Tree)
+			case lumberjack.WorkerDied:
+				g.pop.Deaths++
+				if event.Cargo > 0 {
+					g.stock.Add(resource.Log, event.Cargo)
+				}
 			}
 		}
 		for _, event := range fishEvents {
-			if event.Kind == fishing.FishCaught {
+			switch event.Kind {
+			case fishing.FishCaught:
 				g.catchFish(event.Fish)
+			case fishing.WorkerDied:
+				g.pop.Deaths++
+				if event.Cargo > 0 {
+					g.stock.Add(resource.Fish, event.Cargo)
+				}
 			}
 		}
-		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
+		g.clearMissingUnitSelection()
+		g.refreshPopulation()
 	}
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
@@ -217,33 +236,154 @@ func (g *Game) resizeLayout(width, height int) {
 	g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
 }
 
-// starvingBuildings reports which worker buildings currently have no worker
-// physically at their post -- so economy.Tick can pause their
-// production instead of quietly progressing an empty building. This is
-// deliberately NOT the same as Villager.Starving: a worker who's merely
-// hungry but still standing at home (e.g. because the Tavern has no
-// food yet) keeps working. Gating production on Starving too would
-// deadlock a fresh town's very first production cycle -- the Tavern
-// can't get food until the Bakery makes some, and the Bakery can't
-// work while "starving".
-func (g *Game) starvingBuildings() map[*building.Building]bool {
-	m := make(map[*building.Building]bool, len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen))
+// inactiveWorkerBuildings marks every worker building whose resident is
+// missing or temporarily away from its post. This is deliberately NOT the
+// same as Starving: a worker who is hungry but still at home keeps producing
+// until they leave for the Tavern. Starting with all RequiresWorker buildings
+// inactive is important after a death: otherwise an empty bakery or farm
+// would continue its production cycle invisibly.
+func (g *Game) inactiveWorkerBuildings() map[*building.Building]bool {
+	m := make(map[*building.Building]bool)
+	for _, b := range g.buildings {
+		if building.Types[b.Kind].RequiresWorker {
+			m[b] = true
+		}
+	}
 	for _, v := range g.vills.Villagers {
-		if !v.Working() {
-			m[v.Home] = true
+		if v.Home != nil {
+			m[v.Home] = !v.Working()
 		}
 	}
 	for _, j := range g.jacks.Lumberjacks {
-		if !j.AtPost() {
-			m[j.HomeBuilding()] = true
+		if j.HomeBuilding() != nil {
+			m[j.HomeBuilding()] = !j.AtPost()
 		}
 	}
 	for _, f := range g.fishers.Fishermen {
-		if !f.AtPost() {
-			m[f.HomeBuilding()] = true
+		if f.HomeBuilding() != nil {
+			m[f.HomeBuilding()] = !f.AtPost()
 		}
 	}
 	return m
+}
+
+// unstaffedWorkerBuildings distinguishes a permanently empty workplace from
+// a resident who only stepped out to eat. The renderer uses it for the red
+// building tint; gameplay pausing still uses inactiveWorkerBuildings above.
+func (g *Game) unstaffedWorkerBuildings() map[*building.Building]bool {
+	m := make(map[*building.Building]bool)
+	for _, b := range g.buildings {
+		if building.Types[b.Kind].RequiresWorker {
+			m[b] = true
+		}
+	}
+	for _, v := range g.vills.Villagers {
+		if v.Home != nil {
+			m[v.Home] = false
+		}
+	}
+	for _, j := range g.jacks.Lumberjacks {
+		if j.HomeBuilding() != nil {
+			m[j.HomeBuilding()] = false
+		}
+	}
+	for _, f := range g.fishers.Fishermen {
+		if f.HomeBuilding() != nil {
+			m[f.HomeBuilding()] = false
+		}
+	}
+	return m
+}
+
+// hireOptions reports the current headcount, building-based limit, and
+// availability for every hireable unit kind, for the left panel's Hire tab.
+// Serfs are the only unlimited option; every profession is capped at one
+// worker per matching building (Spawn/HasHome already enforce this
+// one-to-one rule -- this just surfaces it to the player before they click).
+func (g *Game) hireOptions() []ui.HireOption {
+	countBuildings := func(kind building.Kind) int {
+		n := 0
+		for _, b := range g.buildings {
+			if b.Kind == kind {
+				n++
+			}
+		}
+		return n
+	}
+	countProfession := func(p villagers.Profession) int {
+		n := 0
+		for _, v := range g.vills.Villagers {
+			if v.Profession == p {
+				n++
+			}
+		}
+		return n
+	}
+	limited := func(kind ui.HireKind, bKind building.Kind, current int) ui.HireOption {
+		limit := countBuildings(bKind)
+		return ui.HireOption{Kind: kind, Current: current, Limit: limit, Available: current < limit}
+	}
+	return []ui.HireOption{
+		{Kind: ui.HireSerf, Current: len(g.logi.Serfs), Limit: 0, Available: true},
+		limited(ui.HireFarmer, building.Farm, countProfession(villagers.Farmer)),
+		limited(ui.HireBaker, building.Bakery, countProfession(villagers.Baker)),
+		limited(ui.HireWinemaker, building.Winery, countProfession(villagers.Winemaker)),
+		limited(ui.HireLumberjack, building.LumberjackHut, len(g.jacks.Lumberjacks)),
+		limited(ui.HireFisherman, building.FisherHut, len(g.fishers.Fishermen)),
+		limited(ui.HireSwineherd, building.PigFarm, countProfession(villagers.Swineherd)),
+		limited(ui.HireButcher, building.MeatWorkshop, countProfession(villagers.Butcher)),
+	}
+}
+
+// hireFromTab executes a click on an available Hire-tab card. It finds the
+// first matching building without a resident and assigns a fresh worker to
+// it -- the same one-worker-per-building placement spawnWorkersFor uses when
+// a building is first built, so a hired replacement behaves identically to
+// an original resident.
+func (g *Game) hireFromTab(kind ui.HireKind) {
+	switch kind {
+	case ui.HireSerf:
+		g.hireSerf()
+	case ui.HireFarmer:
+		g.hireVillagerInto(villagers.Farmer, building.Farm)
+	case ui.HireBaker:
+		g.hireVillagerInto(villagers.Baker, building.Bakery)
+	case ui.HireWinemaker:
+		g.hireVillagerInto(villagers.Winemaker, building.Winery)
+	case ui.HireSwineherd:
+		g.hireVillagerInto(villagers.Swineherd, building.PigFarm)
+	case ui.HireButcher:
+		g.hireVillagerInto(villagers.Butcher, building.MeatWorkshop)
+	case ui.HireLumberjack:
+		for _, b := range g.buildings {
+			if b.Kind == building.LumberjackHut && !g.jacks.HasHome(b) {
+				g.jacks.Spawn(b)
+				g.refreshPopulation()
+				g.statusMsg = ""
+				return
+			}
+		}
+	case ui.HireFisherman:
+		for _, b := range g.buildings {
+			if b.Kind == building.FisherHut && !g.fishers.HasHome(b) {
+				g.fishers.Spawn(b)
+				g.refreshPopulation()
+				g.statusMsg = ""
+				return
+			}
+		}
+	}
+}
+
+func (g *Game) hireVillagerInto(profession villagers.Profession, kind building.Kind) {
+	for _, b := range g.buildings {
+		if b.Kind == kind && !g.vills.HasHome(b) {
+			g.vills.Spawn(profession, b)
+			g.refreshPopulation()
+			g.statusMsg = ""
+			return
+		}
+	}
 }
 
 // disconnectedBuildings reports production buildings whose access tile is
@@ -347,7 +487,20 @@ func (g *Game) handleMouse() {
 		return
 	}
 	mx, my := ebiten.CursorPosition()
-	if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds)); ok {
+	if tab, ok := g.layout.MenuTabAt(mx, my); ok {
+		g.leftTab = tab
+		g.statusMsg = ""
+		return
+	}
+	if g.leftTab == ui.HireTab {
+		options := g.hireOptions()
+		if index, ok := g.layout.HireIndexAt(mx, my, len(options)); ok {
+			if index < len(options) && options[index].Available {
+				g.hireFromTab(options[index].Kind)
+			}
+			return
+		}
+	} else if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds)); ok {
 		g.palette.Select(index)
 		g.buildMode = true
 		g.statusMsg = ""
@@ -410,7 +563,7 @@ func (g *Game) handleUnitActions() {
 
 func (g *Game) hireSerf() {
 	g.logi.Hire()
-	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
+	g.refreshPopulation()
 	g.statusMsg = ""
 }
 
@@ -448,24 +601,53 @@ func (g *Game) deleteSelectedBuilding() {
 			continue
 		}
 		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+		if g.pop != nil {
+			g.pop.Removed++
+		}
 		g.selection.Clear()
 		g.statusMsg = i18n.T().Deleted
 		return
 	}
 }
 
-// clearDismissedSerfSelection prevents the inspector from retaining a pointer
-// to a serf that left on this simulation tick.
-func (g *Game) clearDismissedSerfSelection() {
-	if g.selection.Kind != ui.SelectionSerf || g.selection.Serf == nil {
+// clearMissingUnitSelection prevents the inspector from retaining a pointer
+// to a dismissed or starved unit that left on this simulation tick.
+func (g *Game) clearMissingUnitSelection() {
+	switch g.selection.Kind {
+	case ui.SelectionSerf:
+		for _, s := range g.logi.Serfs {
+			if s == g.selection.Serf {
+				return
+			}
+		}
+	case ui.SelectionVillager:
+		for _, v := range g.vills.Villagers {
+			if v == g.selection.Villager {
+				return
+			}
+		}
+	case ui.SelectionLumberjack:
+		for _, j := range g.jacks.Lumberjacks {
+			if j == g.selection.Lumberjack {
+				return
+			}
+		}
+	case ui.SelectionFisherman:
+		for _, f := range g.fishers.Fishermen {
+			if f == g.selection.Fisherman {
+				return
+			}
+		}
+	default:
 		return
 	}
-	for _, s := range g.logi.Serfs {
-		if s == g.selection.Serf {
-			return
-		}
-	}
 	g.selection.Clear()
+}
+
+// refreshPopulation rebuilds the live headcount while retaining the
+// persistent death/removal history shown in the HUD.
+func (g *Game) refreshPopulation() {
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
 }
 
 // selectionAt resolves map coordinates to a live game object. Units have
@@ -663,7 +845,7 @@ func (g *Game) handleSaveLoad() {
 		if state.FishermanMealSeed != 0 {
 			g.fishers.SetMealSeed(state.FishermanMealSeed)
 		}
-		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
+		g.refreshPopulation()
 
 		g.statusMsg = i18n.T().Loaded
 	}
@@ -1237,7 +1419,7 @@ func restoreTreeRegrowth(states []save.TreeRegrowthState) []treeRegrowth {
 func (g *Game) Draw(screen *ebiten.Image) {
 	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
-	render.DrawBuildings(screen, g.grid, g.buildings, g.camera)
+	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, g.unstaffedWorkerBuildings())
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
 	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera)
@@ -1267,7 +1449,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		connected = g.buildingConnected(g.selection.Building)
 	}
 	ui.DrawResourceBarAt(screen, g.stock, g.pop, float64(g.layout.LeftWidth+16), 10)
-	ui.DrawBuildPanel(screen, g.layout, g.palette)
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions())
 	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock)
 	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
 	ui.DrawSpeedPanel(screen, g.layout, g.sim.Speed())

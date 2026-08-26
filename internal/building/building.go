@@ -107,6 +107,11 @@ type Type struct {
 
 	Recipe Recipe
 
+	// RequiresWorker marks production or gathering buildings that pause
+	// without their single assigned resident. The simulation layer uses this
+	// data to avoid hard-coding profession lists.
+	RequiresWorker bool
+
 	// OutputCapacity overrides the normal small production buffer when a
 	// building harvests several field cells at once. Zero uses BufferCapacity.
 	OutputCapacity int

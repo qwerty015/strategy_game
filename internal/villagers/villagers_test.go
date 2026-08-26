@@ -38,9 +38,17 @@ func TestVillager_WalksToTavernWhenHungryAndBack(t *testing.T) {
 	v := c.Villagers[0]
 
 	// Run past HungerInterval plus enough ticks for a full round trip.
-	for range 500 {
+	// ticksSinceMeal resets to 0 back at the Tavern, several ticks before
+	// the villager physically arrives home -- by the time ph flips back
+	// to working it's already counting up again, so checking it here
+	// would never coincide with the arrival tick. Position is the
+	// reliable signal instead: none of animateFieldWork's eight field
+	// cells is the farmhouse tile itself, so "working AND at home" is
+	// true for exactly the one tick right after arrival, before the
+	// first field-work step moves the villager away again.
+	for range HungerInterval + 200 {
 		tickController(c, buildings)
-		if v.Working() && v.ticksSinceMeal == 0 {
+		if v.Working() && v.X == farm.X && v.Y == farm.Y {
 			break // has eaten and returned home
 		}
 	}
@@ -154,7 +162,7 @@ func TestVillager_EatsAtNearestReachableTavern(t *testing.T) {
 	c.Spawn(Farmer, farm)
 	v := c.Villagers[0]
 
-	for range 500 {
+	for range HungerInterval + 200 {
 		tickController(c, buildings)
 		if v.Working() && v.ticksSinceMeal == 0 {
 			break

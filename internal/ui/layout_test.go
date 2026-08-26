@@ -24,7 +24,7 @@ func TestBuildPaletteKeepsEveryCardClickable(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	palette := NewPalette()
 	for i := range palette.Kinds {
-		x, y := 20, 52+i*52
+		x, y := 20, leftCardsStartY+4+i*leftCardStride
 		got, ok := layout.BuildIndexAt(x, y, len(palette.Kinds))
 		if !ok || got != i {
 			t.Fatalf("card %d at (%d,%d) resolved to %d, %v", i, x, y, got, ok)

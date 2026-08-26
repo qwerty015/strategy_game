@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/economy"
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
@@ -184,4 +185,65 @@ func TestDeleteLastWarehouseIsRejected(t *testing.T) {
 	if game.logi.Warehouse != warehouse {
 		t.Fatal("logistics root changed after rejected last-warehouse deletion")
 	}
+}
+
+// TestHireOptionsCapsAtOneWorkerPerBuilding covers "количество NPC не
+// должно быть больше строений": a profession's hire card must go
+// unavailable once every matching building already has a resident, and
+// clicking a still-available card must fill exactly one of the empty ones
+// -- never more, never a building of the wrong kind. Serfs are the one
+// exception and stay available regardless of building count.
+func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 2, Y: 0}
+	game := &Game{
+		buildings: []*building.Building{warehouse, farm},
+		stock:     resource.NewStockpile(0),
+		pop:       &economy.Population{},
+		logi:      logistics.NewController(warehouse, 0),
+		vills:     villagers.NewController(),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+	}
+
+	options := game.hireOptions()
+	farmer := findHireOption(t, options, ui.HireFarmer)
+	if farmer.Current != 0 || farmer.Limit != 1 || !farmer.Available {
+		t.Fatalf("farmer option = %+v, want Current=0 Limit=1 Available=true (one empty Farm)", farmer)
+	}
+	if serf := findHireOption(t, options, ui.HireSerf); serf.Limit != 0 || !serf.Available {
+		t.Fatalf("serf option = %+v, want Limit=0 (unlimited) Available=true", serf)
+	}
+
+	game.hireFromTab(ui.HireFarmer)
+	if got := len(game.vills.Villagers); got != 1 {
+		t.Fatalf("villagers after hiring a farmer = %d, want 1", got)
+	}
+	if game.vills.Villagers[0].HomeBuilding() != farm {
+		t.Fatal("hired farmer was not assigned to the vacant Farm")
+	}
+
+	options = game.hireOptions()
+	farmer = findHireOption(t, options, ui.HireFarmer)
+	if farmer.Current != 1 || farmer.Available {
+		t.Fatalf("farmer option after hiring = %+v, want Current=1 Available=false (no Farm left empty)", farmer)
+	}
+
+	// The only Farm is already staffed -- clicking again must be a no-op,
+	// not double-assign a second farmer to the same building.
+	game.hireFromTab(ui.HireFarmer)
+	if got := len(game.vills.Villagers); got != 1 {
+		t.Fatalf("villagers after a second hire attempt = %d, want still 1 (no vacant Farm)", got)
+	}
+}
+
+func findHireOption(t *testing.T, options []ui.HireOption, kind ui.HireKind) ui.HireOption {
+	t.Helper()
+	for _, o := range options {
+		if o.Kind == kind {
+			return o
+		}
+	}
+	t.Fatalf("no hire option for kind %v", kind)
+	return ui.HireOption{}
 }

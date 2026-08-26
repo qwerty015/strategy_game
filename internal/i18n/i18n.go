@@ -25,10 +25,14 @@ type Catalog struct {
 	WindowTitle string
 
 	Population   string
+	DeathsLabel  string
+	RemovedLabel string
 	ResourceName map[resource.Type]string
 	BuildingName map[building.Kind]string
 
 	BuildMenuTitle string
+	BuildTab       string
+	HireTab        string
 	InspectorTitle string
 	InspectorHint  string
 	SpeedTitle     string

@@ -111,7 +111,7 @@ func TestController_SerfEatsAtTavernWhenHungry(t *testing.T) {
 	s := c.Serfs[0]
 	stock := resource.NewStockpile(100)
 
-	for range 500 {
+	for range HungerInterval + 200 {
 		tick(c, buildings, stock)
 		if s.ph == idle && s.ticksSinceMeal == 0 {
 			break
@@ -422,7 +422,7 @@ func TestController_EatsAtNearestReachableTavern(t *testing.T) {
 	s := c.Serfs[0]
 	stock := resource.NewStockpile(100)
 
-	for range 500 {
+	for range HungerInterval + 200 {
 		tick(c, buildings, stock)
 		if s.ph == idle && s.ticksSinceMeal == 0 {
 			break

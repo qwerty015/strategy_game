@@ -108,3 +108,28 @@ func TestFishermanRestoreKeepsWineMeal(t *testing.T) {
 		t.Fatal("restored fisherman did not eat the saved wine")
 	}
 }
+
+// TestController_SurvivesManyIdleTicksWithNoWork guards the "filter in
+// place" roster bug directly: Tick used to append a survivor to the kept
+// slice only when its state-machine switch fell through to the bottom of
+// the loop body, but nearly every branch (still walking, still fishing,
+// nothing to do yet) exits early via `continue` -- which skipped the
+// append and silently dropped a perfectly alive, non-hungry worker from
+// the roster after its very first tick.
+func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
+	grid := world.NewGrid(8, 4)
+	hut := &building.Building{Kind: building.FisherHut, X: 0, Y: 0}
+	buildings := []*building.Building{hut} // no fish at all -- StateIdle finds nothing every tick
+	controller := NewController()
+	controller.Spawn(hut)
+
+	for range 50 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+	}
+
+	if got := len(controller.Fishermen); got != 1 {
+		t.Fatalf("fishermen after 50 idle ticks = %d, want 1 (worker must not vanish while merely idle)", got)
+	}
+}

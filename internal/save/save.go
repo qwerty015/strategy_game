@@ -11,14 +11,20 @@ import (
 
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
 )
 
-// FormatVersion increases whenever GameState's shape changes in a way
-// that would break decoding older saves. Load checks it so a stale save
-// fails loudly instead of decoding into a half-valid state.
-const FormatVersion = 1
+// FormatVersion is the current persisted schema. Version 1 remains readable:
+// its 180-tick hunger gauge is migrated proportionally to the 1000-tick
+// satiety model introduced in version 2.
+const FormatVersion = 2
+
+const (
+	previousFormatVersion = 1
+	previousHungerTicks   = 180
+)
 
 // GameState is the full serializable snapshot of a running game.
 type GameState struct {
@@ -145,8 +151,35 @@ func Load(path string) (GameState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return GameState{}, fmt.Errorf("save: decode: %w", err)
 	}
-	if state.Version != FormatVersion {
-		return GameState{}, fmt.Errorf("save: unsupported save format version %d (want %d)", state.Version, FormatVersion)
+	switch state.Version {
+	case previousFormatVersion:
+		migrateV1Hunger(&state)
+		state.Version = FormatVersion
+	case FormatVersion:
+		// Current schema needs no migration.
+	default:
+		return GameState{}, fmt.Errorf("save: unsupported save format version %d (want %d or %d)", state.Version, previousFormatVersion, FormatVersion)
 	}
 	return state, nil
+}
+
+// migrateV1Hunger preserves a saved unit's approximate satiety when moving
+// from the old 180-tick hungry timer to the 1000-tick percent scale. Old
+// starving timers could grow without bound (there was no death yet), so a
+// value is first clamped at the old meal-seeking point (180) -- the
+// closest old-scale equivalent of hunger.MealThresholdTicks, not of
+// hunger.MaxTicks. Scaling onto MaxTicks instead would put a merely
+// hungry unit exactly at the new death threshold, killing it the instant
+// the save loads.
+func migrateV1Hunger(state *GameState) {
+	for i := range state.Units {
+		ticks := state.Units[i].HungerTicks
+		if ticks < 0 {
+			ticks = 0
+		}
+		if ticks > previousHungerTicks {
+			ticks = previousHungerTicks
+		}
+		state.Units[i].HungerTicks = ticks * hunger.MealThresholdTicks / previousHungerTicks
+	}
 }

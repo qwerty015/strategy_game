@@ -9,7 +9,9 @@ func init() {
 	register(EN, Catalog{
 		WindowTitle: "Town Builder",
 
-		Population: "Population",
+		Population:   "Population",
+		DeathsLabel:  "Deaths",
+		RemovedLabel: "Removed",
 		ResourceName: map[resource.Type]string{
 			resource.Wheat:   "Wheat",
 			resource.Flour:   "Flour",
@@ -37,6 +39,8 @@ func init() {
 		},
 
 		BuildMenuTitle: "Build",
+		BuildTab:       "Build",
+		HireTab:        "Hire",
 		InspectorTitle: "Inspector",
 		InspectorHint:  "Select a building or unit",
 		SpeedTitle:     "Speed",

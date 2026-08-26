@@ -196,7 +196,13 @@ func TestSharedTavernReservation_SerfAndVillagerDoNotDoubleBookTheLastLoaf(t *te
 
 	stock := resource.NewStockpile(100)
 	var serfAte, villagerAte bool
-	for range 200 {
+	// Both units start already at the meal threshold (HungerInterval).
+	// Whichever loses the ledger race for the single loaf keeps
+	// accumulating hunger every tick with nothing to eat -- capped well
+	// below hunger.MaxTicks so the loser doesn't starve to death mid-test,
+	// which would remove it from its controller's roster and panic the
+	// index lookups below.
+	for range 120 {
 		ledger := reservations.New()
 		logi.Reserve(ledger)
 		vills.Reserve(ledger)

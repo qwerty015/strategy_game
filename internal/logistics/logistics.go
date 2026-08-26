@@ -35,6 +35,7 @@ import (
 	"slices"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
@@ -65,10 +66,10 @@ const (
 	// cross one tile of road.
 	TicksPerTile = 2
 
-	// HungerInterval is how many simulation ticks a serf can go between
-	// meals before heading to the Tavern between jobs (never mid-haul --
-	// see tryStartMeal). At normal speed this is about 90 seconds.
-	HungerInterval = 180
+	// HungerInterval is kept as the public "seek a meal" threshold for
+	// callers and tests. A serf starts looking at 20% satiety; starvation
+	// itself happens later at hunger.MaxTicks.
+	HungerInterval = hunger.MealThresholdTicks
 )
 
 type phase int
@@ -117,6 +118,13 @@ const (
 	SerfToDropoff
 )
 
+// TickResult reports lifecycle changes that cmd/game stores in the town
+// history counters.
+type TickResult struct {
+	Deaths    int
+	Dismissed int
+}
+
 // State reports what the serf is doing right now.
 func (s *Serf) State() State {
 	return State(s.ph)
@@ -152,6 +160,11 @@ func (s *Serf) Cargo() (resource.Type, int) {
 // HungerTicks returns simulation ticks since the serf's last meal.
 func (s *Serf) HungerTicks() int {
 	return s.ticksSinceMeal
+}
+
+// SatietyPercent returns the player-facing 0-100 satiety value.
+func (s *Serf) SatietyPercent() int {
+	return hunger.Percent(s.ticksSinceMeal)
 }
 
 // Busy reports whether the serf is currently walking a job, for
@@ -362,20 +375,28 @@ func (c *Controller) MaxWaitingHunger() int {
 // movement step. Call once per simulation tick (see economy.Simulator),
 // after every controller sharing ledger has had a chance to Reserve its
 // own pre-existing in-flight units.
-func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) {
+func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) TickResult {
+	var result TickResult
 	remaining := c.Serfs[:0]
 	for _, s := range c.Serfs {
+		s.ticksSinceMeal++
+		if hunger.Dead(s.ticksSinceMeal) {
+			// A carried haul has already left its source. Return it to the
+			// common reserve, just as a cancelled route does, so starvation
+			// never silently destroys resources.
+			if s.ph == toDropoff && !s.eating && s.amount > 0 {
+				stock.Add(s.resource, s.amount)
+			}
+			result.Deaths++
+			continue
+		}
 		// A dismissal is checked before hunger and job assignment, so an
 		// idle serf leaves immediately and a serf who just completed a haul
 		// never starts a detour to the Tavern first.
 		if s.dismissing && s.ph == idle {
+			result.Dismissed++
 			continue
 		}
-		// Deliberately uncapped: see MaxWaitingHunger's doc comment for
-		// why this must keep counting past HungerInterval instead of
-		// saturating there. HungerTicks() still returns the true value;
-		// UI code clamps it for the "N/HungerInterval" display.
-		s.ticksSinceMeal++
 		if s.ph == idle {
 			if !c.tryStartMeal(s, buildings, ledger) {
 				c.assign(s, buildings, stock, ledger)
@@ -385,6 +406,7 @@ func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockp
 		remaining = append(remaining, s)
 	}
 	c.Serfs = remaining
+	return result
 }
 
 // nearestTavernWithFood returns the nearest reachable Tavern with at least one
