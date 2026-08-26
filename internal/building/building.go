@@ -70,6 +70,19 @@ const (
 	// CarpentryWorkshop turns Log into Planks. Appended last for the same
 	// save-compatibility reason as PigFarm/MeatWorkshop above.
 	CarpentryWorkshop
+
+	// StoneDeposit is a world object like Tree, but it does not grow or
+	// regrow: it holds a finite Reserve (see StoneDepositReserve) that only
+	// ever decreases. Map generation places a cluster of them as one region;
+	// once a deposit's Reserve reaches zero it is removed, leaving ordinary
+	// buildable ground behind -- there is no equivalent of Tree's regrowth
+	// queue. Appended after CarpentryWorkshop for the same save-compatibility
+	// reason as every other addition to this list.
+	StoneDeposit
+
+	// QuarryHut is the workplace and temporary stone-block store for one
+	// quarryman (see package quarry). Appended last for the same reason.
+	QuarryHut
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -176,6 +189,11 @@ type Building struct {
 	// each tree can have its own deterministic random-looking lifetime.
 	GrowthTicks       int
 	GrowthTargetTicks int
+
+	// Reserve is the remaining extractable amount of a finite world resource
+	// (currently only StoneDeposit). Unlike GrowthTicks it only ever
+	// decreases; there is no regrowth. Zero for every other building kind.
+	Reserve int
 }
 
 const (
@@ -211,6 +229,21 @@ func NewFish(x, y int) *Building {
 		X:                 x,
 		Y:                 y,
 		GrowthTargetTicks: fishGrowthTarget(x, y),
+	}
+}
+
+// StoneDepositReserve is the fixed starting Reserve of a freshly placed
+// stone deposit cell, per the game design: one cell equals ten thousand
+// stone.
+const StoneDepositReserve = 10000
+
+// NewStoneDeposit creates a stone deposit at full reserve.
+func NewStoneDeposit(x, y int) *Building {
+	return &Building{
+		Kind:    StoneDeposit,
+		X:       x,
+		Y:       y,
+		Reserve: StoneDepositReserve,
 	}
 }
 

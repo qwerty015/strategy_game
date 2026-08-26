@@ -59,6 +59,10 @@ var (
 	// mustLoad("generated/building_carpentry_workshop.png") once that
 	// exists; nothing else needs to change.
 	CarpentryWorkshop = LumberjackHut
+	// QuarryHut temporarily reuses the Lumberjack Hut sprite -- there is no
+	// dedicated art for it yet. Swap this for its own
+	// mustLoad("generated/building_quarry_hut.png") once that exists.
+	QuarryHut = LumberjackHut
 	// The source fishing hut's pier points south. CPU-rotated variants let the
 	// renderer orient it toward whichever cardinal water tile borders the hut.
 	FisherHutFrames = [4]*ebiten.Image{
@@ -131,7 +135,11 @@ var (
 	}
 	// Carpenter temporarily reuses the Baker sprite -- no dedicated art yet.
 	// Swap for its own unit_carpenter.png once that exists.
-	Carpenter   = Baker
+	Carpenter = Baker
+	// Quarryman temporarily reuses the Lumberjack sprite -- both are workers
+	// who roam free land gathering a raw material. Swap for its own
+	// unit_quarryman.png once that exists.
+	Quarryman   = Lumberjack
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 

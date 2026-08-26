@@ -66,6 +66,15 @@ type GameState struct {
 	FishRegrowth []FishRegrowthState
 	FishSeed     uint32
 
+	// StoneSeeded marks that a stone-deposit region has already been
+	// generated for this world. Unlike trees/fish, deposits never regrow, so
+	// there is no regrowth-queue length to infer this from: a legitimately
+	// fully-mined region (every StoneDeposit removed) must not be
+	// reseeded on load, and this explicit flag is what tells the two
+	// cases apart. Absent (false) in saves from before this feature, which
+	// is exactly when a fresh region should be generated.
+	StoneSeeded bool
+
 	// Meal seeds preserve the pseudo-random choice among foods actually
 	// available in a Tavern. Every controller has an independent stream so
 	// loading does not silently reintroduce a fixed food preference.
@@ -73,6 +82,7 @@ type GameState struct {
 	VillagerMealSeed   uint32
 	LumberjackMealSeed uint32
 	FishermanMealSeed  uint32
+	QuarrymanMealSeed  uint32
 
 	CameraX    float64
 	CameraY    float64
@@ -93,6 +103,7 @@ const (
 	UnitSwineherd  UnitKind = "swineherd"
 	UnitButcher    UnitKind = "butcher"
 	UnitCarpenter  UnitKind = "carpenter"
+	UnitQuarryman  UnitKind = "quarryman"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the

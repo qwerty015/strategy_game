@@ -26,6 +26,7 @@ const (
 	HireSwineherd
 	HireButcher
 	HireCarpenter
+	HireQuarryman
 )
 
 // HireOption is the read-only state of a card in the hire menu. Limit is zero

@@ -14,6 +14,7 @@ import (
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
+	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/villagers"
@@ -217,6 +218,8 @@ func hireName(kind HireKind) string {
 		return t.UnitButcher
 	case HireCarpenter:
 		return t.UnitCarpenter
+	case HireQuarryman:
+		return t.UnitQuarryman
 	default:
 		return t.UnitSerf
 	}
@@ -241,6 +244,8 @@ func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
 		img = assets.Butcher[0]
 	case HireCarpenter:
 		img = assets.Carpenter[0]
+	case HireQuarryman:
+		img = assets.Quarryman[0]
 	default:
 		img = assets.Serf[0]
 	}
@@ -288,6 +293,8 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		drawLumberjackInspector(screen, r.Min.X+18, 62, selection.Lumberjack)
 	case SelectionFisherman:
 		drawFishermanInspector(screen, r.Min.X+18, 62, selection.Fisherman)
+	case SelectionQuarryman:
+		drawQuarrymanInspector(screen, r.Min.X+18, 62, selection.Quarryman)
 	}
 	if showPriority {
 		drawPriorityControl(screen, layout, priorityLevel)
@@ -342,6 +349,10 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		}
 		return
 	}
+	if b.Kind == building.StoneDeposit {
+		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.StoneReserveLabel, b.Reserve, building.StoneDepositReserve), float64(x), float64(y))
+		return
+	}
 	// Every real building, from here on: how many units currently stand
 	// on its footprint. Not just an assigned resident -- a serf mid-drop
 	// off or a hungry unit eating at the Tavern counts too, so it works
@@ -365,6 +376,18 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
 		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Fish], b.OutputBuffer[resource.Fish], building.BufferCapacity), float64(x), float64(y))
+		y += 20
+		routeState := t.Disconnected
+		if connected {
+			routeState = t.Connected
+		}
+		DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		return
+	}
+	if b.Kind == building.QuarryHut {
+		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		y += 20
+		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.OutputBuffer[resource.StoneBlock], building.BufferCapacity), float64(x), float64(y))
 		y += 20
 		routeState := t.Disconnected
 		if connected {
@@ -549,6 +572,47 @@ func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumbe
 	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(j.HungerTicks(), lumberjack.HungerInterval), lumberjack.HungerInterval), float64(x), float64(y))
 }
 
+func drawQuarrymanInspector(screen *ebiten.Image, x, y int, q *quarry.Quarryman) {
+	t := i18n.T()
+	DrawText(screen, t.UnitQuarryman, float64(x), float64(y))
+	y += 24
+
+	state := t.StateIdle
+	switch q.State() {
+	case quarry.StateToDeposit:
+		state = t.StateWalking
+	case quarry.StateMining:
+		state = t.StateMining
+	case quarry.StateToHome:
+		state = t.StateDelivering
+	case quarry.StateUnloading:
+		state = t.StateUnloading
+	case quarry.StateToTavern, quarry.StateToHomeAfterMeal:
+		state = t.StateWalking
+	}
+	if q.Starving {
+		state += " (" + t.StateStarving + ")"
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	y += 20
+
+	rt, amount := q.Cargo()
+	cargo := t.NoCargo
+	if amount > 0 {
+		cargo = fmt.Sprintf("%s × %d", t.ResourceName[rt], amount)
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
+	y += 20
+
+	target := t.NoRoute
+	if q.TargetDeposit() != nil {
+		target = t.BuildingName[building.StoneDeposit]
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.QuarryHut]), float64(x), float64(y))
+	y += 20
+	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, q.SatietyPercent()), float64(x), float64(y))
+}
+
 func drawFishermanInspector(screen *ebiten.Image, x, y int, f *fishing.Fisherman) {
 	t := i18n.T()
 	DrawText(screen, t.UnitFisherman, float64(x), float64(y))
@@ -714,6 +778,8 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.Warehouse
 	case building.LumberjackHut:
 		img = assets.LumberjackHut
+	case building.QuarryHut:
+		img = assets.QuarryHut
 	case building.FisherHut:
 		img = assets.FisherHutFrames[0]
 	}

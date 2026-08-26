@@ -8,6 +8,7 @@ import (
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
+	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/ui"
@@ -34,6 +35,98 @@ func TestSeedFishLimitsEveryConnectedWaterBody(t *testing.T) {
 	}
 	if got, want := countFishInCells(buildings, small), 1; got != want {
 		t.Fatalf("small pond fish = %d, want %d (tiny-pond minimum)", got, want)
+	}
+}
+
+// TestSeedStoneDepositsSplitsAcrossMultipleRegions covers "раздели камень
+// на 2-5 областей": deposits must not form one single patch, and their
+// total count must land in the designed 5-10% of the map's area.
+func TestSeedStoneDepositsSplitsAcrossMultipleRegions(t *testing.T) {
+	grid := world.NewGrid(40, 30)
+	buildings := seedStoneDeposits(grid, nil, 0x1b873593)
+
+	area := grid.Width * grid.Height
+	minCells, maxCells := area*5/100, area*10/100
+	if len(buildings) < minCells || len(buildings) > maxCells {
+		t.Fatalf("placed %d stone-deposit cells, want between %d and %d (5-10%% of %d)", len(buildings), minCells, maxCells, area)
+	}
+
+	regions := countStoneRegions(buildings)
+	if regions < 2 || regions > 5 {
+		t.Fatalf("stone deposits form %d connected regions, want 2-5", regions)
+	}
+
+	for _, b := range buildings {
+		if b.Kind != building.StoneDeposit || b.Reserve != building.StoneDepositReserve {
+			t.Fatalf("deposit at (%d,%d) has Kind=%v Reserve=%d, want StoneDeposit at full reserve", b.X, b.Y, b.Kind, b.Reserve)
+		}
+	}
+}
+
+// countStoneRegions flood-fills cardinal-adjacent deposit cells to count how
+// many disconnected blobs seedStoneDeposits actually produced.
+func countStoneRegions(buildings []*building.Building) int {
+	cells := make(map[gridPoint]bool, len(buildings))
+	for _, b := range buildings {
+		cells[gridPoint{b.X, b.Y}] = true
+	}
+	seen := make(map[gridPoint]bool, len(cells))
+	regions := 0
+	for start := range cells {
+		if seen[start] {
+			continue
+		}
+		regions++
+		queue := []gridPoint{start}
+		seen[start] = true
+		for i := 0; i < len(queue); i++ {
+			p := queue[i]
+			for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+				n := gridPoint{p.x + d.x, p.y + d.y}
+				if cells[n] && !seen[n] {
+					seen[n] = true
+					queue = append(queue, n)
+				}
+			}
+		}
+	}
+	return regions
+}
+
+// TestEnsureStoneDepositsDoesNotReseedAFullyMinedWorld covers the exact bug
+// StoneSeeded exists to prevent: a modern save where the player has mined
+// every deposit dry (zero StoneDeposit buildings, alreadySeeded true) must
+// not have a fresh region conjured back in on load.
+func TestEnsureStoneDepositsDoesNotReseedAFullyMinedWorld(t *testing.T) {
+	grid := world.NewGrid(40, 30)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	buildings := []*building.Building{warehouse} // no deposits left, world already seeded once
+
+	got := ensureStoneDeposits(grid, buildings, true, 0x1b873593)
+
+	if len(got) != 1 {
+		t.Fatalf("ensureStoneDeposits on an already-seeded, fully-mined world returned %d buildings, want 1 (no reseeding)", len(got))
+	}
+}
+
+// TestEnsureStoneDepositsSeedsAnUnmigratedSave covers the other half: a save
+// from before this feature (StoneSeeded false, no deposits) must receive a
+// fresh region on load.
+func TestEnsureStoneDepositsSeedsAnUnmigratedSave(t *testing.T) {
+	grid := world.NewGrid(40, 30)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	buildings := []*building.Building{warehouse}
+
+	got := ensureStoneDeposits(grid, buildings, false, 0x1b873593)
+
+	deposits := 0
+	for _, b := range got {
+		if b.Kind == building.StoneDeposit {
+			deposits++
+		}
+	}
+	if deposits == 0 {
+		t.Fatal("ensureStoneDeposits did not seed a region for an unmigrated save")
 	}
 }
 
@@ -80,6 +173,7 @@ func TestSelectionAt_BuildingWinsOverInvisibleResident(t *testing.T) {
 		logi:      logistics.NewController(&building.Building{Kind: building.Warehouse}, 0),
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Baker, bakery)
@@ -107,6 +201,7 @@ func TestSelectionAt_VisibleFarmerStillSelectable(t *testing.T) {
 		logi:      logistics.NewController(&building.Building{Kind: building.Warehouse}, 0),
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Farmer, farm)
@@ -138,6 +233,7 @@ func TestUnitsAt_CountsAnyoneOnTheFootprintEvenWithoutADedicatedResident(t *test
 		vills:     villagers.NewController(),
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
 	}
 	game.logi.Hire()
 	game.logi.Hire()
@@ -172,6 +268,7 @@ func TestSerializeAndRestorePigChainWorkers(t *testing.T) {
 			vills:     villagers.NewController(),
 			jacks:     lumberjack.NewController(),
 			fishers:   fishing.NewController(),
+			quarry:    quarry.NewController(),
 		}
 	}
 	source := makeGame()
@@ -206,6 +303,7 @@ func TestSerializeAndRestoreCarpenter(t *testing.T) {
 			vills:     villagers.NewController(),
 			jacks:     lumberjack.NewController(),
 			fishers:   fishing.NewController(),
+			quarry:    quarry.NewController(),
 		}
 	}
 	source := makeGame()
@@ -232,6 +330,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		vills:     villagers.NewController(),
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
 	}
 	if !source.logi.RequestDismissal(source.logi.Serfs[0]) {
 		t.Fatal("RequestDismissal = false")
@@ -244,6 +343,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		vills:     villagers.NewController(),
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
 	}
 	restored.restoreUnits(source.serializeUnits(), buildings)
 	if got := len(restored.logi.Serfs); got != 1 {
@@ -264,6 +364,7 @@ func TestDeleteWarehousePromotesRemainingWarehouse(t *testing.T) {
 		vills:     villagers.NewController(),
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: first},
 	}
 	game.logi.AddWarehouse(second)
@@ -296,6 +397,7 @@ func TestDeleteLastWarehouseIsRejected(t *testing.T) {
 		vills:     villagers.NewController(),
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: warehouse},
 	}
 
@@ -326,6 +428,7 @@ func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
 		vills:     villagers.NewController(),
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
 	}
 
 	options := game.hireOptions()

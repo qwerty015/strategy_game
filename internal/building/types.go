@@ -178,4 +178,24 @@ var Types = map[Kind]Type{
 			TicksToProduce: 72,
 		},
 	},
+	StoneDeposit: {
+		Kind:      StoneDeposit,
+		Name:      "Stone Deposit",
+		Footprint: 1,
+		// Stone deposits are placed by map generation as one region, not
+		// player-built or offered in the palette. Ordinary occupancy rules
+		// still apply: nothing else can be built on one while it still has
+		// Reserve left (see CanPlace/footprintsOverlap).
+	},
+	QuarryHut: {
+		Kind:           QuarryHut,
+		Name:           "Quarry Hut",
+		Footprint:      1,
+		RequiresWorker: true,
+		// No recipe: the quarryman physically walks to a stone deposit,
+		// mines it, and deposits already-processed Stone Blocks into
+		// OutputBuffer (1 mined stone -> 2 blocks, applied on unload -- see
+		// package quarry). Serfs collect them through the hut's normal road
+		// access point, same as a Lumberjack Hut's Logs.
+	},
 }

@@ -18,6 +18,7 @@ import (
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/pathfind"
+	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
@@ -64,6 +65,12 @@ const (
 	fishRegrowthMinTicks       int    = 180 // fry appears after 90-180 seconds
 	fishRegrowthVariationTicks int    = 180
 	fishRegrowthRetryTicks     int    = 30
+
+	// defaultStoneSeed picks the one-time shape of the stone region. Unlike
+	// the tree/fish seeds it is never advanced or persisted: deposits don't
+	// regrow, so once they're placed as ordinary Buildings, the exact seed
+	// that produced them no longer matters -- see save.GameState.StoneSeeded.
+	defaultStoneSeed uint32 = 0x1b873593
 )
 
 type treeRegrowth struct {
@@ -89,11 +96,16 @@ type Game struct {
 	vills     *villagers.Controller
 	jacks     *lumberjack.Controller
 	fishers   *fishing.Controller
+	quarry    *quarry.Controller
 
 	treeRegrowth []treeRegrowth
 	treeSeed     uint32
 	fishRegrowth []fishRegrowth
 	fishSeed     uint32
+	// stoneSeeded mirrors save.GameState.StoneSeeded: true once this world
+	// has a stone-deposit region, so loading a save never regenerates one
+	// over a legitimately fully-mined town. Always true after NewGame.
+	stoneSeeded bool
 
 	camera        *render.Camera
 	palette       *ui.Palette
@@ -129,6 +141,7 @@ func NewGame() *Game {
 	// dry cells rather than confined to a special forest area.
 	buildings = seedTrees(grid, buildings)
 	buildings = seedFish(grid, buildings)
+	buildings = seedStoneDeposits(grid, buildings, defaultStoneSeed)
 
 	layout := ui.NewLayout(screenWidth, screenHeight)
 	camera := render.NewCamera()
@@ -139,20 +152,22 @@ func NewGame() *Game {
 	camera.Pan(float64(4*render.TileSize), 0, grid.Width, grid.Height, mapRect.Dx(), mapRect.Dy())
 
 	game := &Game{
-		grid:      grid,
-		buildings: buildings,
-		stock:     resource.NewStockpile(stockpileCapacity),
-		pop:       &economy.Population{},
-		sim:       economy.NewSimulator(framesPerSimTick),
-		logi:      logistics.NewController(warehouse, startingSerfs),
-		vills:     villagers.NewController(),
-		jacks:     lumberjack.NewController(),
-		fishers:   fishing.NewController(),
-		treeSeed:  defaultTreeSeed,
-		fishSeed:  defaultFishSeed,
-		camera:    camera,
-		palette:   ui.NewPalette(),
-		layout:    layout,
+		grid:        grid,
+		buildings:   buildings,
+		stock:       resource.NewStockpile(stockpileCapacity),
+		pop:         &economy.Population{},
+		sim:         economy.NewSimulator(framesPerSimTick),
+		logi:        logistics.NewController(warehouse, startingSerfs),
+		vills:       villagers.NewController(),
+		jacks:       lumberjack.NewController(),
+		fishers:     fishing.NewController(),
+		quarry:      quarry.NewController(),
+		treeSeed:    defaultTreeSeed,
+		fishSeed:    defaultFishSeed,
+		stoneSeeded: true,
+		camera:      camera,
+		palette:     ui.NewPalette(),
+		layout:      layout,
 	}
 	game.refreshPopulation()
 	game.refreshSlotCache()
@@ -196,6 +211,7 @@ func (g *Game) Update() error {
 		g.vills.Reserve(ledger)
 		g.jacks.Reserve(ledger)
 		g.fishers.Reserve(ledger)
+		g.quarry.Reserve(ledger)
 
 		// Whichever controller's Tick runs first this simulation tick
 		// effectively wins any contention over shared Tavern food: its
@@ -205,6 +221,7 @@ func (g *Game) Update() error {
 		// whichever unit type happens to be ticked first every time.
 		var jackEvents []lumberjack.Event
 		var fishEvents []fishing.Event
+		var quarryEvents []quarry.Event
 		var serfResult logistics.TickResult
 		var villagerDeaths int
 		type unitStep struct {
@@ -216,6 +233,7 @@ func (g *Game) Update() error {
 			{g.vills.MaxWaitingHunger(), func() { villagerDeaths = g.vills.Tick(g.buildings, ledger) }},
 			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, g.buildings, ledger) }},
 			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, g.buildings, ledger) }},
+			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, g.buildings, ledger) }},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
 		for _, step := range steps {
@@ -242,6 +260,20 @@ func (g *Game) Update() error {
 				g.pop.Deaths++
 				if event.Cargo > 0 {
 					g.stock.Add(resource.Fish, event.Cargo)
+				}
+			}
+		}
+		for _, event := range quarryEvents {
+			switch event.Kind {
+			case quarry.DepositExhausted:
+				g.removeStoneDeposit(event.Deposit)
+			case quarry.WorkerDied:
+				g.pop.Deaths++
+				if event.Cargo > 0 {
+					// event.Cargo is the worker's own accessor, already
+					// reported in finished Stone Blocks -- see
+					// quarry.Quarryman.Cargo's doc comment.
+					g.stock.Add(resource.StoneBlock, event.Cargo)
 				}
 			}
 		}
@@ -293,6 +325,11 @@ func (g *Game) inactiveWorkerBuildings() map[*building.Building]bool {
 			m[f.HomeBuilding()] = !f.AtPost()
 		}
 	}
+	for _, q := range g.quarry.Quarrymen {
+		if q.HomeBuilding() != nil {
+			m[q.HomeBuilding()] = !q.AtPost()
+		}
+	}
 	return m
 }
 
@@ -319,6 +356,11 @@ func (g *Game) unstaffedWorkerBuildings() map[*building.Building]bool {
 	for _, f := range g.fishers.Fishermen {
 		if f.HomeBuilding() != nil {
 			m[f.HomeBuilding()] = false
+		}
+	}
+	for _, q := range g.quarry.Quarrymen {
+		if q.HomeBuilding() != nil {
+			m[q.HomeBuilding()] = false
 		}
 	}
 	return m
@@ -362,6 +404,7 @@ func (g *Game) hireOptions() []ui.HireOption {
 		limited(ui.HireSwineherd, building.PigFarm, countProfession(villagers.Swineherd)),
 		limited(ui.HireButcher, building.MeatWorkshop, countProfession(villagers.Butcher)),
 		limited(ui.HireCarpenter, building.CarpentryWorkshop, countProfession(villagers.Carpenter)),
+		limited(ui.HireQuarryman, building.QuarryHut, len(g.quarry.Quarrymen)),
 	}
 }
 
@@ -399,6 +442,15 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 		for _, b := range g.buildings {
 			if b.Kind == building.FisherHut && !g.fishers.HasHome(b) {
 				g.fishers.Spawn(b)
+				g.refreshPopulation()
+				g.statusMsg = ""
+				return
+			}
+		}
+	case ui.HireQuarryman:
+		for _, b := range g.buildings {
+			if b.Kind == building.QuarryHut && !g.quarry.HasHome(b) {
+				g.quarry.Spawn(b)
 				g.refreshPopulation()
 				g.statusMsg = ""
 				return
@@ -638,6 +690,10 @@ func (g *Game) deleteSelectedBuilding() {
 		g.statusMsg = i18n.T().CannotDeleteFish
 		return
 	}
+	if b.Kind == building.StoneDeposit {
+		g.statusMsg = i18n.T().CannotDeleteStoneDeposit
+		return
+	}
 
 	if b.Kind == building.Warehouse && !g.logi.RemoveWarehouse(b) {
 		g.statusMsg = i18n.T().CannotDeleteWarehouse
@@ -650,6 +706,8 @@ func (g *Game) deleteSelectedBuilding() {
 	g.jacks.CancelRouteTo(b) // same, for lumberjacks
 	g.fishers.RemoveHome(b, g.stock)
 	g.fishers.CancelRouteTo(b) // same, for fishermen
+	g.quarry.RemoveHome(b, g.stock)
+	g.quarry.CancelRouteTo(b) // same, for quarrymen
 	for i, candidate := range g.buildings {
 		if candidate != b {
 			continue
@@ -692,6 +750,12 @@ func (g *Game) clearMissingUnitSelection() {
 				return
 			}
 		}
+	case ui.SelectionQuarryman:
+		for _, q := range g.quarry.Quarrymen {
+			if q == g.selection.Quarryman {
+				return
+			}
+		}
 	default:
 		return
 	}
@@ -701,7 +765,7 @@ func (g *Game) clearMissingUnitSelection() {
 // refreshPopulation rebuilds the live headcount while retaining the
 // persistent death/removal history shown in the HUD.
 func (g *Game) refreshPopulation() {
-	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen)
 }
 
 // selectionAt resolves map coordinates to a live game object. Units have
@@ -738,6 +802,12 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		f := g.fishers.Fishermen[i]
 		if f.X == tx && f.Y == ty && f.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionFisherman, Fisherman: f}
+		}
+	}
+	for i := len(g.quarry.Quarrymen) - 1; i >= 0; i-- {
+		q := g.quarry.Quarrymen[i]
+		if q.X == tx && q.Y == ty && q.VisibleOnMap() {
+			return ui.Selection{Kind: ui.SelectionQuarryman, Quarryman: q}
 		}
 	}
 	for i := len(g.buildings) - 1; i >= 0; i-- {
@@ -785,6 +855,11 @@ func (g *Game) unitsAt(b *building.Building) int {
 			count++
 		}
 	}
+	for _, q := range g.quarry.Quarrymen {
+		if within(q.X, q.Y) {
+			count++
+		}
+	}
 	return count
 }
 
@@ -821,6 +896,8 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 		g.jacks.Spawn(b)
 	case building.FisherHut:
 		g.fishers.Spawn(b)
+	case building.QuarryHut:
+		g.quarry.Spawn(b)
 	}
 }
 
@@ -996,10 +1073,12 @@ func (g *Game) buildSaveState(name string) save.GameState {
 		TreeSeed:           g.treeSeed,
 		FishRegrowth:       g.serializeFishRegrowth(),
 		FishSeed:           g.fishSeed,
+		StoneSeeded:        g.stoneSeeded,
 		SerfMealSeed:       g.logi.MealSeed(),
 		VillagerMealSeed:   g.vills.MealSeed(),
 		LumberjackMealSeed: g.jacks.MealSeed(),
 		FishermanMealSeed:  g.fishers.MealSeed(),
+		QuarrymanMealSeed:  g.quarry.MealSeed(),
 		CameraX:            g.camera.X,
 		CameraY:            g.camera.Y,
 		CameraZoom:         g.camera.Scale,
@@ -1025,6 +1104,7 @@ func (g *Game) loadGame(path string) error {
 	buildings := referenceBuildings(state.Buildings)
 	buildings, hadTrees := ensureTrees(grid, buildings, len(state.TreeRegrowth) > 0)
 	buildings, _ = ensureFish(grid, buildings, len(state.FishRegrowth) > 0)
+	buildings = ensureStoneDeposits(grid, buildings, state.StoneSeeded, defaultStoneSeed)
 	warehouse := findWarehouse(buildings)
 	if warehouse == nil {
 		return errNoWarehouseInSave
@@ -1049,6 +1129,10 @@ func (g *Game) loadGame(path string) error {
 	if g.fishSeed == 0 {
 		g.fishSeed = defaultFishSeed
 	}
+	// ensureStoneDeposits above guarantees a region exists one way or
+	// another (freshly generated, or already present in the save), so from
+	// here on this world always counts as seeded.
+	g.stoneSeeded = true
 	g.camera.X, g.camera.Y = state.CameraX, state.CameraY
 	if !hadTrees && g.camera.X == 0 {
 		// Old saves were usually made from the original left-aligned view;
@@ -1076,6 +1160,7 @@ func (g *Game) loadGame(path string) error {
 	g.vills = villagers.NewController()
 	g.jacks = lumberjack.NewController()
 	g.fishers = fishing.NewController()
+	g.quarry = quarry.NewController()
 	if len(state.Units) == 0 {
 		// Saves from before unit persistence did not contain a roster.
 		// Keep those saves playable with the old sensible defaults.
@@ -1102,6 +1187,9 @@ func (g *Game) loadGame(path string) error {
 	}
 	if state.FishermanMealSeed != 0 {
 		g.fishers.SetMealSeed(state.FishermanMealSeed)
+	}
+	if state.QuarrymanMealSeed != 0 {
+		g.quarry.SetMealSeed(state.QuarrymanMealSeed)
 	}
 	for _, p := range state.BuildingPriority {
 		g.logi.SetPriority(p.Kind, p.Level)
@@ -1166,7 +1254,7 @@ func (g *Game) serializeBuildingPriorities() []save.BuildingPriorityState {
 }
 
 func (g *Game) serializeUnits() []save.UnitState {
-	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen))
+	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen)+len(g.quarry.Quarrymen))
 	for _, s := range g.logi.Serfs {
 		units = append(units, save.UnitState{
 			Kind:        save.UnitSerf,
@@ -1241,6 +1329,23 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Meal:        f.Meal(),
 		})
 	}
+	for _, q := range g.quarry.Quarrymen {
+		targetIndex := indexOfBuilding(g.buildings, q.TargetDeposit())
+		units = append(units, save.UnitState{
+			Kind:        save.UnitQuarryman,
+			X:           q.X,
+			Y:           q.Y,
+			HomeIndex:   indexOfBuilding(g.buildings, q.HomeBuilding()),
+			HungerTicks: q.HungerTicks(),
+			Starving:    q.Starving,
+			State:       int(q.State()),
+			TargetIndex: targetIndex,
+			WorkTicks:   q.WorkTicks(),
+			Cargo:       resource.StoneBlock,
+			CargoAmount: q.RawCargo(),
+			Meal:        q.Meal(),
+		})
+	}
 	return units
 }
 
@@ -1296,6 +1401,15 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				target = buildings[state.TargetIndex]
 			}
 			g.fishers.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, fishing.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
+		case save.UnitQuarryman:
+			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.QuarryHut {
+				continue
+			}
+			var target *building.Building
+			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.StoneDeposit {
+				target = buildings[state.TargetIndex]
+			}
+			g.quarry.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, quarry.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
 		}
 	}
 }
@@ -1362,6 +1476,133 @@ func treeScatterScore(x, y int) uint32 {
 	// The hash makes the first maxTrees cells look randomly scattered without
 	// relying on runtime randomness or storing a random generator in a save.
 	return uint32(x)*73856093 ^ uint32(y)*19349663 ^ 0x85ebca6b
+}
+
+// seedStoneDeposits splits a random 5-10% of the map's area (per the game
+// design) across 2-5 separate regions, rather than one single patch, so the
+// player has more than one spot worth building a Quarry Hut near. Each
+// deposit cell holds a full building.StoneDepositReserve. Unlike trees and
+// fish, this only ever runs once per world -- see save.GameState.StoneSeeded
+// and ensureStoneDeposits.
+func seedStoneDeposits(grid *world.Grid, buildings []*building.Building, seed uint32) []*building.Building {
+	area := grid.Width * grid.Height
+	percent := 5 + int(seed%6) // 5..10 inclusive, total share of the map
+	total := area * percent / 100
+	if total <= 0 {
+		return buildings
+	}
+
+	regionCount := 2 + int((seed>>8)%4) // 2..5 inclusive separate regions
+	base := total / regionCount
+	extra := total % regionCount
+	for i := 0; i < regionCount; i++ {
+		target := base
+		if i < extra {
+			target++
+		}
+		regionSeed := seed ^ uint32(i)*0x9e3779b9
+		buildings = growStoneRegion(grid, buildings, target, regionSeed)
+	}
+	return buildings
+}
+
+// growStoneRegion places one contiguous blob of up to target stone-deposit
+// cells, starting from a deterministically chosen free tile and expanding
+// outward. Called once per region by seedStoneDeposits.
+func growStoneRegion(grid *world.Grid, buildings []*building.Building, target int, seed uint32) []*building.Building {
+	if target <= 0 {
+		return buildings
+	}
+	start, ok := findStoneStart(grid, buildings, seed)
+	if !ok {
+		return buildings
+	}
+
+	claimed := map[gridPoint]bool{start: true}
+	frontier := []gridPoint{start}
+	placed := 0
+	for len(frontier) > 0 && placed < target {
+		// Grow from whichever frontier cell has the lowest scatter score,
+		// rather than always index 0, so the region fills out into a blob
+		// instead of a single-file line hugging one edge.
+		bestIdx := 0
+		bestScore := stoneScatterScore(frontier[0].x, frontier[0].y) ^ seed
+		for i := 1; i < len(frontier); i++ {
+			score := stoneScatterScore(frontier[i].x, frontier[i].y) ^ seed
+			if score < bestScore {
+				bestScore, bestIdx = score, i
+			}
+		}
+		p := frontier[bestIdx]
+		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
+
+		if !building.CanPlace(grid, buildings, building.StoneDeposit, p.x, p.y) {
+			continue
+		}
+		buildings = append(buildings, building.NewStoneDeposit(p.x, p.y))
+		placed++
+
+		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			n := gridPoint{p.x + d.x, p.y + d.y}
+			if claimed[n] || !grid.InBounds(n.x, n.y) || !grid.At(n.x, n.y).Buildable() {
+				continue
+			}
+			claimed[n] = true
+			frontier = append(frontier, n)
+		}
+	}
+	return buildings
+}
+
+func findStoneStart(grid *world.Grid, buildings []*building.Building, seed uint32) (gridPoint, bool) {
+	bestScore := ^uint32(0)
+	var best gridPoint
+	found := false
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			if !building.CanPlace(grid, buildings, building.StoneDeposit, x, y) {
+				continue
+			}
+			score := stoneScatterScore(x, y) ^ seed
+			if !found || score < bestScore {
+				bestScore, best, found = score, gridPoint{x, y}, true
+			}
+		}
+	}
+	return best, found
+}
+
+func stoneScatterScore(x, y int) uint32 {
+	return uint32(x)*2246822519 ^ uint32(y)*3266489917 ^ 0x27d4eb2f
+}
+
+// ensureStoneDeposits places a fresh stone region only for a world that has
+// genuinely never had one. alreadySeeded (see save.GameState.StoneSeeded)
+// is what tells that apart from a modern save where the player has
+// legitimately mined every deposit dry -- there is no regrowth queue to
+// infer it from, unlike trees or fish.
+func ensureStoneDeposits(grid *world.Grid, buildings []*building.Building, alreadySeeded bool, seed uint32) []*building.Building {
+	if alreadySeeded {
+		return buildings
+	}
+	return seedStoneDeposits(grid, buildings, seed)
+}
+
+// removeStoneDeposit deletes an exhausted deposit from the world once its
+// Reserve reaches zero. The tile underneath needs no separate change: it was
+// always ordinary buildable ground, the same way felling a tree reveals the
+// grass it always stood on.
+func (g *Game) removeStoneDeposit(deposit *building.Building) {
+	if deposit == nil || deposit.Kind != building.StoneDeposit {
+		return
+	}
+	for i, candidate := range g.buildings {
+		if candidate != deposit {
+			continue
+		}
+		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+		return
+	}
 }
 
 // seedFish fills each connected water body to at most 40% of its cells. A
@@ -1734,6 +1975,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
 	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera)
 	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera)
+	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera)
 
 	mx, my := ebiten.CursorPosition()
 	tx, ty := g.camera.ScreenToTile(mx, my)
@@ -1748,7 +1990,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// connection rule visible without requiring the player to click buildings
 	// one by one; the inspector still explains the selected building in detail.
 	for _, b := range g.buildings {
-		if b.Kind != building.Road && b.Kind != building.Tree && b.Kind != building.Fish && b.Kind != building.Warehouse {
+		if b.Kind != building.Road && b.Kind != building.Tree && b.Kind != building.Fish && b.Kind != building.Warehouse && b.Kind != building.StoneDeposit {
 			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
 		}
 	}

@@ -29,10 +29,12 @@ func Tick() {
 }
 
 var (
-	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}   // freshly tilled earth (tints assets.Fertile)
-	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255} // golden, ready to harvest
-	vineyardSoil   = color.RGBA{R: 80, G: 61, B: 38, A: 255}   // darker soil for grape rows
-	unstaffedTint  = color.RGBA{R: 214, G: 63, B: 55, A: 90}   // translucent red over a workerless building
+	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}    // freshly tilled earth (tints assets.Fertile)
+	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255}  // golden, ready to harvest
+	vineyardSoil   = color.RGBA{R: 80, G: 61, B: 38, A: 255}    // darker soil for grape rows
+	unstaffedTint  = color.RGBA{R: 214, G: 63, B: 55, A: 90}    // translucent red over a workerless building
+	stoneFullColor = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
+	stoneWornColor = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
 )
 
 // lerpColor blends from a to b as t goes from 0 to 1, clamped.
@@ -63,18 +65,24 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // periodically to animate the windmill.
 func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera, unstaffed map[*building.Building]bool) {
 	tilePixels := cam.TilePixels()
-	// Ground is drawn before this function. Roads are the bottom gameplay
-	// layer, so render every road before any tree, field or standing building.
+	// Ground is drawn before this function. Roads and stone deposits are
+	// both flat, terrain-scale ground decoration rather than standing
+	// objects, so both render in this same bottom pass -- otherwise a
+	// deposit drawn in the main loop below could land after (and so on top
+	// of) a tall standing building it happens to be adjacent to, purely
+	// because of where it sits in the save/build slice.
 	for _, b := range buildings {
-		if b.Kind != building.Road {
-			continue
-		}
 		sx, sy := cam.TileToScreen(b.X, b.Y)
-		drawStandingAtScale(screen, assets.Road, sx, sy, 1, tilePixels)
+		switch b.Kind {
+		case building.Road:
+			drawStandingAtScale(screen, assets.Road, sx, sy, 1, tilePixels)
+		case building.StoneDeposit:
+			drawStoneDeposit(screen, sx, sy, tilePixels, b.Reserve)
+		}
 	}
 
 	for _, b := range buildings {
-		if b.Kind == building.Road {
+		if b.Kind == building.Road || b.Kind == building.StoneDeposit {
 			continue
 		}
 		bt := building.Types[b.Kind]
@@ -150,6 +158,9 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		case building.LumberjackHut:
 			drawStandingAtScale(screen, assets.LumberjackHut, sx, sy, buildingHeight, tilePixels)
 
+		case building.QuarryHut:
+			drawStandingAtScale(screen, assets.QuarryHut, sx, sy, buildingHeight, tilePixels)
+
 		case building.FisherHut:
 			frame := 0 // source sprite's pier points south
 			if water, ok := building.WaterAccessPoint(grid, b); ok {
@@ -198,6 +209,23 @@ func drawTree(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 		stage = 2
 	}
 	drawStandingAtScale(screen, assets.TreeFrames[stage], sx, sy, 1.75, tilePixels)
+}
+
+// drawStoneDeposit draws a flat ground-level tile, like a field, rather than
+// a standing object -- it's terrain-scale scenery, not a creature or
+// building. The tint drifts from full-Reserve gray toward a sun-bleached
+// tone as it depletes, so a partly-worked deposit reads at a glance without
+// needing dedicated multi-stage art.
+func drawStoneDeposit(screen *ebiten.Image, sx, sy, tilePixels float64, reserve int) {
+	fraction := float32(reserve) / float32(building.StoneDepositReserve)
+	if fraction < 0 {
+		fraction = 0
+	}
+	if fraction > 1 {
+		fraction = 1
+	}
+	tint := lerpColor(stoneWornColor, stoneFullColor, fraction)
+	drawStandingTintedAtScale(screen, assets.Stone, sx, sy, 1, tilePixels, tint)
 }
 
 // drawFish uses the dedicated three-stage transparent fish sprite sheet. The
