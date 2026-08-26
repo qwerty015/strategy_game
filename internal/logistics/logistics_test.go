@@ -1,6 +1,7 @@
 package logistics
 
 import (
+	"slices"
 	"testing"
 
 	"strategy_game/internal/building"
@@ -278,6 +279,156 @@ func TestController_HireAndCancelJobs(t *testing.T) {
 	}
 	if s.ph != idle || s.X != warehouse.X || s.Y != warehouse.Y {
 		t.Fatalf("serf after CancelAllJobs = phase %v at (%d,%d), want idle at warehouse", s.ph, s.X, s.Y)
+	}
+}
+
+// TestController_DoesNotDoubleReservePickupAfterCargoCollected reproduces
+// the "залипший резерв источника" report directly: a serf that has already
+// picked up cargo (ph == toDropoff) still had its Reserve() call re-reserve
+// the pickup side every tick, on top of the buffer already having shrunk
+// when TakeOutput ran. That made the source look emptier than it really
+// was until the delivery finished, blocking a second idle serf from seeing
+// -- and claiming -- the goods actually still sitting there.
+func TestController_DoesNotDoubleReservePickupAfterCargoCollected(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}
+	farm.AddOutput(resource.Wheat, 1) // as if an earlier trip already collected the rest
+
+	buildings := append([]*building.Building{warehouse, farm}, straightRoad(1, 5, 0)...)
+
+	c := NewController(warehouse, 2)
+	hauler := c.Serfs[0]
+	hauler.ph = toDropoff
+	hauler.pickup = farm
+	hauler.dropoff = warehouse
+	hauler.resource = resource.Wheat
+	hauler.amount = 5 // cargo already in hand; farm's OutputBuffer already reflects this
+
+	idle := c.Serfs[1]
+
+	tick(c, buildings, resource.NewStockpile(100))
+
+	if !idle.Busy() || idle.PickupBuilding() != farm {
+		t.Fatalf("idle serf did not claim the farm's remaining Wheat (busy=%v pickup=%v) -- the hauler's Reserve() is still reserving the pickup side after cargo was already collected", idle.Busy(), idle.PickupBuilding())
+	}
+	if _, amount := idle.Cargo(); amount != 1 {
+		t.Fatalf("idle serf claimed %d units, want 1 (the actual remaining amount)", amount)
+	}
+}
+
+// TestController_SkipsUnreachableSourceForReachableOne reproduces "поиск не
+// всегда переходит к следующему доступному источнику": an unreachable
+// producer listed first in the buildings slice used to make the job search
+// return it anyway (no reachability check), so the serf just failed to
+// commit and stood idle even though a second, perfectly reachable producer
+// with the same surplus existed.
+func TestController_SkipsUnreachableSourceForReachableOne(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	unreachableFarm := &building.Building{Kind: building.Farm, X: 20, Y: 20} // no road anywhere near it
+	reachableFarm := &building.Building{Kind: building.Farm, X: 5, Y: 0}
+	unreachableFarm.AddOutput(resource.Wheat, 5)
+	reachableFarm.AddOutput(resource.Wheat, 5)
+
+	// unreachableFarm listed first, so a naive "first match" search would
+	// pick it and never try reachableFarm.
+	buildings := append([]*building.Building{warehouse, unreachableFarm, reachableFarm}, straightRoad(1, 5, 0)...)
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+
+	for range 500 {
+		tick(c, buildings, stock)
+		if stock.Amount(resource.Wheat) > 0 {
+			break
+		}
+	}
+
+	if got := stock.Amount(resource.Wheat); got != 5 {
+		t.Fatalf("warehouse Wheat = %d, want 5 (serf should have skipped the unreachable farm and collected from the reachable one)", got)
+	}
+	if got := unreachableFarm.OutputBuffer[resource.Wheat]; got != 5 {
+		t.Fatalf("unreachable farm OutputBuffer[Wheat] = %d, want 5 (untouched)", got)
+	}
+	if got := reachableFarm.OutputBuffer[resource.Wheat]; got != 0 {
+		t.Fatalf("reachable farm OutputBuffer[Wheat] = %d, want 0 (collected)", got)
+	}
+}
+
+// TestSortedResourceTypesIsDeterministic guards against "выбор задания
+// зависит от порядка обхода Go-map": job searches used to range directly
+// over a buffer/recipe map, whose iteration order Go deliberately
+// randomizes. sortedResourceTypes must return the same order every time
+// for the same keys, regardless of how many times it's called.
+func TestSortedResourceTypesIsDeterministic(t *testing.T) {
+	m := map[resource.Type]int{resource.Bread: 3, resource.Wheat: 1, resource.Flour: 2}
+	want := []resource.Type{resource.Wheat, resource.Flour, resource.Bread}
+
+	for i := range 20 {
+		got := sortedResourceTypes(m)
+		if !slices.Equal(got, want) {
+			t.Fatalf("run %d: sortedResourceTypes(%v) = %v, want %v", i, m, got, want)
+		}
+	}
+}
+
+// TestController_EatsAtNearestReachableTavern covers "NPC кушают только в
+// одной харчевне": a hungry serf used to always walk to whichever Tavern
+// happened to be first in the buildings slice, no matter how far away.
+// tavernFar is listed before tavernNear specifically to rule out that.
+func TestController_EatsAtNearestReachableTavern(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	tavernFar := &building.Building{Kind: building.Tavern, X: 8, Y: 1}
+	tavernNear := &building.Building{Kind: building.Tavern, X: 3, Y: 1}
+	tavernFar.AddInput(resource.Bread, 3)
+	tavernNear.AddInput(resource.Bread, 3)
+
+	buildings := append([]*building.Building{warehouse, tavernFar, tavernNear}, straightRoad(0, 9, 0)...)
+
+	c := NewController(warehouse, 1)
+	s := c.Serfs[0]
+	stock := resource.NewStockpile(100)
+
+	for range 500 {
+		tick(c, buildings, stock)
+		if s.ph == idle && s.ticksSinceMeal == 0 {
+			break
+		}
+	}
+
+	if got := tavernNear.InputBuffer[resource.Bread]; got != 2 {
+		t.Fatalf("nearer tavern Bread = %d, want 2 (serf should have eaten there)", got)
+	}
+	if got := tavernFar.InputBuffer[resource.Bread]; got != 3 {
+		t.Fatalf("farther tavern Bread = %d, want 3 (untouched)", got)
+	}
+}
+
+// TestController_CollectsToNearestReachableWarehouse covers the same
+// report for Warehouses: surplus output used to always route to whichever
+// Warehouse was registered first, leaving every other one untouched even
+// when it sat much closer to the source. warehouseFar is both listed and
+// registered before warehouseNear to rule that out.
+func TestController_CollectsToNearestReachableWarehouse(t *testing.T) {
+	hut := &building.Building{Kind: building.LumberjackHut, X: 0, Y: 1}
+	hut.AddOutput(resource.Log, 1)
+	warehouseFar := &building.Building{Kind: building.Warehouse, X: 8, Y: 1}
+	warehouseNear := &building.Building{Kind: building.Warehouse, X: 3, Y: 1}
+
+	buildings := append([]*building.Building{hut, warehouseFar, warehouseNear}, straightRoad(0, 9, 0)...)
+
+	c := NewController(warehouseFar, 1)
+	c.AddWarehouse(warehouseNear)
+	// Start the serf right at the hut so its own position can't
+	// accidentally bias which warehouse looks closer -- only the hut's
+	// distance to each warehouse should matter for the dropoff choice.
+	c.Serfs[0].X, c.Serfs[0].Y = hut.X, hut.Y
+	c.Serfs[0].atBuilding = hut
+
+	tick(c, buildings, resource.NewStockpile(100))
+
+	s := c.Serfs[0]
+	if s.DropoffBuilding() != warehouseNear {
+		t.Fatalf("dropoff = %v, want the nearer warehouse (bug: still always picks the first-registered one)", s.DropoffBuilding())
 	}
 }
 

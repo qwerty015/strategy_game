@@ -14,7 +14,7 @@ import (
 // per-villager tick helper.)
 func tickController(c *Controller, buildings []*building.Building) {
 	ledger := reservations.New()
-	c.Reserve(buildings, ledger)
+	c.Reserve(ledger)
 	c.Tick(buildings, ledger)
 }
 
@@ -77,6 +77,40 @@ func TestVillager_StarvingWhenNoTavernReachable(t *testing.T) {
 	}
 	if !v.Working() {
 		t.Fatal("villager left its post with nowhere to actually go, want it to stay put")
+	}
+}
+
+// TestVillager_EatsAtNearestReachableTavern covers "NPC кушают только в
+// одной харчевне": a hungry farmer/baker used to always walk to whichever
+// Tavern happened to be first in the buildings slice, no matter how far
+// away. tavernFar is listed before tavernNear specifically to rule that
+// out -- both sit off the same through-road at y=0 so neither blocks the
+// path to the other.
+func TestVillager_EatsAtNearestReachableTavern(t *testing.T) {
+	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
+	tavernFar := &building.Building{Kind: building.Tavern, X: 8, Y: 1}
+	tavernNear := &building.Building{Kind: building.Tavern, X: 4, Y: 1}
+	tavernFar.AddInput(resource.Bread, 3)
+	tavernNear.AddInput(resource.Bread, 3)
+
+	buildings := append([]*building.Building{farm, tavernFar, tavernNear}, straightRoad(1, 9, 0)...)
+
+	c := NewController()
+	c.Spawn(Farmer, farm)
+	v := c.Villagers[0]
+
+	for range 500 {
+		tickController(c, buildings)
+		if v.Working() && v.ticksSinceMeal == 0 {
+			break
+		}
+	}
+
+	if got := tavernNear.InputBuffer[resource.Bread]; got != 2 {
+		t.Fatalf("nearer tavern Bread = %d, want 2 (villager should have eaten there)", got)
+	}
+	if got := tavernFar.InputBuffer[resource.Bread]; got != 3 {
+		t.Fatalf("farther tavern Bread = %d, want 3 (untouched)", got)
 	}
 }
 

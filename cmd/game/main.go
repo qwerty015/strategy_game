@@ -142,12 +142,30 @@ func (g *Game) Update() error {
 		// Tavern's last loaf of Bread at once. See package reservations.
 		ledger := reservations.New()
 		g.logi.Reserve(ledger)
-		g.vills.Reserve(g.buildings, ledger)
-		g.jacks.Reserve(g.buildings, ledger)
+		g.vills.Reserve(ledger)
+		g.jacks.Reserve(ledger)
 
-		g.logi.Tick(g.buildings, g.stock, ledger)
-		g.vills.Tick(g.buildings, ledger)
-		for _, event := range g.jacks.Tick(g.grid, g.buildings, ledger) {
+		// Whichever controller's Tick runs first this simulation tick
+		// effectively wins any contention over shared Tavern Bread: its
+		// claims land in the ledger before the next controller even
+		// looks. Ordering by MaxWaitingHunger means the unit that's
+		// actually been waiting longest gets first claim -- not just
+		// whichever unit type happens to be ticked first every time.
+		var jackEvents []lumberjack.Event
+		type unitStep struct {
+			hunger int
+			run    func()
+		}
+		steps := []unitStep{
+			{g.logi.MaxWaitingHunger(), func() { g.logi.Tick(g.buildings, g.stock, ledger) }},
+			{g.vills.MaxWaitingHunger(), func() { g.vills.Tick(g.buildings, ledger) }},
+			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, g.buildings, ledger) }},
+		}
+		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
+		for _, step := range steps {
+			step.run()
+		}
+		for _, event := range jackEvents {
 			if event.Kind == lumberjack.TreeCut {
 				g.cutTree(event.Tree)
 			}

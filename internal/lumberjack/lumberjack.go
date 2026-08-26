@@ -57,6 +57,7 @@ type Lumberjack struct {
 
 	state      State
 	target     *building.Building
+	tavern     *building.Building // which Tavern this trip is headed to/from, while state == StateToTavern
 	path       []pathfind.Point
 	pathIdx    int
 	tileTicks  int
@@ -136,8 +137,13 @@ func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, sta
 			}
 		}
 	case StateToTavern:
-		if tavern := findTavern(buildings); tavern != nil {
-			j.routeToBuilding(grid, buildings, tavern, StateToTavern)
+		// No ledger exists yet at load time, so this searches purely by
+		// reachability (nil ledger skips the Bread-availability check) --
+		// same as the original findTavern-based lookup it replaces.
+		if tavern, path, ok := nearestTavernWithBread(grid, buildings, pathfind.Point{X: x, Y: y}, nil); ok {
+			j.setPath(path)
+			j.tavern = tavern
+			j.state = StateToTavern
 		}
 	case StateToHomeAfterMeal:
 		if j.routeHome(grid, buildings) {
@@ -196,19 +202,36 @@ func (j *Lumberjack) VisibleOnMap() bool {
 }
 
 // Reserve seeds ledger with every lumberjack currently walking to eat, so
-// other controllers sharing the Tavern (serfs, villagers) see this claim
+// other controllers sharing a Tavern (serfs, villagers) see this claim
 // before making their own commitments this tick. Call once per
 // simulation tick, before this or any other controller's Tick runs.
-func (c *Controller) Reserve(buildings []*building.Building, ledger *reservations.Ledger) {
-	tavern := findTavern(buildings)
-	if tavern == nil {
-		return
-	}
+func (c *Controller) Reserve(ledger *reservations.Ledger) {
 	for _, j := range c.Lumberjacks {
-		if j.state == StateToTavern {
-			ledger.ReservePickup(tavern, resource.Bread, 1)
+		if j.state == StateToTavern && j.tavern != nil {
+			ledger.ReservePickup(j.tavern, resource.Bread, 1)
 		}
 	}
+}
+
+// MaxWaitingHunger returns the highest HungerTicks among lumberjacks that
+// will actually try to eat this tick (idle, not carrying a log, and
+// HungerTicks >= HungerInterval), or -1 if none will. cmd/game compares
+// this against the other unit controllers' MaxWaitingHunger to decide
+// whose Tick runs first this simulation tick when the Tavern's Bread is
+// scarce -- the unit that's been waiting longest gets first claim,
+// instead of whichever controller happens to be first in a fixed call
+// order.
+func (c *Controller) MaxWaitingHunger() int {
+	best := -1
+	for _, j := range c.Lumberjacks {
+		if j.state != StateIdle || j.cargo > 0 || j.hungerTick < HungerInterval {
+			continue
+		}
+		if j.hungerTick > best {
+			best = j.hungerTick
+		}
+	}
+	return best
 }
 
 // Tick advances every lumberjack and returns completed tree-cut events.
@@ -216,7 +239,6 @@ func (c *Controller) Reserve(buildings []*building.Building, ledger *reservation
 // has had a chance to Reserve its own pre-existing in-flight units.
 func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) []Event {
 	var events []Event
-	tavern := findTavern(buildings)
 	for _, j := range c.Lumberjacks {
 		if j.hungerTick < HungerInterval {
 			j.hungerTick++
@@ -228,7 +250,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 				j.routeHome(grid, buildings)
 				continue
 			}
-			if j.hungerTick >= HungerInterval && c.tryStartMeal(j, tavern, grid, buildings, ledger) {
+			if j.hungerTick >= HungerInterval && c.tryStartMeal(j, grid, buildings, ledger) {
 				continue
 			}
 			c.startTreeJob(j, grid, buildings)
@@ -278,20 +300,26 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			}
 		case StateToTavern:
 			if len(j.path) == 0 {
-				if tavern != nil {
-					j.routeToBuilding(grid, buildings, tavern, StateToTavern)
+				// Defensive fallback: normally unreachable, since
+				// tryStartMeal/Restore only ever set this state together
+				// with a non-empty path. If the path was somehow cleared
+				// out from under the worker, try to re-route to the same
+				// committed Tavern before giving up on the meal entirely.
+				if j.tavern == nil || !j.routeToBuilding(grid, buildings, j.tavern, StateToTavern) {
+					j.resetToIdle()
 				}
 				continue
 			}
 			if !j.advancePath() {
 				continue
 			}
-			if tavern != nil && tavern.TakeInput(resource.Bread, 1) {
+			if j.tavern != nil && j.tavern.TakeInput(resource.Bread, 1) {
 				j.hungerTick = 0
 				j.Starving = false
 			} else {
 				j.Starving = true
 			}
+			j.tavern = nil
 			j.state = StateToHomeAfterMeal
 			j.path = nil
 			j.pathIdx = 0
@@ -311,16 +339,46 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 	return events
 }
 
-func (c *Controller) tryStartMeal(j *Lumberjack, tavern *building.Building, grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) bool {
-	if tavern == nil || ledger.AvailableInput(tavern, resource.Bread) <= 0 {
-		j.Starving = true
-		return false
+// nearestTavernWithBread returns the Tavern reachable from `from` by the
+// shortest land path (lumberjacks aren't road-bound) that also has at
+// least one unit of Bread available per the shared ledger, or false if
+// none qualifies. A town can have several Taverns; without this, a
+// hungry lumberjack always walked to whichever one happened to be first
+// in the buildings slice, even if a closer one existed or the first one
+// was simply empty. Pass a nil ledger to search purely by reachability
+// (used when rebuilding a route from a save, before any ledger exists
+// for this tick).
+func nearestTavernWithBread(grid *world.Grid, buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, path []pathfind.Point, ok bool) {
+	bestLen := -1
+	for _, b := range buildings {
+		if b == nil || b.Kind != building.Tavern {
+			continue
+		}
+		if ledger != nil && ledger.AvailableInput(b, resource.Bread) <= 0 {
+			continue
+		}
+		p := b.AccessPoint()
+		route, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: p.X, Y: p.Y})
+		if !reachable {
+			continue
+		}
+		if bestLen == -1 || len(route) < bestLen {
+			tavern, path, bestLen = b, route, len(route)
+		}
 	}
-	if !j.routeToBuilding(grid, buildings, tavern, StateToTavern) {
+	return tavern, path, tavern != nil
+}
+
+func (c *Controller) tryStartMeal(j *Lumberjack, grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) bool {
+	tavern, path, ok := nearestTavernWithBread(grid, buildings, pathfind.Point{X: j.X, Y: j.Y}, ledger)
+	if !ok {
 		j.Starving = true
 		return false
 	}
 	j.Starving = false
+	j.tavern = tavern
+	j.setPath(path)
+	j.state = StateToTavern
 	ledger.ReservePickup(tavern, resource.Bread, 1)
 	return true
 }
@@ -432,15 +490,6 @@ func atAccessPoint(j *Lumberjack, home *building.Building) bool {
 	}
 	p := home.AccessPoint()
 	return j.X == p.X && j.Y == p.Y
-}
-
-func findTavern(buildings []*building.Building) *building.Building {
-	for _, b := range buildings {
-		if b != nil && b.Kind == building.Tavern {
-			return b
-		}
-	}
-	return nil
 }
 
 func containsBuilding(buildings []*building.Building, target *building.Building) bool {

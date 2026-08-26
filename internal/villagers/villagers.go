@@ -73,6 +73,8 @@ type Villager struct {
 	pathIdx   int
 	tileTicks int
 
+	tavern *building.Building // which Tavern this trip is headed to/from, while ph != working
+
 	ticksSinceMeal int
 	workTicks      int
 
@@ -160,11 +162,13 @@ func (c *Controller) RestoreVillager(profession Profession, home *building.Build
 
 	switch state {
 	case VillagerToTavern:
-		if tavern := findTavern(buildings); tavern != nil {
-			if path, ok := pathfind.FindPathFromPoint(buildings, pathfind.Point{X: x, Y: y}, tavern); ok {
-				v.path, v.pathIdx, v.tileTicks = path, 0, 0
-				v.ph = toTavern
-			}
+		// No ledger exists yet at load time, so this searches purely by
+		// reachability (nil ledger skips the Bread-availability check) --
+		// same as the original findTavern-based lookup it replaces.
+		if tavern, path, ok := nearestTavernWithBread(buildings, home, nil); ok {
+			v.path, v.pathIdx, v.tileTicks = path, 0, 0
+			v.tavern = tavern
+			v.ph = toTavern
 		}
 	case VillagerToHome:
 		if path, ok := pathfind.FindPathFromPoint(buildings, pathfind.Point{X: x, Y: y}, home); ok {
@@ -192,50 +196,84 @@ func (c *Controller) RemoveHome(home *building.Building) {
 }
 
 // Reserve seeds ledger with every villager currently walking to eat, so
-// other controllers sharing the Tavern (serfs, lumberjacks) see this
-// claim before making their own commitments this tick. Call once per
+// other controllers sharing a Tavern (serfs, lumberjacks) see this claim
+// before making their own commitments this tick. Call once per
 // simulation tick, before this or any other controller's Tick runs.
-func (c *Controller) Reserve(buildings []*building.Building, ledger *reservations.Ledger) {
-	tavern := findTavern(buildings)
-	if tavern == nil {
-		return
-	}
+func (c *Controller) Reserve(ledger *reservations.Ledger) {
 	for _, v := range c.Villagers {
-		if v.ph == toTavern {
-			ledger.ReservePickup(tavern, resource.Bread, 1)
+		if v.ph == toTavern && v.tavern != nil {
+			ledger.ReservePickup(v.tavern, resource.Bread, 1)
 		}
 	}
+}
+
+// MaxWaitingHunger returns the highest HungerTicks among villagers that
+// will actually try to eat this tick (working and HungerTicks >=
+// HungerInterval), or -1 if none will. cmd/game compares this against the
+// other unit controllers' MaxWaitingHunger to decide whose Tick runs
+// first this simulation tick when the Tavern's Bread is scarce -- the
+// unit that's been waiting longest gets first claim, instead of
+// whichever controller happens to be first in a fixed call order.
+func (c *Controller) MaxWaitingHunger() int {
+	best := -1
+	for _, v := range c.Villagers {
+		if v.ph != working || v.ticksSinceMeal < HungerInterval {
+			continue
+		}
+		if v.ticksSinceMeal > best {
+			best = v.ticksSinceMeal
+		}
+	}
+	return best
 }
 
 // Tick advances hunger and movement for every villager. Call once per
 // simulation tick, after every controller sharing ledger has had a
 // chance to Reserve its own pre-existing in-flight units.
 func (c *Controller) Tick(buildings []*building.Building, ledger *reservations.Ledger) {
-	tavern := findTavern(buildings)
 	for _, v := range c.Villagers {
-		tick(v, buildings, tavern, ledger)
+		tick(v, buildings, ledger)
 	}
 }
 
-func findTavern(buildings []*building.Building) *building.Building {
+// nearestTavernWithBread returns the Tavern reachable from home by the
+// shortest road path that also has at least one unit of Bread available,
+// or false if none qualifies. A town can have several Taverns; without
+// this, every hungry villager always walked to whichever one happened to
+// be first in the buildings slice, even if a closer one existed or the
+// first one was simply empty. Pass a nil ledger to search purely by
+// reachability (used when rebuilding a route from a save, before any
+// ledger exists for this tick).
+func nearestTavernWithBread(buildings []*building.Building, home *building.Building, ledger *reservations.Ledger) (tavern *building.Building, path []pathfind.Point, ok bool) {
+	bestLen := -1
 	for _, b := range buildings {
-		if b.Kind == building.Tavern {
-			return b
+		if b.Kind != building.Tavern {
+			continue
+		}
+		if ledger != nil && ledger.AvailableInput(b, resource.Bread) <= 0 {
+			continue
+		}
+		p, reachable := pathfind.FindPath(buildings, home, b)
+		if !reachable {
+			continue
+		}
+		if bestLen == -1 || len(p) < bestLen {
+			tavern, path, bestLen = b, p, len(p)
 		}
 	}
-	return nil
+	return tavern, path, tavern != nil
 }
 
-func tick(v *Villager, buildings []*building.Building, tavern *building.Building, ledger *reservations.Ledger) {
+func tick(v *Villager, buildings []*building.Building, ledger *reservations.Ledger) {
 	switch v.ph {
 	case working:
-		tickWorking(v, buildings, tavern, ledger)
+		tickWorking(v, buildings, ledger)
 	case toTavern, toHome:
-		tickWalking(v, buildings, tavern)
+		tickWalking(v, buildings)
 	}
 }
 
-func tickWorking(v *Villager, buildings []*building.Building, tavern *building.Building, ledger *reservations.Ledger) {
+func tickWorking(v *Villager, buildings []*building.Building, ledger *reservations.Ledger) {
 	if v.ticksSinceMeal < HungerInterval {
 		v.ticksSinceMeal++
 		v.animateFarmWork()
@@ -243,12 +281,7 @@ func tickWorking(v *Villager, buildings []*building.Building, tavern *building.B
 	}
 
 	// Hungry enough to need a meal now.
-	if tavern == nil || ledger.AvailableInput(tavern, resource.Bread) <= 0 {
-		v.Starving = true
-		v.animateFarmWork()
-		return
-	}
-	path, ok := pathfind.FindPath(buildings, v.Home, tavern)
+	tavern, path, ok := nearestTavernWithBread(buildings, v.Home, ledger)
 	if !ok {
 		v.Starving = true
 		v.animateFarmWork()
@@ -259,6 +292,7 @@ func tickWorking(v *Villager, buildings []*building.Building, tavern *building.B
 	// just finished the current field pass, so visually return to that tile
 	// before starting the meal route.
 	v.X, v.Y = v.Home.X, v.Home.Y
+	v.tavern = tavern
 	v.path, v.pathIdx, v.tileTicks = path, 0, 0
 	v.ph = toTavern
 	ledger.ReservePickup(tavern, resource.Bread, 1)
@@ -274,7 +308,7 @@ func (v *Villager) animateFarmWork() {
 	v.X, v.Y = v.Home.X+p.X, v.Home.Y+p.Y
 }
 
-func tickWalking(v *Villager, buildings []*building.Building, tavern *building.Building) {
+func tickWalking(v *Villager, buildings []*building.Building) {
 	v.tileTicks++
 	if v.tileTicks < TicksPerTile {
 		return
@@ -288,6 +322,7 @@ func tickWalking(v *Villager, buildings []*building.Building, tavern *building.B
 	}
 
 	if v.ph == toTavern {
+		tavern := v.tavern
 		v.X, v.Y = tavern.X, tavern.Y
 		if tavern.TakeInput(resource.Bread, 1) {
 			v.ticksSinceMeal = 0
@@ -298,6 +333,7 @@ func tickWalking(v *Villager, buildings []*building.Building, tavern *building.B
 			v.path, v.pathIdx, v.tileTicks = path, 0, 0
 			v.ph = toHome
 		}
+		v.tavern = nil
 		// If home is somehow unreachable from here, just stay put at
 		// the tavern; tickWorking will never run again until the road
 		// is fixed, but that's an edge case not worth over-engineering.

@@ -70,7 +70,7 @@ func TestFullChain_FarmToMillToBakeryToTavern(t *testing.T) {
 
 		ledger := reservations.New()
 		logi.Reserve(ledger)
-		vills.Reserve(buildings, ledger)
+		vills.Reserve(ledger)
 		logi.Tick(buildings, stock, ledger)
 		vills.Tick(buildings, ledger)
 
@@ -141,7 +141,7 @@ func TestSharedTavernReservation_SerfAndVillagerDoNotDoubleBookTheLastLoaf(t *te
 	for range 200 {
 		ledger := reservations.New()
 		logi.Reserve(ledger)
-		vills.Reserve(buildings, ledger)
+		vills.Reserve(ledger)
 		logi.Tick(buildings, stock, ledger)
 		vills.Tick(buildings, ledger)
 
