@@ -5,18 +5,27 @@
 // core to how the reference genre actually plays: a building not
 // connected by road simply never gets serviced.
 //
-// Job priority (see assign): a direct producer -> consumer haul (e.g.
-// Mill's Flour straight to Bakery) always wins when one exists and is
-// reachable; only the surplus a direct haul can't place goes to the
-// Warehouse, and only a shortage a direct haul can't cover gets pulled
-// back out of the Warehouse. This matches the reference behavior the
-// user asked for: processing buildings feed each other directly, the
-// Warehouse is overflow/backup, not the only path.
+// Job priority (see assign): keeping the Tavern fed comes first, then a
+// direct producer -> consumer haul (e.g. Mill's Flour straight to
+// Bakery), then draining leftover OutputBuffer to the Warehouse, then
+// pulling from the Warehouse to cover a shortage no producer can. This
+// matches the reference behavior the user asked for: processing
+// buildings feed each other directly, the Warehouse is overflow/backup,
+// not the only path.
+//
+// Every job search reads availability through a *reservations.Ledger
+// (see package reservations) instead of raw buffer values, and every
+// successful commitment (startLeg, tryStartMeal) records itself in that
+// same ledger. Without this, several idle serfs in one Tick call -- or
+// serfs from earlier ticks still walking -- would each independently
+// "discover" the same limited stock and all set off for it, which is
+// exactly the crowding bug this was built to fix (see AGENTS.md).
 package logistics
 
 import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/pathfind"
+	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 )
 
@@ -212,17 +221,39 @@ func (c *Controller) CancelAllJobs(stock *resource.Stockpile) {
 	}
 }
 
+// Reserve seeds ledger with every serf currently mid-trip (assigned but
+// not yet delivered), covering both the pickup and dropoff side of the
+// trip. Call once per simulation tick, before this or any other
+// controller's Tick runs, so a claim already in flight is visible to
+// everyone sharing a building (namely the Tavern) before new jobs are
+// handed out.
+func (c *Controller) Reserve(ledger *reservations.Ledger) {
+	for _, s := range c.Serfs {
+		if s.ph == idle {
+			continue
+		}
+		if s.pickup != nil {
+			ledger.ReservePickup(s.pickup, s.resource, s.amount)
+		}
+		if s.dropoff != nil {
+			ledger.ReserveDropoff(s.dropoff, s.resource, s.amount)
+		}
+	}
+}
+
 // Tick assigns jobs to idle serfs and advances every serf by one
-// movement step. Call once per simulation tick (see economy.Simulator).
-func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockpile) {
+// movement step. Call once per simulation tick (see economy.Simulator),
+// after every controller sharing ledger has had a chance to Reserve its
+// own pre-existing in-flight units.
+func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) {
 	tavern := findTavern(buildings)
 	for _, s := range c.Serfs {
 		if s.ticksSinceMeal < HungerInterval {
 			s.ticksSinceMeal++
 		}
 		if s.ph == idle {
-			if !c.tryStartMeal(s, tavern, buildings) {
-				c.assign(s, buildings, stock)
+			if !c.tryStartMeal(s, tavern, buildings, ledger) {
+				c.assign(s, buildings, stock, ledger)
 			}
 		}
 		c.advance(s, buildings, stock)
@@ -242,14 +273,15 @@ func findTavern(buildings []*building.Building) *building.Building {
 // of taking a new haul job, if one is reachable and stocked. Hunger
 // only ever interrupts a serf between jobs, never mid-haul. If the serf
 // is hungry but there's nowhere to actually go (no Tavern yet, no road,
-// no Bread), it's marked Starving but keeps hauling anyway -- refusing
-// to work would cripple the whole economy before a Tavern even exists,
-// which is a worse outcome than a hungry serf.
-func (c *Controller) tryStartMeal(s *Serf, tavern *building.Building, buildings []*building.Building) bool {
+// no Bread left once other units' claims are accounted for), it's
+// marked Starving but keeps hauling anyway -- refusing to work would
+// cripple the whole economy before a Tavern even exists, which is a
+// worse outcome than a hungry serf.
+func (c *Controller) tryStartMeal(s *Serf, tavern *building.Building, buildings []*building.Building, ledger *reservations.Ledger) bool {
 	if s.ticksSinceMeal < HungerInterval {
 		return false
 	}
-	if tavern == nil || tavern.InputBuffer[resource.Bread] <= 0 {
+	if tavern == nil || ledger.AvailableInput(tavern, resource.Bread) <= 0 {
 		s.Starving = true
 		return false
 	}
@@ -265,6 +297,7 @@ func (c *Controller) tryStartMeal(s *Serf, tavern *building.Building, buildings 
 	s.eating = true
 	s.path, s.pathIdx, s.tileTicks = path, 0, 0
 	s.ph = toPickup
+	ledger.ReservePickup(tavern, resource.Bread, 1)
 	return true
 }
 
@@ -272,29 +305,29 @@ func (c *Controller) tryStartMeal(s *Serf, tavern *building.Building, buildings 
 // reach, in priority order: keep the Tavern supplied first, then direct
 // producer->consumer haul, then drain leftover OutputBuffer to the Warehouse,
 // then pull from the Warehouse to cover a shortage no producer can.
-func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *resource.Stockpile) {
+func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) {
 	for _, warehouse := range c.warehouses() {
-		if pickup, dropoff, t, n, ok := findTavernSupplyJob(buildings, warehouse, stock); ok {
-			if c.startLeg(s, pickup, dropoff, t, n, buildings) {
+		if pickup, dropoff, t, n, ok := findTavernSupplyJob(buildings, warehouse, stock, ledger); ok {
+			if c.startLeg(s, pickup, dropoff, t, n, buildings, ledger) {
 				return
 			}
 		}
 	}
-	if pickup, dropoff, t, n, ok := findDirectJob(buildings, c.Warehouse); ok {
-		if c.startLeg(s, pickup, dropoff, t, n, buildings) {
+	if pickup, dropoff, t, n, ok := findDirectJob(buildings, c.Warehouse, ledger); ok {
+		if c.startLeg(s, pickup, dropoff, t, n, buildings, ledger) {
 			return
 		}
 	}
-	if b, t, n, ok := findCollectJob(buildings, c.Warehouse); ok {
+	if b, t, n, ok := findCollectJob(buildings, c.Warehouse, ledger); ok {
 		for _, warehouse := range c.warehouses() {
-			if c.startLeg(s, b, warehouse, t, n, buildings) {
+			if c.startLeg(s, b, warehouse, t, n, buildings, ledger) {
 				return
 			}
 		}
 	}
-	if b, t, n, ok := findSupplyJob(buildings, c.Warehouse, stock); ok {
+	if b, t, n, ok := findSupplyJob(buildings, c.Warehouse, stock, ledger); ok {
 		for _, warehouse := range c.warehouses() {
-			if c.startLeg(s, warehouse, b, t, n, buildings) {
+			if c.startLeg(s, warehouse, b, t, n, buildings, ledger) {
 				return
 			}
 		}
@@ -306,7 +339,7 @@ func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *reso
 // optional warehouse cleanup or a lower-priority production input. Bread is
 // currently the only produced meal; the accepted-resource order also makes
 // Fish, Wine and Sausage ready for future production chains.
-func findTavernSupplyJob(buildings []*building.Building, warehouse *building.Building, stock *resource.Stockpile) (pickup, dropoff *building.Building, t resource.Type, amount int, ok bool) {
+func findTavernSupplyJob(buildings []*building.Building, warehouse *building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) (pickup, dropoff *building.Building, t resource.Type, amount int, ok bool) {
 	var tavern *building.Building
 	for _, b := range buildings {
 		if b.Kind == building.Tavern {
@@ -322,7 +355,7 @@ func findTavernSupplyJob(buildings []*building.Building, warehouse *building.Bui
 		accepted = []resource.Type{resource.Bread}
 	}
 	for _, rt := range accepted {
-		room := building.BufferCapacity - tavern.InputBuffer[rt]
+		room := ledger.RoomFor(tavern, rt, building.BufferCapacity)
 		if room <= 0 {
 			continue
 		}
@@ -330,12 +363,12 @@ func findTavernSupplyJob(buildings []*building.Building, warehouse *building.Bui
 			if producer.Kind == building.Warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
 				continue
 			}
-			if have := producer.OutputBuffer[rt]; have > 0 {
+			if have := ledger.AvailableOutput(producer, rt); have > 0 {
 				return producer, tavern, rt, min(have, CarryCapacity, room), true
 			}
 		}
-		if stock != nil && stock.Amount(rt) > 0 {
-			return warehouse, tavern, rt, min(CarryCapacity, room, stock.Amount(rt)), true
+		if avail := ledger.AvailableStock(stock, rt); avail > 0 {
+			return warehouse, tavern, rt, min(CarryCapacity, room, avail), true
 		}
 	}
 	return nil, nil, 0, 0, false
@@ -346,12 +379,13 @@ func findTavernSupplyJob(buildings []*building.Building, warehouse *building.Bui
 // Warehouse entirely. Building-to-building, not resource-type-specific:
 // works for any Recipe pairing (Farm->Mill, Mill->Bakery, ...) because
 // it just reads OutputBuffer against the candidate's Recipe.Inputs.
-func findDirectJob(buildings []*building.Building, warehouse *building.Building) (pickup, dropoff *building.Building, t resource.Type, amount int, ok bool) {
+func findDirectJob(buildings []*building.Building, warehouse *building.Building, ledger *reservations.Ledger) (pickup, dropoff *building.Building, t resource.Type, amount int, ok bool) {
 	for _, producer := range buildings {
 		if producer == warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
 			continue
 		}
-		for rt, have := range producer.OutputBuffer {
+		for rt := range producer.OutputBuffer {
+			have := ledger.AvailableOutput(producer, rt)
 			if have <= 0 {
 				continue
 			}
@@ -363,7 +397,7 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building)
 				if !wants {
 					continue
 				}
-				short := need - consumer.InputBuffer[rt]
+				short := ledger.RoomFor(consumer, rt, need)
 				if short <= 0 {
 					continue
 				}
@@ -376,13 +410,13 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building)
 	return nil, nil, 0, 0, false
 }
 
-func findCollectJob(buildings []*building.Building, warehouse *building.Building) (b *building.Building, t resource.Type, amount int, ok bool) {
+func findCollectJob(buildings []*building.Building, warehouse *building.Building, ledger *reservations.Ledger) (b *building.Building, t resource.Type, amount int, ok bool) {
 	for _, cand := range buildings {
 		if cand == warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
 		}
-		for rt, n := range cand.OutputBuffer {
-			if n > 0 {
+		for rt := range cand.OutputBuffer {
+			if n := ledger.AvailableOutput(cand, rt); n > 0 {
 				return cand, rt, min(n, CarryCapacity), true
 			}
 		}
@@ -390,18 +424,18 @@ func findCollectJob(buildings []*building.Building, warehouse *building.Building
 	return nil, 0, 0, false
 }
 
-func findSupplyJob(buildings []*building.Building, warehouse *building.Building, stock *resource.Stockpile) (b *building.Building, t resource.Type, amount int, ok bool) {
+func findSupplyJob(buildings []*building.Building, warehouse *building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) (b *building.Building, t resource.Type, amount int, ok bool) {
 	for _, cand := range buildings {
 		if cand == warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
 		}
 		recipe := building.Types[cand.Kind].Recipe
 		for rt, need := range recipe.Inputs {
-			have := cand.InputBuffer[rt]
-			if have >= need {
+			short := ledger.RoomFor(cand, rt, need)
+			if short <= 0 {
 				continue
 			}
-			amount := min(CarryCapacity, need-have, stock.Amount(rt))
+			amount := min(CarryCapacity, short, ledger.AvailableStock(stock, rt))
 			if amount > 0 {
 				return cand, rt, amount, true
 			}
@@ -410,7 +444,7 @@ func findSupplyJob(buildings []*building.Building, warehouse *building.Building,
 	return nil, 0, 0, false
 }
 
-func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t resource.Type, amount int, buildings []*building.Building) bool {
+func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t resource.Type, amount int, buildings []*building.Building, ledger *reservations.Ledger) bool {
 	path, ok := pathfind.FindPathFromPoint(buildings, pathfind.Point{X: s.X, Y: s.Y}, pickup)
 	if !ok {
 		return false // not reachable from here right now; try again next tick
@@ -419,6 +453,8 @@ func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t res
 	s.resource, s.amount = t, amount
 	s.path, s.pathIdx, s.tileTicks = path, 0, 0
 	s.ph = toPickup
+	ledger.ReservePickup(pickup, t, amount)
+	ledger.ReserveDropoff(dropoff, t, amount)
 	return true
 }
 
@@ -467,8 +503,9 @@ func (c *Controller) arriveAtPickup(s *Serf, buildings []*building.Building, sto
 		ok = s.pickup.TakeOutput(s.resource, s.amount)
 	}
 	if !ok {
-		// Another serf beat us to it (see assign's doc comment); go idle
-		// and try a fresh job next tick.
+		// The reservation ledger should make this unreachable in the
+		// normal case; kept as a defensive fallback (e.g. the map
+		// changed mid-trip) -- go idle and try a fresh job next tick.
 		s.reset()
 		return
 	}
@@ -494,7 +531,15 @@ func (c *Controller) arriveAtDropoff(s *Serf, stock *resource.Stockpile) {
 	if s.dropoff.Kind == building.Warehouse {
 		stock.Add(s.resource, s.amount)
 	} else {
-		s.dropoff.AddInput(s.resource, s.amount)
+		fit := s.dropoff.AddInput(s.resource, s.amount)
+		if leftover := s.amount - fit; leftover > 0 {
+			// The reservation ledger should prevent this in the normal
+			// case, but if a race still slips through (the destination
+			// changed underfoot, or a save/load edge case), don't
+			// destroy the goods -- credit the shared stockpile instead,
+			// exactly like a cancelled or road-cut delivery already does.
+			stock.Add(s.resource, leftover)
+		}
 	}
 	s.reset()
 }

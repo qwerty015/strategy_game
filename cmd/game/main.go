@@ -16,6 +16,7 @@ import (
 	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/render"
+	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
 	"strategy_game/internal/ui"
@@ -133,9 +134,20 @@ func (g *Game) Update() error {
 		}
 		g.tickTreeRegrowth()
 		economy.TickWithConnectivity(g.buildings, g.starvingBuildings(), g.disconnectedBuildings())
-		g.logi.Tick(g.buildings, g.stock)
-		g.vills.Tick(g.buildings)
-		for _, event := range g.jacks.Tick(g.grid, g.buildings) {
+
+		// One shared reservation ledger per simulation tick: every
+		// controller first reports its own pre-existing in-flight units
+		// (Reserve), then all three consume the same ledger in Tick, so
+		// a serf and a hungry farmer never both set off for the
+		// Tavern's last loaf of Bread at once. See package reservations.
+		ledger := reservations.New()
+		g.logi.Reserve(ledger)
+		g.vills.Reserve(g.buildings, ledger)
+		g.jacks.Reserve(g.buildings, ledger)
+
+		g.logi.Tick(g.buildings, g.stock, ledger)
+		g.vills.Tick(g.buildings, ledger)
+		for _, event := range g.jacks.Tick(g.grid, g.buildings, ledger) {
 			if event.Kind == lumberjack.TreeCut {
 				g.cutTree(event.Tree)
 			}

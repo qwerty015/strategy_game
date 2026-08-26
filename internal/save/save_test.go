@@ -39,8 +39,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		},
 		TreeRegrowth: []TreeRegrowthState{{Ticks: 20, TargetTicks: 200, Seed: 42}},
 		TreeSeed:     12345,
-		CameraX: 128.5,
-		CameraY: 64,
+		CameraX:      128.5,
+		CameraY:      64,
 	}
 
 	path := filepath.Join(t.TempDir(), "slot1.json")

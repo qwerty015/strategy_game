@@ -14,6 +14,7 @@ import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/logistics"
+	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/villagers"
 )
@@ -66,8 +67,12 @@ func TestFullChain_FarmToMillToBakeryToTavern(t *testing.T) {
 	var sawBread bool
 	for range 5000 {
 		economy.Tick(buildings, starving())
-		logi.Tick(buildings, stock)
-		vills.Tick(buildings)
+
+		ledger := reservations.New()
+		logi.Reserve(ledger)
+		vills.Reserve(buildings, ledger)
+		logi.Tick(buildings, stock, ledger)
+		vills.Tick(buildings, ledger)
 
 		if tavern.InputBuffer[resource.Bread] > 0 || stock.Amount(resource.Bread) > 0 {
 			sawBread = true
@@ -101,4 +106,68 @@ func TestFullChain_FarmToMillToBakeryToTavern(t *testing.T) {
 		}
 	}
 
+}
+
+// TestSharedTavernReservation_SerfAndVillagerDoNotDoubleBookTheLastLoaf is
+// the cross-controller version of the user's "crowd" bug report: a serf
+// (package logistics) and a farmer (package villagers) both starving at
+// once, with only one loaf of Bread in the Tavern. Each controller used to
+// only see its own units, so both could commit to the same last loaf in
+// the same tick -- one of them would always walk there for nothing. The
+// shared reservations.Ledger (seeded via Reserve before either Tick runs)
+// is what makes them aware of each other.
+func TestSharedTavernReservation_SerfAndVillagerDoNotDoubleBookTheLastLoaf(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 8, Y: 0}
+	tavern.AddInput(resource.Bread, 1) // exactly one meal available
+
+	var roads []*building.Building
+	for x := 1; x < 8; x++ {
+		roads = append(roads, &building.Building{Kind: building.Road, X: x, Y: 0})
+	}
+	buildings := append([]*building.Building{warehouse, farm, tavern}, roads...)
+
+	logi := logistics.NewController(warehouse, 0)
+	// RestoreSerf/RestoreVillager are the same public entry points
+	// save/load uses -- here they let the test start both units already
+	// hungry, instead of ticking HungerInterval times to get there.
+	logi.RestoreSerf(warehouse.X, warehouse.Y, logistics.HungerInterval, false)
+	vills := villagers.NewController()
+	vills.RestoreVillager(villagers.Farmer, farm, farm.X, farm.Y, villagers.HungerInterval, false, villagers.VillagerWorking, buildings)
+
+	stock := resource.NewStockpile(100)
+	var serfAte, villagerAte bool
+	for range 200 {
+		ledger := reservations.New()
+		logi.Reserve(ledger)
+		vills.Reserve(buildings, ledger)
+		logi.Tick(buildings, stock, ledger)
+		vills.Tick(buildings, ledger)
+
+		// Check every tick, not just the final one: HungerTicks() resets
+		// to 0 right when a unit eats, then immediately starts counting
+		// up again -- by tick 200 a unit that ate early could already be
+		// hungry again, which would make a final-state-only check flaky.
+		if logi.Serfs[0].HungerTicks() == 0 {
+			serfAte = true
+		}
+		if vills.Villagers[0].HungerTicks() == 0 {
+			villagerAte = true
+		}
+	}
+
+	ate := 0
+	if serfAte {
+		ate++
+	}
+	if villagerAte {
+		ate++
+	}
+	if ate != 1 {
+		t.Fatalf("%d units ate the single loaf (serf=%v, villager=%v), want exactly 1", ate, serfAte, villagerAte)
+	}
+	if got := tavern.InputBuffer[resource.Bread]; got != 0 {
+		t.Fatalf("tavern Bread = %d, want 0 (the one loaf is gone)", got)
+	}
 }

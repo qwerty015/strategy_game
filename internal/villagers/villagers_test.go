@@ -4,8 +4,19 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 )
+
+// tickController runs one simulation step exactly like cmd/game does: a
+// fresh ledger, seeded from this controller's own in-flight villagers,
+// then Tick. (Named to avoid colliding with the package's own unexported
+// per-villager tick helper.)
+func tickController(c *Controller, buildings []*building.Building) {
+	ledger := reservations.New()
+	c.Reserve(buildings, ledger)
+	c.Tick(buildings, ledger)
+}
 
 func straightRoad(fromX, toX, y int) []*building.Building {
 	var roads []*building.Building
@@ -28,7 +39,7 @@ func TestVillager_WalksToTavernWhenHungryAndBack(t *testing.T) {
 
 	// Run past HungerInterval plus enough ticks for a full round trip.
 	for range 500 {
-		c.Tick(buildings)
+		tickController(c, buildings)
 		if v.Working() && v.ticksSinceMeal == 0 {
 			break // has eaten and returned home
 		}
@@ -58,7 +69,7 @@ func TestVillager_StarvingWhenNoTavernReachable(t *testing.T) {
 	v := c.Villagers[0]
 
 	for range HungerInterval + 5 {
-		c.Tick(buildings)
+		tickController(c, buildings)
 	}
 
 	if !v.Starving {
@@ -76,7 +87,7 @@ func TestFarmerWalksAcrossItsFieldWhileWorking(t *testing.T) {
 	v := c.Villagers[0]
 
 	for range FarmWorkStepTicks + 1 {
-		c.Tick([]*building.Building{farm})
+		tickController(c, []*building.Building{farm})
 	}
 
 	if !v.Working() {

@@ -7,6 +7,7 @@ package lumberjack
 import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/pathfind"
+	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
 )
@@ -194,8 +195,26 @@ func (j *Lumberjack) VisibleOnMap() bool {
 	return j.state != StateIdle && j.state != StateUnloading
 }
 
+// Reserve seeds ledger with every lumberjack currently walking to eat, so
+// other controllers sharing the Tavern (serfs, villagers) see this claim
+// before making their own commitments this tick. Call once per
+// simulation tick, before this or any other controller's Tick runs.
+func (c *Controller) Reserve(buildings []*building.Building, ledger *reservations.Ledger) {
+	tavern := findTavern(buildings)
+	if tavern == nil {
+		return
+	}
+	for _, j := range c.Lumberjacks {
+		if j.state == StateToTavern {
+			ledger.ReservePickup(tavern, resource.Bread, 1)
+		}
+	}
+}
+
 // Tick advances every lumberjack and returns completed tree-cut events.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building) []Event {
+// Call once per simulation tick, after every controller sharing ledger
+// has had a chance to Reserve its own pre-existing in-flight units.
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) []Event {
 	var events []Event
 	tavern := findTavern(buildings)
 	for _, j := range c.Lumberjacks {
@@ -209,7 +228,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building) []Ev
 				j.routeHome(grid, buildings)
 				continue
 			}
-			if j.hungerTick >= HungerInterval && c.tryStartMeal(j, tavern, grid, buildings) {
+			if j.hungerTick >= HungerInterval && c.tryStartMeal(j, tavern, grid, buildings, ledger) {
 				continue
 			}
 			c.startTreeJob(j, grid, buildings)
@@ -292,8 +311,8 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building) []Ev
 	return events
 }
 
-func (c *Controller) tryStartMeal(j *Lumberjack, tavern *building.Building, grid *world.Grid, buildings []*building.Building) bool {
-	if tavern == nil || tavern.InputBuffer[resource.Bread] <= 0 {
+func (c *Controller) tryStartMeal(j *Lumberjack, tavern *building.Building, grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) bool {
+	if tavern == nil || ledger.AvailableInput(tavern, resource.Bread) <= 0 {
 		j.Starving = true
 		return false
 	}
@@ -302,6 +321,7 @@ func (c *Controller) tryStartMeal(j *Lumberjack, tavern *building.Building, grid
 		return false
 	}
 	j.Starving = false
+	ledger.ReservePickup(tavern, resource.Bread, 1)
 	return true
 }
 

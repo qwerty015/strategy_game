@@ -9,6 +9,7 @@ package villagers
 import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/pathfind"
+	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 )
 
@@ -190,12 +191,29 @@ func (c *Controller) RemoveHome(home *building.Building) {
 	c.Villagers = kept
 }
 
+// Reserve seeds ledger with every villager currently walking to eat, so
+// other controllers sharing the Tavern (serfs, lumberjacks) see this
+// claim before making their own commitments this tick. Call once per
+// simulation tick, before this or any other controller's Tick runs.
+func (c *Controller) Reserve(buildings []*building.Building, ledger *reservations.Ledger) {
+	tavern := findTavern(buildings)
+	if tavern == nil {
+		return
+	}
+	for _, v := range c.Villagers {
+		if v.ph == toTavern {
+			ledger.ReservePickup(tavern, resource.Bread, 1)
+		}
+	}
+}
+
 // Tick advances hunger and movement for every villager. Call once per
-// simulation tick.
-func (c *Controller) Tick(buildings []*building.Building) {
+// simulation tick, after every controller sharing ledger has had a
+// chance to Reserve its own pre-existing in-flight units.
+func (c *Controller) Tick(buildings []*building.Building, ledger *reservations.Ledger) {
 	tavern := findTavern(buildings)
 	for _, v := range c.Villagers {
-		tick(v, buildings, tavern)
+		tick(v, buildings, tavern, ledger)
 	}
 }
 
@@ -208,16 +226,16 @@ func findTavern(buildings []*building.Building) *building.Building {
 	return nil
 }
 
-func tick(v *Villager, buildings []*building.Building, tavern *building.Building) {
+func tick(v *Villager, buildings []*building.Building, tavern *building.Building, ledger *reservations.Ledger) {
 	switch v.ph {
 	case working:
-		tickWorking(v, buildings, tavern)
+		tickWorking(v, buildings, tavern, ledger)
 	case toTavern, toHome:
 		tickWalking(v, buildings, tavern)
 	}
 }
 
-func tickWorking(v *Villager, buildings []*building.Building, tavern *building.Building) {
+func tickWorking(v *Villager, buildings []*building.Building, tavern *building.Building, ledger *reservations.Ledger) {
 	if v.ticksSinceMeal < HungerInterval {
 		v.ticksSinceMeal++
 		v.animateFarmWork()
@@ -225,7 +243,7 @@ func tickWorking(v *Villager, buildings []*building.Building, tavern *building.B
 	}
 
 	// Hungry enough to need a meal now.
-	if tavern == nil || tavern.InputBuffer[resource.Bread] <= 0 {
+	if tavern == nil || ledger.AvailableInput(tavern, resource.Bread) <= 0 {
 		v.Starving = true
 		v.animateFarmWork()
 		return
@@ -243,6 +261,7 @@ func tickWorking(v *Villager, buildings []*building.Building, tavern *building.B
 	v.X, v.Y = v.Home.X, v.Home.Y
 	v.path, v.pathIdx, v.tileTicks = path, 0, 0
 	v.ph = toTavern
+	ledger.ReservePickup(tavern, resource.Bread, 1)
 }
 
 func (v *Villager) animateFarmWork() {

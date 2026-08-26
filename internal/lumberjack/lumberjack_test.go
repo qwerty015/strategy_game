@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
 )
@@ -22,7 +23,9 @@ func TestLumberjackCutsNearestTreeAndStoresLogAtHut(t *testing.T) {
 
 	var cut bool
 	for tick := 0; tick < 100; tick++ {
-		for _, event := range controller.Tick(grid, buildings) {
+		ledger := reservations.New()
+		controller.Reserve(buildings, ledger)
+		for _, event := range controller.Tick(grid, buildings, ledger) {
 			if event.Kind != TreeCut || event.Tree != tree {
 				t.Fatalf("unexpected tree-cut event: %#v", event)
 			}
