@@ -4,6 +4,7 @@ import (
 	"image"
 
 	"strategy_game/internal/economy"
+	"strategy_game/internal/i18n"
 )
 
 // Layout defines the screen regions shared by drawing and mouse hit-testing.
@@ -92,16 +93,32 @@ func (l Layout) MapRect() image.Rectangle {
 	return image.Rect(l.LeftWidth, 0, l.Width-l.RightWidth, l.Height-l.BottomHeight)
 }
 
+const (
+	tabCount = 3 // Build, Hire, Settings
+	tabGap   = 4
+)
+
+// tabRect returns the x position and width of tab button i, shared by
+// drawMenuTabs and MenuTabAt so the drawn buttons and their hit-test
+// regions can never drift apart.
+func (l Layout) tabRect(i int) (x, w int) {
+	total := l.LeftWidth - 24 - (tabCount-1)*tabGap
+	width := total / tabCount
+	return 12 + i*(width+tabGap), width
+}
+
 // MenuTabAt returns the left-panel category button under the cursor.
 func (l Layout) MenuTabAt(x, y int) (LeftTab, bool) {
-	if y < leftTabY || y >= leftTabY+leftTabHeight || x < 12 || x >= l.LeftWidth-12 {
+	if y < leftTabY || y >= leftTabY+leftTabHeight {
 		return BuildTab, false
 	}
-	mid := l.LeftWidth / 2
-	if x < mid {
-		return BuildTab, true
+	for i := 0; i < tabCount; i++ {
+		tx, tw := l.tabRect(i)
+		if x >= tx && x < tx+tw {
+			return LeftTab(i), true
+		}
 	}
-	return HireTab, true
+	return BuildTab, false
 }
 
 // BuildIndexAt returns the building palette card under the cursor.
@@ -189,4 +206,108 @@ func (l Layout) PriorityLevelAt(x, y int) (int, bool) {
 		return 0, false
 	}
 	return index - 2, true
+}
+
+// Settings tab layout: a language row, a speed row (mirroring the bottom
+// panel so the player need not leave the tab to change pace), a save-slot
+// list, and -- in place of the slot list while a modal is open -- a naming
+// or overwrite-confirmation dialog. Every offset here is shared between
+// drawing (see drawSettingsContent/drawSettingsDialog) and hit-testing
+// below, so the two can never disagree about where a button is.
+const (
+	settingsLangRowY = leftCardsStartY // 82
+	settingsLangRowH = 26
+
+	settingsSpeedRowY = settingsLangRowY + settingsLangRowH + 10
+	settingsSpeedRowH = 30
+
+	settingsSlotsLabelY = settingsSpeedRowY + settingsSpeedRowH + 24
+	settingsSlotsStartY = settingsSlotsLabelY + 18
+	settingsSlotNameH   = 20
+	settingsSlotButtonH = 26
+	settingsSlotStride  = 58
+	settingsSlotCount   = 5
+
+	settingsDialogFieldY  = settingsSlotsLabelY + 20
+	settingsDialogFieldH  = 28
+	settingsDialogButtonY = settingsDialogFieldY + settingsDialogFieldH + 14
+	settingsDialogButtonH = 30
+)
+
+// SettingsLangAt returns the language button under the cursor, in the
+// settings tab's own language row.
+func (l Layout) SettingsLangAt(x, y int) (i18n.Lang, bool) {
+	if y < settingsLangRowY || y >= settingsLangRowY+settingsLangRowH {
+		return i18n.RU, false
+	}
+	startX := 12
+	w := l.LeftWidth - 24
+	segW := w / 2
+	if segW <= 0 || x < startX || x >= startX+w {
+		return i18n.RU, false
+	}
+	if x < startX+segW {
+		return i18n.RU, true
+	}
+	return i18n.EN, true
+}
+
+// SettingsSpeedAt returns the speed button under the cursor within the
+// settings tab's own speed row (distinct from SpeedAt, which reads the
+// always-visible bottom panel).
+func (l Layout) SettingsSpeedAt(x, y int) (economy.Speed, bool) {
+	if y < settingsSpeedRowY || y >= settingsSpeedRowY+settingsSpeedRowH {
+		return economy.Normal, false
+	}
+	startX := 12
+	w := l.LeftWidth - 24
+	segW := w / 5
+	if segW <= 0 || x < startX {
+		return economy.Normal, false
+	}
+	index := (x - startX) / segW
+	if index < 0 || index > int(economy.Quadruple) || x >= startX+(index+1)*segW {
+		return economy.Normal, false
+	}
+	return economy.Speed(index), true
+}
+
+// SettingsSlotActionAt returns which save-slot button (1-5) the cursor is
+// over, and whether it's the Save or Load half of that slot's row. Slots
+// are 1-indexed to match the on-screen numbering the player names against.
+func (l Layout) SettingsSlotActionAt(x, y int) (int, SettingsSlotAction, bool) {
+	startX := 12
+	w := l.LeftWidth - 24
+	for i := 0; i < settingsSlotCount; i++ {
+		rowY := settingsSlotsStartY + i*settingsSlotStride
+		btnY := rowY + settingsSlotNameH
+		if y < btnY || y >= btnY+settingsSlotButtonH {
+			continue
+		}
+		if x < startX || x >= startX+w {
+			return 0, SettingsSlotNone, false
+		}
+		half := w / 2
+		if x < startX+half {
+			return i + 1, SettingsSlotSave, true
+		}
+		return i + 1, SettingsSlotLoad, true
+	}
+	return 0, SettingsSlotNone, false
+}
+
+// SettingsDialogButtonAt returns which half of the settings tab's modal
+// button row the cursor is over: true for the left (confirm) button, false
+// for the right (cancel) button. The row sits at a fixed offset shared by
+// both the naming and overwrite-confirmation dialogs.
+func (l Layout) SettingsDialogButtonAt(x, y int) (bool, bool) {
+	if y < settingsDialogButtonY || y >= settingsDialogButtonY+settingsDialogButtonH {
+		return false, false
+	}
+	startX := 12
+	w := l.LeftWidth - 24
+	if x < startX || x >= startX+w {
+		return false, false
+	}
+	return x < startX+w/2, true
 }

@@ -30,6 +30,11 @@ const (
 type GameState struct {
 	Version int
 
+	// Name is the player-chosen label for a named save slot (see the side
+	// panel's save/load UI). Empty for the single quicksave slot, which
+	// has no name of its own.
+	Name string
+
 	GridWidth  int
 	GridHeight int
 	Tiles      []world.Tile // row-major, length GridWidth*GridHeight
@@ -151,6 +156,22 @@ func Save(path string, state GameState) error {
 		return fmt.Errorf("save: write file: %w", err)
 	}
 	return nil
+}
+
+// PeekName reports the Name and existence of a save file at path without
+// decoding (or version-migrating) the full GameState. Used by the side
+// panel's slot list to show five slots' worth of names every frame without
+// paying the cost of a full unmarshal for each one.
+func PeekName(path string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var partial struct{ Name string }
+	if err := json.Unmarshal(data, &partial); err != nil {
+		return "", false
+	}
+	return partial.Name, true
 }
 
 // Load reads and decodes a previously-saved GameState from path.

@@ -37,16 +37,20 @@ func drawPanel(screen *ebiten.Image, r imageRect, title string) {
 // from image.Rectangle arithmetic and make the intended pixel layout clear.
 type imageRect struct{ x, y, w, h int }
 
-// DrawBuildPanel renders both construction and NPC hiring in the same left
-// panel. A professional card is muted when every matching workplace already
-// has a resident, making the one-worker-per-building limit visible.
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, options []HireOption) {
+// DrawBuildPanel renders construction, NPC hiring and settings in the same
+// left panel. A professional card is muted when every matching workplace
+// already has a resident, making the one-worker-per-building limit visible.
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, options []HireOption, speed economy.Speed, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
 	drawMenuTabs(screen, layout, tab)
-	if tab == HireTab {
+	switch tab {
+	case HireTab:
 		drawHireCards(screen, layout, options)
+		return
+	case SettingsTab:
+		drawSettingsContent(screen, layout, speed, slots, dialog, dialogSlot, dialogText)
 		return
 	}
 	for i, kind := range p.Kinds {
@@ -67,17 +71,110 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 }
 
 func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
-	labels := []string{i18n.T().BuildTab, i18n.T().HireTab}
-	width := (layout.LeftWidth - 30) / 2
+	labels := []string{i18n.T().BuildTab, i18n.T().HireTab, i18n.T().SettingsTab}
 	for i, label := range labels {
-		x := 12 + i*(width+6)
+		x, w := layout.tabRect(i)
 		fill := panelInnerColor
 		if LeftTab(i) == active {
 			fill = selectedColor
 		}
-		vector.FillRect(screen, float32(x), leftTabY, float32(width), leftTabHeight, fill, false)
-		DrawText(screen, label, float64(x+8), float64(leftTabY+7))
+		vector.FillRect(screen, float32(x), leftTabY, float32(w), leftTabHeight, fill, false)
+		DrawText(screen, label, float64(x+4), float64(leftTabY+7))
 	}
+}
+
+// drawSettingsContent renders the settings tab: a live language switch, a
+// speed row mirroring the bottom panel, and the five named save slots -- or,
+// while a modal is open, the naming/overwrite dialog in place of the slot
+// list. See Layout's settings* constants for the shared geometry.
+func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Speed, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
+	t := i18n.T()
+	x := 12
+	w := layout.LeftWidth - 24
+
+	langs := []struct {
+		lang  i18n.Lang
+		label string
+	}{{i18n.RU, "Русский"}, {i18n.EN, "English"}}
+	langSegW := w / 2
+	for i, entry := range langs {
+		bx := x + i*langSegW
+		fill := panelInnerColor
+		if i18n.Current() == entry.lang {
+			fill = selectedColor
+		}
+		vector.FillRect(screen, float32(bx), float32(settingsLangRowY), float32(langSegW-2), float32(settingsLangRowH), fill, false)
+		DrawText(screen, entry.label, float64(bx+6), float64(settingsLangRowY+5))
+	}
+
+	speedLabels := []string{t.SpeedPaused, t.SpeedHalf, t.SpeedNormal, t.SpeedDouble, t.SpeedQuadruple}
+	speedSegW := w / 5
+	for i, label := range speedLabels {
+		bx := x + i*speedSegW
+		fill := panelInnerColor
+		if economy.Speed(i) == speed {
+			fill = selectedColor
+		}
+		vector.FillRect(screen, float32(bx), float32(settingsSpeedRowY), float32(speedSegW-2), float32(settingsSpeedRowH), fill, false)
+		DrawText(screen, label, float64(bx+4), float64(settingsSpeedRowY+8))
+	}
+
+	if dialog != DialogNone {
+		drawSettingsDialog(screen, layout, dialog, dialogSlot, dialogText)
+		return
+	}
+
+	DrawText(screen, t.SaveSlotsLabel, float64(x), float64(settingsSlotsLabelY))
+	for i := 0; i < len(slots) && i < settingsSlotCount; i++ {
+		slot := slots[i]
+		rowY := settingsSlotsStartY + i*settingsSlotStride
+		name := slot.Name
+		if !slot.Occupied {
+			name = t.SlotEmptyLabel
+		}
+		DrawText(screen, fmt.Sprintf("%d. %s", i+1, name), float64(x), float64(rowY))
+
+		btnY := rowY + settingsSlotNameH
+		halfW := w / 2
+		vector.FillRect(screen, float32(x), float32(btnY), float32(halfW-2), float32(settingsSlotButtonH), panelInnerColor, false)
+		DrawText(screen, t.SlotSaveButton, float64(x+4), float64(btnY+5))
+
+		loadFill := panelInnerColor
+		if !slot.Occupied {
+			loadFill = color.RGBA{R: 69, G: 50, B: 48, A: 245}
+		}
+		vector.FillRect(screen, float32(x+halfW), float32(btnY), float32(halfW-2), float32(settingsSlotButtonH), loadFill, false)
+		DrawText(screen, t.SlotLoadButton, float64(x+halfW+4), float64(btnY+5))
+	}
+}
+
+// drawSettingsDialog renders the modal that replaces the slot list while
+// the player is naming a slot or confirming an overwrite. Both dialog kinds
+// share the same button row geometry (see SettingsDialogButtonAt) -- only
+// the title text and the presence of the text field differ.
+func drawSettingsDialog(screen *ebiten.Image, layout Layout, dialog DialogKind, slot int, text string) {
+	t := i18n.T()
+	x := 12
+	w := layout.LeftWidth - 24
+
+	if dialog == DialogConfirmOverwrite {
+		DrawText(screen, fmt.Sprintf(t.SlotOverwritePrompt, slot, text), float64(x), float64(settingsSlotsLabelY))
+		drawDialogButtons(screen, x, w, t.SlotOverwriteButton, t.SlotCancelButton)
+		return
+	}
+
+	DrawText(screen, fmt.Sprintf(t.SlotNamePrompt, slot), float64(x), float64(settingsSlotsLabelY))
+	vector.FillRect(screen, float32(x), float32(settingsDialogFieldY), float32(w), float32(settingsDialogFieldH), panelInnerColor, false)
+	DrawText(screen, text+"_", float64(x+6), float64(settingsDialogFieldY+7))
+	drawDialogButtons(screen, x, w, t.SlotSaveButton, t.SlotCancelButton)
+}
+
+func drawDialogButtons(screen *ebiten.Image, x, w int, leftLabel, rightLabel string) {
+	halfW := w / 2
+	vector.FillRect(screen, float32(x), float32(settingsDialogButtonY), float32(halfW-2), float32(settingsDialogButtonH), selectedColor, false)
+	DrawText(screen, leftLabel, float64(x+8), float64(settingsDialogButtonY+7))
+	vector.FillRect(screen, float32(x+halfW), float32(settingsDialogButtonY), float32(halfW-2), float32(settingsDialogButtonH), panelInnerColor, false)
+	DrawText(screen, rightLabel, float64(x+halfW+8), float64(settingsDialogButtonY+7))
 }
 
 func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {

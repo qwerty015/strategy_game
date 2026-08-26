@@ -2,6 +2,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"image"
 	"log"
 	"sort"
@@ -45,6 +47,13 @@ const (
 	warehouseX, warehouseY = 18, 10
 
 	savePath = "saves/slot1.json"
+
+	// Named save-panel slots (side panel, settings tab) live in their own
+	// files, distinct from the S/L quicksave above, so neither mechanism
+	// can collide with or silently overwrite the other.
+	slotPathFormat = "saves/panel_slot_%d.json"
+	slotCount      = 5
+	maxSlotNameLen = 10 // runes, not bytes -- a Cyrillic name still counts as 10 letters
 
 	defaultTreeSeed            uint32 = 0x4d595df4
 	treeRegrowthMinTicks       int    = 180 // 90 seconds at normal speed
@@ -96,6 +105,17 @@ type Game struct {
 	lastMouseX    int
 	lastMouseY    int
 
+	// Settings tab save/load modal: dialog is DialogNone outside of the
+	// naming/overwrite flow, in which case dialogSlot/dialogText are unused.
+	// slotCache holds the five save-panel slots' names and occupancy, kept
+	// current so the settings tab can redraw it every frame without paying
+	// the cost of reading and parsing five files every frame -- see
+	// refreshSlotCache.
+	dialog     ui.DialogKind
+	dialogSlot int
+	dialogText string
+	slotCache  []ui.SaveSlotInfo
+
 	statusMsg string
 }
 
@@ -135,6 +155,7 @@ func NewGame() *Game {
 		layout:    layout,
 	}
 	game.refreshPopulation()
+	game.refreshSlotCache()
 	return game
 }
 
@@ -144,10 +165,18 @@ func (g *Game) Update() error {
 	}
 	g.handleCameraPan()
 	g.handleCameraZoom()
-	g.handlePaletteSelect()
-	g.handleMouse()
-	g.handleUnitActions()
-	g.handleSaveLoad()
+
+	// While the settings tab's save/load modal is open, it owns every key
+	// and click: typing a name must not also select a build-palette item
+	// (digit keys), hire a serf (H), or delete the current selection.
+	if g.dialog != ui.DialogNone {
+		g.handleDialogInput()
+	} else {
+		g.handlePaletteSelect()
+		g.handleMouse()
+		g.handleUnitActions()
+		g.handleSaveLoad()
+	}
 
 	for range g.sim.Advance() {
 		for _, b := range g.buildings {
@@ -220,7 +249,7 @@ func (g *Game) Update() error {
 		g.refreshPopulation()
 	}
 
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+	if g.dialog == ui.DialogNone && inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		return ebiten.Termination
 	}
 	return nil
@@ -495,7 +524,8 @@ func (g *Game) handleMouse() {
 		g.statusMsg = ""
 		return
 	}
-	if g.leftTab == ui.HireTab {
+	switch g.leftTab {
+	case ui.HireTab:
 		options := g.hireOptions()
 		if index, ok := g.layout.HireIndexAt(mx, my, len(options)); ok {
 			if index < len(options) && options[index].Available {
@@ -503,11 +533,26 @@ func (g *Game) handleMouse() {
 			}
 			return
 		}
-	} else if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds)); ok {
-		g.palette.Select(index)
-		g.buildMode = true
-		g.statusMsg = ""
-		return
+	case ui.SettingsTab:
+		if lang, ok := g.layout.SettingsLangAt(mx, my); ok {
+			i18n.SetLang(lang)
+			return
+		}
+		if speed, ok := g.layout.SettingsSpeedAt(mx, my); ok {
+			g.sim.SetSpeed(speed)
+			return
+		}
+		if slot, action, ok := g.layout.SettingsSlotActionAt(mx, my); ok {
+			g.handleSettingsSlotAction(slot, action)
+			return
+		}
+	default:
+		if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds)); ok {
+			g.palette.Select(index)
+			g.buildMode = true
+			g.statusMsg = ""
+			return
+		}
 	}
 	if speed, ok := g.layout.SpeedAt(mx, my); ok {
 		g.sim.SetSpeed(speed)
@@ -781,133 +826,307 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 
 func (g *Game) handleSaveLoad() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyS) {
-		state := save.GameState{
-			GridWidth:          g.grid.Width,
-			GridHeight:         g.grid.Height,
-			Tiles:              g.grid.Tiles(),
-			Buildings:          dereferenceBuildings(g.buildings),
-			Stockpile:          *g.stock,
-			Population:         *g.pop,
-			Units:              g.serializeUnits(),
-			BuildingPriority:   g.serializeBuildingPriorities(),
-			TreeRegrowth:       g.serializeTreeRegrowth(),
-			TreeSeed:           g.treeSeed,
-			FishRegrowth:       g.serializeFishRegrowth(),
-			FishSeed:           g.fishSeed,
-			SerfMealSeed:       g.logi.MealSeed(),
-			VillagerMealSeed:   g.vills.MealSeed(),
-			LumberjackMealSeed: g.jacks.MealSeed(),
-			FishermanMealSeed:  g.fishers.MealSeed(),
-			CameraX:            g.camera.X,
-			CameraY:            g.camera.Y,
-			CameraZoom:         g.camera.Scale,
-		}
-		if err := save.Save(savePath, state); err != nil {
+		if err := g.saveGame(savePath, ""); err != nil {
 			g.statusMsg = i18n.T().SaveFailedPrefix + err.Error()
-			return
+		} else {
+			g.statusMsg = i18n.T().Saved
 		}
-		g.statusMsg = i18n.T().Saved
 	}
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyL) {
-		state, err := save.Load(savePath)
-		if err != nil {
-			g.statusMsg = i18n.T().LoadFailedPrefix + err.Error()
-			return
-		}
-		grid, err := world.NewGridFromTiles(state.GridWidth, state.GridHeight, state.Tiles)
-		if err != nil {
-			g.statusMsg = i18n.T().LoadFailedPrefix + err.Error()
-			return
-		}
-		buildings := referenceBuildings(state.Buildings)
-		buildings, hadTrees := ensureTrees(grid, buildings, len(state.TreeRegrowth) > 0)
-		buildings, _ = ensureFish(grid, buildings, len(state.FishRegrowth) > 0)
-		warehouse := findWarehouse(buildings)
-		if warehouse == nil {
-			g.statusMsg = i18n.T().LoadFailedNoWarehouse
-			return
-		}
+		g.loadAndReport(savePath)
+	}
+}
 
-		g.grid = grid
-		g.buildings = buildings
-		stock := state.Stockpile
-		// Older saves carried the temporary 200-unit limit. The town rule is
-		// now explicit: every warehouse shares an unlimited stockpile.
-		stock.Capacity = 0
-		g.stock = &stock
-		pop := state.Population
-		g.pop = &pop
-		g.treeRegrowth = restoreTreeRegrowth(state.TreeRegrowth)
-		g.treeSeed = state.TreeSeed
-		if g.treeSeed == 0 {
-			g.treeSeed = defaultTreeSeed
-		}
-		g.fishRegrowth = restoreFishRegrowth(state.FishRegrowth)
-		g.fishSeed = state.FishSeed
-		if g.fishSeed == 0 {
-			g.fishSeed = defaultFishSeed
-		}
-		g.camera.X, g.camera.Y = state.CameraX, state.CameraY
-		if !hadTrees && g.camera.X == 0 {
-			// Old saves were usually made from the original left-aligned view;
-			// keep the newly migrated grove visible after the first load too.
-			g.camera.X = float64(4 * render.TileSize)
-		}
-		g.camera.Scale = state.CameraZoom
-		if g.camera.Scale <= 0 {
-			g.camera.Scale = 1
-		}
-		mapRect := g.layout.MapRect()
-		g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
-		g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
-		g.selection.Clear()
+// slotPath returns the file path for save-panel slot n (1-slotCount). It is
+// deliberately distinct from savePath, the S/L quicksave file, so the two
+// save mechanisms never collide.
+func slotPath(n int) string {
+	return fmt.Sprintf(slotPathFormat, n)
+}
 
-		// Jobs are rebuilt from the saved positions. The roster itself is
-		// restored, so hiring extra serfs or saving a worker halfway to the
-		// Tavern no longer silently resets the town.
-		g.logi = logistics.NewController(warehouse, 0)
+// refreshSlotCache re-reads every save-panel slot's name and occupancy. It
+// is not called every frame -- only on startup and right after a save-panel
+// save -- so drawing the settings tab never has to touch disk.
+func (g *Game) refreshSlotCache() {
+	infos := make([]ui.SaveSlotInfo, slotCount)
+	for i := 0; i < slotCount; i++ {
+		name, ok := save.PeekName(slotPath(i + 1))
+		infos[i] = ui.SaveSlotInfo{Name: name, Occupied: ok}
+	}
+	g.slotCache = infos
+}
+
+// handleSettingsSlotAction executes a click on a save-panel slot's Save or
+// Load button. Saving into an occupied slot opens a confirmation dialog
+// instead of overwriting immediately; saving into an empty slot goes
+// straight to naming. Loading an empty slot does nothing -- its Load button
+// is drawn muted for the same reason.
+func (g *Game) handleSettingsSlotAction(slot int, action ui.SettingsSlotAction) {
+	if slot < 1 || slot > slotCount {
+		return
+	}
+	info := g.slotCache[slot-1]
+	switch action {
+	case ui.SettingsSlotSave:
+		g.dialogSlot = slot
+		if info.Occupied {
+			g.dialog = ui.DialogConfirmOverwrite
+			g.dialogText = info.Name
+		} else {
+			g.dialog = ui.DialogNaming
+			g.dialogText = ""
+		}
+	case ui.SettingsSlotLoad:
+		if !info.Occupied {
+			return
+		}
+		g.loadAndReport(slotPath(slot))
+	}
+}
+
+// handleDialogInput runs instead of the normal input handlers while a
+// settings-tab save/load modal is open (see Update).
+func (g *Game) handleDialogInput() {
+	switch g.dialog {
+	case ui.DialogConfirmOverwrite:
+		g.handleConfirmOverwriteInput()
+	case ui.DialogNaming:
+		g.handleNamingInput()
+	}
+}
+
+func (g *Game) handleConfirmOverwriteInput() {
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.dialog = ui.DialogNone
+		return
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
+		g.dialog = ui.DialogNaming
+		return
+	}
+	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		return
+	}
+	mx, my := ebiten.CursorPosition()
+	if left, ok := g.layout.SettingsDialogButtonAt(mx, my); ok {
+		if left {
+			g.dialog = ui.DialogNaming
+		} else {
+			g.dialog = ui.DialogNone
+		}
+	}
+}
+
+// handleNamingInput builds up g.dialogText from typed characters (capped at
+// maxSlotNameLen runes, so a Cyrillic name still counts letters and not
+// UTF-8 bytes), then commits or cancels the save on Enter/Escape or a click
+// on the dialog's buttons.
+func (g *Game) handleNamingInput() {
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.dialog = ui.DialogNone
+		return
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
+		if r := []rune(g.dialogText); len(r) > 0 {
+			g.dialogText = string(r[:len(r)-1])
+		}
+	}
+	for _, ch := range ebiten.AppendInputChars(nil) {
+		if ch < ' ' {
+			continue
+		}
+		if len([]rune(g.dialogText)) >= maxSlotNameLen {
+			break
+		}
+		g.dialogText += string(ch)
+	}
+
+	commit := inpututil.IsKeyJustPressed(ebiten.KeyEnter)
+	cancel := false
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		mx, my := ebiten.CursorPosition()
+		if left, ok := g.layout.SettingsDialogButtonAt(mx, my); ok {
+			if left {
+				commit = true
+			} else {
+				cancel = true
+			}
+		}
+	}
+	if cancel {
+		g.dialog = ui.DialogNone
+		return
+	}
+	if commit {
+		g.commitDialogSave()
+	}
+}
+
+// commitDialogSave saves the current game into g.dialogSlot under the typed
+// name, falling back to "Слот N" when the player accepted an empty name.
+func (g *Game) commitDialogSave() {
+	name := g.dialogText
+	if name == "" {
+		name = fmt.Sprintf("%s %d", i18n.T().SlotDefaultName, g.dialogSlot)
+	}
+	if err := g.saveGame(slotPath(g.dialogSlot), name); err != nil {
+		g.statusMsg = i18n.T().SaveFailedPrefix + err.Error()
+	} else {
+		g.statusMsg = i18n.T().Saved
+		g.refreshSlotCache()
+	}
+	g.dialog = ui.DialogNone
+}
+
+// buildSaveState assembles the full serializable snapshot of the running
+// game, shared by every save path (quicksave and every named slot).
+func (g *Game) buildSaveState(name string) save.GameState {
+	return save.GameState{
+		Name:               name,
+		GridWidth:          g.grid.Width,
+		GridHeight:         g.grid.Height,
+		Tiles:              g.grid.Tiles(),
+		Buildings:          dereferenceBuildings(g.buildings),
+		Stockpile:          *g.stock,
+		Population:         *g.pop,
+		Units:              g.serializeUnits(),
+		BuildingPriority:   g.serializeBuildingPriorities(),
+		TreeRegrowth:       g.serializeTreeRegrowth(),
+		TreeSeed:           g.treeSeed,
+		FishRegrowth:       g.serializeFishRegrowth(),
+		FishSeed:           g.fishSeed,
+		SerfMealSeed:       g.logi.MealSeed(),
+		VillagerMealSeed:   g.vills.MealSeed(),
+		LumberjackMealSeed: g.jacks.MealSeed(),
+		FishermanMealSeed:  g.fishers.MealSeed(),
+		CameraX:            g.camera.X,
+		CameraY:            g.camera.Y,
+		CameraZoom:         g.camera.Scale,
+	}
+}
+
+func (g *Game) saveGame(path, name string) error {
+	return save.Save(path, g.buildSaveState(name))
+}
+
+// loadGame reads and restores a full game snapshot from path, replacing
+// every controller, the grid, and the stockpile in place. Used by both the
+// S/L quicksave keys and the settings tab's per-slot Load button.
+func (g *Game) loadGame(path string) error {
+	state, err := save.Load(path)
+	if err != nil {
+		return err
+	}
+	grid, err := world.NewGridFromTiles(state.GridWidth, state.GridHeight, state.Tiles)
+	if err != nil {
+		return err
+	}
+	buildings := referenceBuildings(state.Buildings)
+	buildings, hadTrees := ensureTrees(grid, buildings, len(state.TreeRegrowth) > 0)
+	buildings, _ = ensureFish(grid, buildings, len(state.FishRegrowth) > 0)
+	warehouse := findWarehouse(buildings)
+	if warehouse == nil {
+		return errNoWarehouseInSave
+	}
+
+	g.grid = grid
+	g.buildings = buildings
+	stock := state.Stockpile
+	// Older saves carried the temporary 200-unit limit. The town rule is
+	// now explicit: every warehouse shares an unlimited stockpile.
+	stock.Capacity = 0
+	g.stock = &stock
+	pop := state.Population
+	g.pop = &pop
+	g.treeRegrowth = restoreTreeRegrowth(state.TreeRegrowth)
+	g.treeSeed = state.TreeSeed
+	if g.treeSeed == 0 {
+		g.treeSeed = defaultTreeSeed
+	}
+	g.fishRegrowth = restoreFishRegrowth(state.FishRegrowth)
+	g.fishSeed = state.FishSeed
+	if g.fishSeed == 0 {
+		g.fishSeed = defaultFishSeed
+	}
+	g.camera.X, g.camera.Y = state.CameraX, state.CameraY
+	if !hadTrees && g.camera.X == 0 {
+		// Old saves were usually made from the original left-aligned view;
+		// keep the newly migrated grove visible after the first load too.
+		g.camera.X = float64(4 * render.TileSize)
+	}
+	g.camera.Scale = state.CameraZoom
+	if g.camera.Scale <= 0 {
+		g.camera.Scale = 1
+	}
+	mapRect := g.layout.MapRect()
+	g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
+	g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
+	g.selection.Clear()
+
+	// Jobs are rebuilt from the saved positions. The roster itself is
+	// restored, so hiring extra serfs or saving a worker halfway to the
+	// Tavern no longer silently resets the town.
+	g.logi = logistics.NewController(warehouse, 0)
+	for _, b := range buildings {
+		if b.Kind == building.Warehouse && b != warehouse {
+			g.logi.AddWarehouse(b)
+		}
+	}
+	g.vills = villagers.NewController()
+	g.jacks = lumberjack.NewController()
+	g.fishers = fishing.NewController()
+	if len(state.Units) == 0 {
+		// Saves from before unit persistence did not contain a roster.
+		// Keep those saves playable with the old sensible defaults.
+		g.logi = logistics.NewController(warehouse, startingSerfs)
 		for _, b := range buildings {
 			if b.Kind == building.Warehouse && b != warehouse {
 				g.logi.AddWarehouse(b)
 			}
 		}
-		g.vills = villagers.NewController()
-		g.jacks = lumberjack.NewController()
-		g.fishers = fishing.NewController()
-		if len(state.Units) == 0 {
-			// Saves from before unit persistence did not contain a roster.
-			// Keep those saves playable with the old sensible defaults.
-			g.logi = logistics.NewController(warehouse, startingSerfs)
-			for _, b := range buildings {
-				if b.Kind == building.Warehouse && b != warehouse {
-					g.logi.AddWarehouse(b)
-				}
-			}
-			for _, b := range buildings {
-				g.spawnWorkersFor(b)
-			}
-		} else {
-			g.restoreUnits(state.Units, buildings)
+		for _, b := range buildings {
+			g.spawnWorkersFor(b)
 		}
-		if state.SerfMealSeed != 0 {
-			g.logi.SetMealSeed(state.SerfMealSeed)
-		}
-		if state.VillagerMealSeed != 0 {
-			g.vills.SetMealSeed(state.VillagerMealSeed)
-		}
-		if state.LumberjackMealSeed != 0 {
-			g.jacks.SetMealSeed(state.LumberjackMealSeed)
-		}
-		if state.FishermanMealSeed != 0 {
-			g.fishers.SetMealSeed(state.FishermanMealSeed)
-		}
-		for _, p := range state.BuildingPriority {
-			g.logi.SetPriority(p.Kind, p.Level)
-		}
-		g.refreshPopulation()
+	} else {
+		g.restoreUnits(state.Units, buildings)
+	}
+	if state.SerfMealSeed != 0 {
+		g.logi.SetMealSeed(state.SerfMealSeed)
+	}
+	if state.VillagerMealSeed != 0 {
+		g.vills.SetMealSeed(state.VillagerMealSeed)
+	}
+	if state.LumberjackMealSeed != 0 {
+		g.jacks.SetMealSeed(state.LumberjackMealSeed)
+	}
+	if state.FishermanMealSeed != 0 {
+		g.fishers.SetMealSeed(state.FishermanMealSeed)
+	}
+	for _, p := range state.BuildingPriority {
+		g.logi.SetPriority(p.Kind, p.Level)
+	}
+	g.refreshPopulation()
 
+	return nil
+}
+
+// errNoWarehouseInSave marks the one load failure with its own dedicated,
+// already-fully-worded i18n string (LoadFailedNoWarehouse) instead of the
+// generic "load failed: <err>" composition -- see loadAndReport.
+var errNoWarehouseInSave = errors.New("no warehouse in save")
+
+// loadAndReport calls loadGame and sets statusMsg to describe the outcome,
+// exactly like the S/L quicksave keys and the settings tab's per-slot Load
+// button both need.
+func (g *Game) loadAndReport(path string) {
+	switch err := g.loadGame(path); {
+	case err == nil:
 		g.statusMsg = i18n.T().Loaded
+	case errors.Is(err, errNoWarehouseInSave):
+		g.statusMsg = i18n.T().LoadFailedNoWarehouse
+	default:
+		g.statusMsg = i18n.T().LoadFailedPrefix + err.Error()
 	}
 }
 
@@ -1547,7 +1766,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 	ui.DrawResourceBarAt(screen, g.stock, g.pop, float64(g.layout.LeftWidth+16), 10)
-	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions())
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions(), g.sim.Speed(), g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
 	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, occupants, showPriority, priorityLevel)
 	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
 	ui.DrawSpeedPanel(screen, g.layout, g.sim.Speed())

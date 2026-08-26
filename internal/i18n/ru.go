@@ -43,6 +43,7 @@ func init() {
 		BuildMenuTitle: "Строительство",
 		BuildTab:       "Стройка",
 		HireTab:        "Юниты",
+		SettingsTab:    "Опции",
 		InspectorTitle: "Сведения",
 		InspectorHint:  "Выберите здание или юнита",
 		SpeedTitle:     "Скорость",
@@ -107,5 +108,15 @@ func init() {
 		Saved:                 "Сохранено.",
 		Loaded:                "Загружено.",
 		LoadFailedNoWarehouse: "Не удалось загрузить: в сохранении нет склада",
+
+		SaveSlotsLabel:      "Сохранения",
+		SlotEmptyLabel:      "— пусто —",
+		SlotSaveButton:      "Сохранить",
+		SlotLoadButton:      "Загрузить",
+		SlotNamePrompt:      "Название слота %d:",
+		SlotOverwritePrompt: "Слот %d занят («%s»). Перезаписать?",
+		SlotOverwriteButton: "Перезаписать",
+		SlotCancelButton:    "Отмена",
+		SlotDefaultName:     "Слот",
 	})
 }

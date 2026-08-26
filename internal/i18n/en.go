@@ -43,6 +43,7 @@ func init() {
 		BuildMenuTitle: "Build",
 		BuildTab:       "Build",
 		HireTab:        "Hire",
+		SettingsTab:    "Options",
 		InspectorTitle: "Inspector",
 		InspectorHint:  "Select a building or unit",
 		SpeedTitle:     "Speed",
@@ -107,5 +108,15 @@ func init() {
 		Saved:                 "Saved.",
 		Loaded:                "Loaded.",
 		LoadFailedNoWarehouse: "Load failed: save has no warehouse",
+
+		SaveSlotsLabel:      "Save slots",
+		SlotEmptyLabel:      "— empty —",
+		SlotSaveButton:      "Save",
+		SlotLoadButton:      "Load",
+		SlotNamePrompt:      "Name for slot %d:",
+		SlotOverwritePrompt: "Slot %d is occupied (\"%s\"). Overwrite?",
+		SlotOverwriteButton: "Overwrite",
+		SlotCancelButton:    "Cancel",
+		SlotDefaultName:     "Slot",
 	})
 }

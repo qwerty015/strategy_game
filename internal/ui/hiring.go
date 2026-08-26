@@ -8,6 +8,7 @@ type LeftTab int
 const (
 	BuildTab LeftTab = iota
 	HireTab
+	SettingsTab
 )
 
 // HireKind identifies a unit the player may add through the hire tab.

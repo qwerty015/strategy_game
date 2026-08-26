@@ -128,6 +128,28 @@ func TestLoad_MigratesV1HungerToSatietyScale(t *testing.T) {
 	}
 }
 
+// TestPeekName covers the side panel's slot-list use case: reading a save's
+// Name without paying for a full versioned Load, and correctly reporting
+// "not occupied" for a path that has never been saved to.
+func TestPeekName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "panel_slot_1.json")
+	if err := Save(path, GameState{Name: "Моя деревня", GridWidth: 1, GridHeight: 1, Tiles: []world.Tile{{}}}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	name, ok := PeekName(path)
+	if !ok {
+		t.Fatal("PeekName() ok = false for a file that was just saved")
+	}
+	if name != "Моя деревня" {
+		t.Errorf("PeekName() name = %q, want %q", name, "Моя деревня")
+	}
+
+	if _, ok := PeekName(filepath.Join(t.TempDir(), "never_saved.json")); ok {
+		t.Error("PeekName() ok = true for a path that was never saved to")
+	}
+}
+
 // writeVersion patches the Version field of an already-saved file in
 // place, to simulate loading a save from a mismatched format version.
 func writeVersion(t *testing.T, path string, version int) {

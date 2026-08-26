@@ -33,6 +33,7 @@ type Catalog struct {
 	BuildMenuTitle string
 	BuildTab       string
 	HireTab        string
+	SettingsTab    string
 	InspectorTitle string
 	InspectorHint  string
 	SpeedTitle     string
@@ -97,6 +98,16 @@ type Catalog struct {
 	Saved                 string
 	Loaded                string
 	LoadFailedNoWarehouse string
+
+	SaveSlotsLabel      string
+	SlotEmptyLabel      string
+	SlotSaveButton      string
+	SlotLoadButton      string
+	SlotNamePrompt      string // formatted with the slot number
+	SlotOverwritePrompt string // formatted with the slot number and its existing name
+	SlotOverwriteButton string
+	SlotCancelButton    string
+	SlotDefaultName     string // fallback base name when a slot is saved with an empty typed name
 }
 
 var catalogs = map[Lang]Catalog{}
