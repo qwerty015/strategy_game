@@ -63,7 +63,7 @@ const (
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the
-// GameState.Buildings slice for farmers and bakers; serfs use -1. State is
+// GameState.Buildings slice for farmers, bakers and winemakers; serfs use -1. State is
 // currently meaningful for villagers, whose route can be rebuilt after load.
 type UnitState struct {
 	Kind        UnitKind

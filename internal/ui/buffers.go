@@ -31,7 +31,7 @@ func DrawBufferLevels(screen *ebiten.Image, buildings []*building.Building, cam 
 		switch {
 		case hasInputs && hasOutput:
 			line = fmt.Sprintf("%d→%d", bufferTotal(b.InputBuffer), bufferTotal(b.OutputBuffer))
-		case hasInputs: // Tavern: only ever draws down its Bread input
+		case hasInputs: // Tavern: draws down its accepted food inputs
 			line = fmt.Sprintf("%d", bufferTotal(b.InputBuffer))
 		case isLumberjackHut:
 			line = fmt.Sprintf("%d", bufferTotal(b.OutputBuffer))

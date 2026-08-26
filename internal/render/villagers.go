@@ -25,9 +25,10 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 			continue
 		}
 		frames := assets.Farmer
-		if v.Profession == villagers.Baker {
+		switch v.Profession {
+		case villagers.Baker:
 			frames = assets.Baker
-		} else if v.Profession == villagers.Winemaker {
+		case villagers.Winemaker:
 			frames = assets.Winemaker
 		}
 

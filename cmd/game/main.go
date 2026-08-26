@@ -46,9 +46,9 @@ const (
 	savePath = "saves/slot1.json"
 
 	defaultTreeSeed            uint32 = 0x4d595df4
-	treeRegrowthMinTicks              = 180 // 90 seconds at normal speed
-	treeRegrowthVariationTicks        = 180 // total wait is about 90–180 seconds
-	treeRegrowthRetryTicks            = 30  // retry every 15 seconds if the map is full
+	treeRegrowthMinTicks       int    = 180 // 90 seconds at normal speed
+	treeRegrowthVariationTicks int    = 180 // total wait is about 90–180 seconds
+	treeRegrowthRetryTicks     int    = 30  // retry every 15 seconds if the map is full
 )
 
 type treeRegrowth struct {
@@ -194,9 +194,9 @@ func (g *Game) resizeLayout(width, height int) {
 // production instead of quietly progressing an empty building. This is
 // deliberately NOT the same as Villager.Starving: a worker who's merely
 // hungry but still standing at home (e.g. because the Tavern has no
-// Bread yet) keeps working. Gating production on Starving too would
+// food yet) keeps working. Gating production on Starving too would
 // deadlock a fresh town's very first production cycle -- the Tavern
-// can't get Bread until the Bakery makes some, and the Bakery can't
+// can't get food until the Bakery makes some, and the Bakery can't
 // work while "starving".
 func (g *Game) starvingBuildings() map[*building.Building]bool {
 	m := make(map[*building.Building]bool, len(g.vills.Villagers)+len(g.jacks.Lumberjacks))
@@ -601,11 +601,14 @@ func (g *Game) serializeUnits() []save.UnitState {
 		})
 	}
 	for _, v := range g.vills.Villagers {
-		kind := save.UnitFarmer
-		if v.Profession == villagers.Baker {
+		var kind save.UnitKind
+		switch v.Profession {
+		case villagers.Baker:
 			kind = save.UnitBaker
-		} else if v.Profession == villagers.Winemaker {
+		case villagers.Winemaker:
 			kind = save.UnitWinemaker
+		default:
+			kind = save.UnitFarmer
 		}
 		units = append(units, save.UnitState{
 			Kind:        kind,
@@ -633,6 +636,7 @@ func (g *Game) serializeUnits() []save.UnitState {
 			WorkTicks:   j.WorkTicks(),
 			Cargo:       resource.Log,
 			CargoAmount: cargoAmount,
+			Meal:        j.Meal(),
 		})
 	}
 	return units
@@ -648,11 +652,14 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				continue
 			}
 			home := buildings[state.HomeIndex]
-			profession := villagers.Farmer
-			if state.Kind == save.UnitBaker {
+			var profession villagers.Profession
+			switch state.Kind {
+			case save.UnitBaker:
 				profession = villagers.Baker
-			} else if state.Kind == save.UnitWinemaker {
+			case save.UnitWinemaker:
 				profession = villagers.Winemaker
+			default:
+				profession = villagers.Farmer
 			}
 			if (profession == villagers.Farmer && home.Kind != building.Farm) ||
 				(profession == villagers.Baker && home.Kind != building.Bakery) ||
@@ -668,7 +675,7 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.Tree {
 				target = buildings[state.TargetIndex]
 			}
-			g.jacks.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, lumberjack.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings)
+			g.jacks.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, lumberjack.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
 		}
 	}
 }
@@ -781,7 +788,7 @@ func (g *Game) cutTree(tree *building.Building) {
 
 func (g *Game) scheduleTreeRegrowth() {
 	seed := g.nextTreeSeed()
-	target := treeRegrowthMinTicks + int(seed%treeRegrowthVariationTicks)
+	target := treeRegrowthMinTicks + int(seed%uint32(treeRegrowthVariationTicks))
 	g.treeRegrowth = append(g.treeRegrowth, treeRegrowth{target: target, seed: seed})
 }
 

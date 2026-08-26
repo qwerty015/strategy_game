@@ -76,6 +76,39 @@ func TestLumberjack_EatsAtNearestReachableTavern(t *testing.T) {
 	}
 }
 
+// TestController_RestoreKeepsSavedMeal covers a save made while a lumberjack
+// is walking to a Tavern that has wine but no bread. The meal type must remain
+// wine after route reconstruction; otherwise arrival incorrectly reports the
+// worker as starving.
+func TestController_RestoreKeepsSavedMeal(t *testing.T) {
+	grid := world.NewGrid(8, 3)
+	hut := &building.Building{Kind: building.LumberjackHut, X: 0, Y: 1}
+	tavern := &building.Building{Kind: building.Tavern, X: 4, Y: 1}
+	tavern.AddInput(resource.Wine, 1)
+	buildings := []*building.Building{hut, tavern}
+
+	controller := NewController()
+	jack := controller.Restore(hut, 0, 1, HungerInterval, false, StateToTavern, nil, 0, 0, grid, buildings, resource.Wine)
+	if jack.Meal() != resource.Wine {
+		t.Fatalf("restored meal = %v, want wine", jack.Meal())
+	}
+
+	for range 20 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if jack.HungerTicks() == 0 {
+			break
+		}
+	}
+	if jack.HungerTicks() != 0 {
+		t.Fatal("restored lumberjack did not eat the saved wine")
+	}
+	if got := tavern.InputBuffer[resource.Wine]; got != 0 {
+		t.Fatalf("tavern Wine = %d, want 0 after the meal", got)
+	}
+}
+
 func TestLumberjackCutsNearestTreeAndStoresLogAtHut(t *testing.T) {
 	grid := world.NewGrid(12, 4)
 	hut := &building.Building{Kind: building.LumberjackHut, X: 0, Y: 0}

@@ -79,7 +79,7 @@ func (l *Ledger) AvailableOutput(b *building.Building, t resource.Type) int {
 }
 
 // AvailableInput is the same idea for a building that gets consumed from
-// directly rather than hauled onward (the Tavern's Bread).
+// directly rather than hauled onward (the Tavern's food).
 func (l *Ledger) AvailableInput(b *building.Building, t resource.Type) int {
 	return b.InputBuffer[t] - l.pickup[b][t]
 }

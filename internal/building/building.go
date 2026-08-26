@@ -33,11 +33,10 @@ const (
 	// of Road tiles can't be serviced. See package pathfind.
 	Road
 
-	// Tavern is where villagers (serfs, farmers, bakers -- see package
-	// villagers) go to eat. Like Warehouse it has no Recipe.Output (it
-	// produces nothing), but it does declare Recipe.Inputs so the
-	// logistics system knows to keep it stocked with Bread the same way
-	// it stocks any other consumer -- see Types[Tavern].
+	// Tavern is where villagers (serfs, farmers, bakers and winemakers -- see
+	// package villagers) go to eat. Like Warehouse it has no Recipe.Output (it
+	// produces nothing), but it declares an accepted menu so logistics can
+	// keep it stocked with any available food -- see Types[Tavern].
 	Tavern
 
 	// Tree is a world object rather than a player-buildable structure. It
@@ -123,8 +122,8 @@ func (t Type) CanBuildOn(tile world.Tile) bool {
 // purpose: a producer with a full OutputBuffer pauses production until a
 // serf clears space, which is what makes logistics (roads + serfs)
 // matter instead of being invisible plumbing. 6 matches the reference
-// the user asked to follow (wheat at farm/mill, flour at mill/bakery,
-// bread at bakery/tavern -- 6 each; only the Warehouse is unlimited).
+// the user asked to follow (wheat/flour/bread and other ordinary production
+// buffers hold 6 each; only the Warehouse is unlimited).
 const BufferCapacity = 6
 
 // Building is a placed instance of a Type on the grid.

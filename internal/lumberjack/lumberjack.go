@@ -102,11 +102,16 @@ func (c *Controller) Spawn(home *building.Building) *Lumberjack {
 }
 
 // Restore recreates a lumberjack while preserving position, hunger, cargo,
-// and the current work state. Routes are rebuilt from the saved tile because
-// transient path slices are intentionally not part of the JSON format.
-func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, starving bool, state State, target *building.Building, workTicks, cargo int, grid *world.Grid, buildings []*building.Building) *Lumberjack {
+// the selected meal and the current work state. Routes are rebuilt from the
+// saved tile because transient path slices are intentionally not part of the
+// JSON format. savedMeal is variadic so older callers that do not have the
+// field can keep using the previous signature; new saves pass UnitState.Meal.
+func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, starving bool, state State, target *building.Building, workTicks, cargo int, grid *world.Grid, buildings []*building.Building, savedMeal ...resource.Type) *Lumberjack {
 	j := NewLumberjack(home)
 	j.X, j.Y = x, y
+	if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
+		j.meal = savedMeal[0]
+	}
 	if hungerTicks < 0 {
 		hungerTicks = 0
 	}
@@ -144,7 +149,9 @@ func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, sta
 		if tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: x, Y: y}, nil); ok {
 			j.setPath(path)
 			j.tavern = tavern
-			j.meal = meal
+			if len(savedMeal) == 0 || !resource.IsFood(savedMeal[0]) {
+				j.meal = meal
+			}
 			j.state = StateToTavern
 		}
 	case StateToHomeAfterMeal:
@@ -202,6 +209,9 @@ func (j *Lumberjack) TargetTree() *building.Building { return j.target }
 // Cargo returns the number of Logs currently carried.
 func (j *Lumberjack) Cargo() (resource.Type, int) { return resource.Log, j.cargo }
 
+// Meal returns the food reserved for the current or next Tavern trip.
+func (j *Lumberjack) Meal() resource.Type { return j.meal }
+
 // HungerTicks returns simulation ticks since the last meal.
 func (j *Lumberjack) HungerTicks() int { return j.hungerTick }
 
@@ -236,7 +246,7 @@ func (c *Controller) Reserve(ledger *reservations.Ledger) {
 // will actually try to eat this tick (idle, not carrying a log, and
 // HungerTicks >= HungerInterval), or -1 if none will. cmd/game compares
 // this against the other unit controllers' MaxWaitingHunger to decide
-// whose Tick runs first this simulation tick when the Tavern's Bread is
+// whose Tick runs first this simulation tick when the Tavern's food is
 // scarce -- the unit that's been waiting longest gets first claim,
 // instead of whichever controller happens to be first in a fixed call
 // order.

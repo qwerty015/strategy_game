@@ -26,7 +26,7 @@
 // building's) current position has actually been checked via pathfind.
 // Every job search tries every candidate in turn rather than stopping at
 // the first match by buffer contents alone, and picks the nearest
-// reachable one where more than one qualifies (see nearestTavernWithBread,
+// reachable one where more than one qualifies (see nearestTavernWithFood,
 // nearestReachableWarehouse) -- see docs/DEVELOPMENT.md's "Job queue
 // rules" section for the full writeup.
 package logistics
@@ -279,7 +279,7 @@ func (c *Controller) Reserve(ledger *reservations.Ledger) {
 // will actually try to eat this tick (HungerTicks >= HungerInterval), or
 // -1 if none will. cmd/game compares this against the other unit
 // controllers' MaxWaitingHunger to decide whose Tick runs first this
-// simulation tick when the Tavern's Bread is scarce -- the unit that's
+// simulation tick when the Tavern's food is scarce -- the unit that's
 // been waiting longest gets first claim, instead of whichever controller
 // happens to be first in a fixed call order.
 //
@@ -395,7 +395,7 @@ func nearestReachableWarehouseTo(buildings []*building.Building, candidates []*b
 // stocked Tavern instead of taking a new haul job. Hunger only ever
 // interrupts a serf between jobs, never mid-haul. If the serf is hungry
 // but there's nowhere to actually go (no Tavern yet, none reachable, or
-// all of them out of Bread once other units' claims are accounted for),
+// all of them out of food once other units' claims are accounted for),
 // it's marked Starving but keeps hauling anyway -- refusing to work would
 // cripple the whole economy before a Tavern even exists, which is a
 // worse outcome than a hungry serf.

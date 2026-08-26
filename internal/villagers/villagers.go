@@ -243,7 +243,7 @@ func (c *Controller) Reserve(ledger *reservations.Ledger) {
 // will actually try to eat this tick (working and HungerTicks >=
 // HungerInterval), or -1 if none will. cmd/game compares this against the
 // other unit controllers' MaxWaitingHunger to decide whose Tick runs
-// first this simulation tick when the Tavern's Bread is scarce -- the
+// first this simulation tick when the Tavern's food is scarce -- the
 // unit that's been waiting longest gets first claim, instead of
 // whichever controller happens to be first in a fixed call order.
 //
@@ -381,7 +381,7 @@ func tickWalking(v *Villager, buildings []*building.Building) {
 		if tavern.TakeInput(v.meal, 1) {
 			v.ticksSinceMeal = 0
 		}
-		// Whether or not there was still bread by the time we arrived,
+		// Whether or not there was still food by the time we arrived,
 		// head home -- retrying immediately would just loop in place.
 		if path, ok := pathfind.FindPath(buildings, tavern, v.Home); ok {
 			v.path, v.pathIdx, v.tileTicks = path, 0, 0

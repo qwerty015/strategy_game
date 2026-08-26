@@ -72,7 +72,12 @@ var Types = map[Kind]Type{
 			// TicksToProduce: 0 means economy.Tick skips it (it makes
 			// nothing) -- but logistics still reads the accepted menu to
 			// keep the Tavern stocked. Every food type is equally valid.
-			Inputs: map[resource.Type]int{resource.Bread: BufferCapacity},
+			Inputs: map[resource.Type]int{
+				resource.Bread:   BufferCapacity,
+				resource.Fish:    BufferCapacity,
+				resource.Wine:    BufferCapacity,
+				resource.Sausage: BufferCapacity,
+			},
 		},
 		AcceptedResources: []resource.Type{
 			resource.Bread,

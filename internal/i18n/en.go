@@ -78,7 +78,7 @@ func init() {
 		CannotDeleteWarehouse: "The warehouse cannot be deleted",
 		CannotDeleteTree:      "The tree cannot be removed yet",
 
-		Help:                  "Arrows/Middle drag: pan | Wheel +/-: zoom | 1-7: select | Click: place/select | H: hire serf | Delete: remove | S/L: save/load | Esc: quit",
+		Help:                  "Arrows/Middle drag: pan | Wheel +/-: zoom | 1-8: select | Click: place/select | H: hire serf | Delete: remove | S/L: save/load | Esc: quit",
 		CantBuildHere:         "Can't build there",
 		SaveFailedPrefix:      "Save failed: ",
 		LoadFailedPrefix:      "Load failed: ",
