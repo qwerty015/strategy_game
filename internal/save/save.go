@@ -39,6 +39,12 @@ type GameState struct {
 	// state stay where the player saved them.
 	Units []UnitState
 
+	// TreeRegrowth stores delayed random respawn attempts after a tree was cut.
+	// The queue is kept in the save so loading cannot silently reset the forest
+	// cycle or create more trees than the map limit.
+	TreeRegrowth []TreeRegrowthState
+	TreeSeed     uint32
+
 	CameraX    float64
 	CameraY    float64
 	CameraZoom float64
@@ -49,9 +55,10 @@ type GameState struct {
 type UnitKind string
 
 const (
-	UnitSerf   UnitKind = "serf"
-	UnitFarmer UnitKind = "farmer"
-	UnitBaker  UnitKind = "baker"
+	UnitSerf       UnitKind = "serf"
+	UnitFarmer     UnitKind = "farmer"
+	UnitBaker      UnitKind = "baker"
+	UnitLumberjack UnitKind = "lumberjack"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the
@@ -65,6 +72,18 @@ type UnitState struct {
 	HungerTicks int
 	Starving    bool
 	State       int
+	TargetIndex int
+	WorkTicks   int
+	Cargo       resource.Type
+	CargoAmount int
+}
+
+// TreeRegrowthState is the persistent part of one delayed tree respawn.
+// Seed chooses a reproducible random-looking free cell when the delay ends.
+type TreeRegrowthState struct {
+	Ticks       int
+	TargetTicks int
+	Seed        uint32
 }
 
 // Save writes state as indented JSON to path, creating any missing

@@ -43,10 +43,11 @@ var (
 		mustCompositeLegacyMill("tiles/mill_blades3.png"),
 	}
 
-	Bakery    = mustLoad("generated/building_bakery.png")
-	Warehouse = mustLoad("generated/building_warehouse.png")
-	FarmHouse = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
-	Tavern    = mustLoad("generated/building_tavern.png")
+	Bakery        = mustLoad("generated/building_bakery.png")
+	Warehouse     = mustLoad("generated/building_warehouse.png")
+	FarmHouse     = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
+	Tavern        = mustLoad("generated/building_tavern.png")
+	LumberjackHut = mustLoad("generated/building_lumberjack_hut.png")
 
 	// TreeFrames are the three growth stages from one transparent horizontal
 	// sprite sheet. They are sliced once at startup and then drawn with nearest
@@ -74,6 +75,11 @@ var (
 		mustLoad("generated/unit_baker.png"),
 		mustLoad("generated/unit_baker.png"),
 		mustLoad("generated/unit_baker.png"),
+	}
+	Lumberjack = [3]*ebiten.Image{
+		mustLoad("generated/unit_lumberjack.png"),
+		mustLoad("generated/unit_lumberjack.png"),
+		mustLoad("generated/unit_lumberjack.png"),
 	}
 )
 

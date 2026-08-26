@@ -17,7 +17,7 @@ type Palette struct {
 // number keys) in the HUD. The first warehouse is provided at game start;
 // additional warehouses can be built later.
 func NewPalette() *Palette {
-	return &Palette{Kinds: []building.Kind{building.Farm, building.Mill, building.Bakery, building.Tavern, building.Road, building.Warehouse}}
+	return &Palette{Kinds: []building.Kind{building.Farm, building.Mill, building.Bakery, building.Tavern, building.Road, building.Warehouse, building.LumberjackHut}}
 }
 
 // SelectedKind returns the building kind currently chosen for placement.

@@ -61,6 +61,14 @@ func cargoColor(t resource.Type) color.RGBA {
 		return color.RGBA{R: 239, G: 226, B: 183, A: 255}
 	case resource.Bread:
 		return color.RGBA{R: 177, G: 103, B: 46, A: 255}
+	case resource.Fish:
+		return color.RGBA{R: 72, G: 156, B: 207, A: 255}
+	case resource.Wine:
+		return color.RGBA{R: 146, G: 67, B: 147, A: 255}
+	case resource.Sausage:
+		return color.RGBA{R: 186, G: 86, B: 58, A: 255}
+	case resource.Log:
+		return color.RGBA{R: 139, G: 89, B: 43, A: 255}
 	default:
 		return color.RGBA{R: 255, G: 255, B: 255, A: 255}
 	}

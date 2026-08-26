@@ -3,7 +3,10 @@
 // building (plain data), not on ebiten or any other logic package.
 package pathfind
 
-import "strategy_game/internal/building"
+import (
+	"strategy_game/internal/building"
+	"strategy_game/internal/world"
+)
 
 // Point is a tile coordinate.
 type Point struct{ X, Y int }
@@ -30,6 +33,69 @@ func FindPathFromPoint(buildings []*building.Building, from Point, to *building.
 		return []Point{from}, true
 	}
 	return findPathBetween(buildings, from, goal, true)
+}
+
+// FindLandPath returns a shortest route across every non-water tile. Roads
+// are walkable as ordinary land, while building and tree footprints are
+// obstacles; the start and goal tiles are allowed so a worker can leave a
+// workplace and reach a tree occupying its goal tile. Unlike FindPath, this
+// route does not require a road anywhere in the path.
+func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Point) ([]Point, bool) {
+	if grid == nil || !grid.InBounds(from.X, from.Y) || !grid.InBounds(to.X, to.Y) {
+		return nil, false
+	}
+	if from == to {
+		return []Point{from}, true
+	}
+
+	visited := map[Point]Point{from: from}
+	queue := []Point{from}
+	found := false
+	for i := 0; i < len(queue); i++ {
+		p := queue[i]
+		if p == to {
+			found = true
+			break
+		}
+		for _, n := range neighbors(p) {
+			if _, seen := visited[n]; seen || !landWalkable(grid, buildings, n, from, to) {
+				continue
+			}
+			visited[n] = p
+			queue = append(queue, n)
+		}
+	}
+	if !found {
+		return nil, false
+	}
+
+	path := []Point{to}
+	for cur := to; visited[cur] != cur; {
+		parent := visited[cur]
+		path = append(path, parent)
+		cur = parent
+	}
+	reverse(path)
+	return path, true
+}
+
+func landWalkable(grid *world.Grid, buildings []*building.Building, p, start, goal Point) bool {
+	if !grid.InBounds(p.X, p.Y) || !grid.At(p.X, p.Y).Buildable() {
+		return false
+	}
+	if p == start || p == goal {
+		return true
+	}
+	for _, b := range buildings {
+		if b == nil || b.Kind == building.Road {
+			continue
+		}
+		footprint := building.Types[b.Kind].Footprint
+		if p.X >= b.X && p.X < b.X+footprint && p.Y >= b.Y && p.Y < b.Y+footprint {
+			return false
+		}
+	}
+	return true
 }
 
 func findPathBetween(buildings []*building.Building, start, goal Point, requireRoad bool) ([]Point, bool) {

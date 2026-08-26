@@ -86,7 +86,15 @@ var Types = map[Kind]Type{
 		Kind:      Tree,
 		Name:      "Tree",
 		Footprint: 1,
-		// Trees are spawned by map generation, not offered in the build
-		// palette. They still use normal occupancy rules.
+		// Trees are spawned by map generation/regrowth, not offered in the
+		// build palette. They still use normal occupancy rules.
+	},
+	LumberjackHut: {
+		Kind:      LumberjackHut,
+		Name:      "Lumberjack Hut",
+		Footprint: 1,
+		// The hut has no recipe: the lumberjack physically walks to a tree
+		// and deposits finished Logs into OutputBuffer. Serfs collect them
+		// through the hut's road access point.
 	},
 }

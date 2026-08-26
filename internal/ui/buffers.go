@@ -20,7 +20,8 @@ func DrawBufferLevels(screen *ebiten.Image, buildings []*building.Building, cam 
 		bt := building.Types[b.Kind]
 		hasInputs := len(bt.Recipe.Inputs) > 0
 		hasOutput := bt.Recipe.TicksToProduce > 0
-		if !hasInputs && !hasOutput {
+		isLumberjackHut := b.Kind == building.LumberjackHut
+		if !hasInputs && !hasOutput && !isLumberjackHut {
 			continue
 		}
 
@@ -32,6 +33,8 @@ func DrawBufferLevels(screen *ebiten.Image, buildings []*building.Building, cam 
 			line = fmt.Sprintf("%d→%d", bufferTotal(b.InputBuffer), bufferTotal(b.OutputBuffer))
 		case hasInputs: // Tavern: only ever draws down its Bread input
 			line = fmt.Sprintf("%d", bufferTotal(b.InputBuffer))
+		case isLumberjackHut:
+			line = fmt.Sprintf("%d", bufferTotal(b.OutputBuffer))
 		default: // Farm: only ever fills its Wheat output
 			line = fmt.Sprintf("%d", bufferTotal(b.OutputBuffer))
 		}

@@ -7,22 +7,28 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/villagers"
 )
 
-// DrawWorkerMarkers shows whether a Farm or Bakery currently has its worker
-// on duty. A green plus means the worker is present; a red minus means the
-// worker is away eating. Mills have no resident worker, so they do not get
-// this marker.
-func DrawWorkerMarkers(screen *ebiten.Image, buildings []*building.Building, vills []*villagers.Villager, cam *Camera) {
+// DrawWorkerMarkers shows whether a worker is assigned to a Farm, Bakery, or
+// Lumberjack Hut. A green plus means the worker is at work/assigned; a red
+// minus means the resident worker is away or missing.
+func DrawWorkerMarkers(screen *ebiten.Image, buildings []*building.Building, vills []*villagers.Villager, jacks []*lumberjack.Lumberjack, cam *Camera) {
 	tilePixels := cam.TilePixels()
 	for _, b := range buildings {
-		if b.Kind != building.Farm && b.Kind != building.Bakery {
+		if b.Kind != building.Farm && b.Kind != building.Bakery && b.Kind != building.LumberjackHut {
 			continue
 		}
 		present := false
 		for _, v := range vills {
 			if v.Home == b && v.Working() {
+				present = true
+				break
+			}
+		}
+		for _, j := range jacks {
+			if j.HomeBuilding() == b && j.AtPost() {
 				present = true
 				break
 			}

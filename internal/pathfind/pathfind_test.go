@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/world"
 )
 
 func TestFindPath_ConnectedViaRoad(t *testing.T) {
@@ -24,6 +25,26 @@ func TestFindPath_ConnectedViaRoad(t *testing.T) {
 	}
 	if first := path[0]; first != (Point{X: from.X, Y: from.Y}) {
 		t.Errorf("path starts at %v, want source access point (%d,%d)", first, from.X, from.Y)
+	}
+}
+
+func TestFindLandPath_WalksWithoutRoadButNotThroughWater(t *testing.T) {
+	grid := world.NewGrid(8, 3)
+	from, to := Point{X: 0, Y: 1}, Point{X: 7, Y: 1}
+
+	path, ok := FindLandPath(grid, nil, from, to)
+	if !ok {
+		t.Fatal("FindLandPath() without roads = not found, want a land route")
+	}
+	if path[0] != from || path[len(path)-1] != to {
+		t.Fatalf("path endpoints = %v -> %v, want %v -> %v", path[0], path[len(path)-1], from, to)
+	}
+
+	for y := 0; y < grid.Height; y++ {
+		grid.Set(3, y, world.Tile{Terrain: world.Water})
+	}
+	if _, ok := FindLandPath(grid, nil, from, to); ok {
+		t.Fatal("FindLandPath() across a full water barrier = found, want not found")
 	}
 }
 

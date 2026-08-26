@@ -13,6 +13,7 @@ import (
 	"strategy_game/internal/economy"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
+	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
@@ -42,7 +43,17 @@ const (
 	warehouseX, warehouseY = 18, 10
 
 	savePath = "saves/slot1.json"
+
+	defaultTreeSeed            uint32 = 0x4d595df4
+	treeRegrowthMinTicks              = 180 // 90 seconds at normal speed
+	treeRegrowthVariationTicks        = 180 // total wait is about 90–180 seconds
+	treeRegrowthRetryTicks            = 30  // retry every 15 seconds if the map is full
 )
+
+type treeRegrowth struct {
+	ticks, target int
+	seed          uint32
+}
 
 // Game implements ebiten.Game and wires the logic packages (world,
 // building, resource, economy, logistics) to rendering and input.
@@ -54,6 +65,10 @@ type Game struct {
 	sim       *economy.Simulator
 	logi      *logistics.Controller
 	vills     *villagers.Controller
+	jacks     *lumberjack.Controller
+
+	treeRegrowth []treeRegrowth
+	treeSeed     uint32
 
 	camera        *render.Camera
 	palette       *ui.Palette
@@ -81,9 +96,8 @@ func NewGame() *Game {
 	camera := render.NewCamera()
 	mapRect := layout.MapRect()
 	camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
-	// The grove starts just beyond the warehouse area at x=25. Shift the
-	// initial view four tiles right so at least its near edge is visible without
-	// requiring the player to discover camera panning first.
+	// Shift the initial view slightly so the town and nearby scattered trees
+	// are visible without requiring the player to discover camera panning first.
 	camera.Pan(float64(4*render.TileSize), 0, grid.Width, grid.Height, mapRect.Dx(), mapRect.Dy())
 
 	return &Game{
@@ -94,6 +108,8 @@ func NewGame() *Game {
 		sim:       economy.NewSimulator(framesPerSimTick),
 		logi:      logistics.NewController(warehouse, startingSerfs),
 		vills:     villagers.NewController(),
+		jacks:     lumberjack.NewController(),
+		treeSeed:  defaultTreeSeed,
 		camera:    camera,
 		palette:   ui.NewPalette(),
 		layout:    layout,
@@ -115,10 +131,16 @@ func (g *Game) Update() error {
 		for _, b := range g.buildings {
 			b.TickGrowth()
 		}
+		g.tickTreeRegrowth()
 		economy.TickWithConnectivity(g.buildings, g.starvingBuildings(), g.disconnectedBuildings())
 		g.logi.Tick(g.buildings, g.stock)
 		g.vills.Tick(g.buildings)
-		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers)
+		for _, event := range g.jacks.Tick(g.grid, g.buildings) {
+			if event.Kind == lumberjack.TreeCut {
+				g.cutTree(event.Tree)
+			}
+		}
+		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks)
 	}
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
@@ -137,7 +159,7 @@ func (g *Game) resizeLayout(width, height int) {
 	g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
 }
 
-// starvingBuildings reports which buildings currently have no worker
+// starvingBuildings reports which worker buildings currently have no worker
 // physically at their post -- so economy.Tick can pause their
 // production instead of quietly progressing an empty building. This is
 // deliberately NOT the same as Villager.Starving: a worker who's merely
@@ -147,10 +169,15 @@ func (g *Game) resizeLayout(width, height int) {
 // can't get Bread until the Bakery makes some, and the Bakery can't
 // work while "starving".
 func (g *Game) starvingBuildings() map[*building.Building]bool {
-	m := make(map[*building.Building]bool, len(g.vills.Villagers))
+	m := make(map[*building.Building]bool, len(g.vills.Villagers)+len(g.jacks.Lumberjacks))
 	for _, v := range g.vills.Villagers {
 		if !v.Working() {
 			m[v.Home] = true
+		}
+	}
+	for _, j := range g.jacks.Lumberjacks {
+		if !j.AtPost() {
+			m[j.HomeBuilding()] = true
 		}
 	}
 	return m
@@ -298,7 +325,7 @@ func (g *Game) handleMouse() {
 	if kind == building.Warehouse {
 		g.logi.AddWarehouse(placed)
 	}
-	g.spawnVillagerFor(placed)
+	g.spawnWorkersFor(placed)
 	g.statusMsg = ""
 }
 
@@ -313,7 +340,7 @@ func (g *Game) handleUnitActions() {
 
 func (g *Game) hireSerf() {
 	g.logi.Hire()
-	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers)
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks)
 	g.statusMsg = ""
 }
 
@@ -336,6 +363,7 @@ func (g *Game) deleteSelectedBuilding() {
 
 	g.logi.CancelAllJobs(g.stock)
 	g.vills.RemoveHome(b)
+	g.jacks.RemoveHome(b, g.stock)
 	for i, candidate := range g.buildings {
 		if candidate != b {
 			continue
@@ -364,6 +392,12 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 			return ui.Selection{Kind: ui.SelectionSerf, Serf: s}
 		}
 	}
+	for i := len(g.jacks.Lumberjacks) - 1; i >= 0; i-- {
+		j := g.jacks.Lumberjacks[i]
+		if j.X == tx && j.Y == ty {
+			return ui.Selection{Kind: ui.SelectionLumberjack, Lumberjack: j}
+		}
+	}
 	for i := len(g.buildings) - 1; i >= 0; i-- {
 		b := g.buildings[i]
 		footprint := building.Types[b.Kind].Footprint
@@ -386,32 +420,35 @@ func (g *Game) buildingConnected(b *building.Building) bool {
 	return ok
 }
 
-// spawnVillagerFor gives a newly placed Farm or Bakery its worker. Other
-// building kinds don't get a villagers.Villager -- Warehouse/Road/Tavern
-// have no production to tend, and serfs (package logistics) are a
-// separate, town-wide pool rather than tied to one building.
-func (g *Game) spawnVillagerFor(b *building.Building) {
+// spawnWorkersFor gives each worker building its physical resident. Other
+// building kinds don't get a resident: serfs remain a town-wide logistics
+// pool, while a lumberjack is tied to one Lumberjack Hut.
+func (g *Game) spawnWorkersFor(b *building.Building) {
 	switch b.Kind {
 	case building.Farm:
 		g.vills.Spawn(villagers.Farmer, b)
 	case building.Bakery:
 		g.vills.Spawn(villagers.Baker, b)
+	case building.LumberjackHut:
+		g.jacks.Spawn(b)
 	}
 }
 
 func (g *Game) handleSaveLoad() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyS) {
 		state := save.GameState{
-			GridWidth:  g.grid.Width,
-			GridHeight: g.grid.Height,
-			Tiles:      g.grid.Tiles(),
-			Buildings:  dereferenceBuildings(g.buildings),
-			Stockpile:  *g.stock,
-			Population: *g.pop,
-			Units:      g.serializeUnits(),
-			CameraX:    g.camera.X,
-			CameraY:    g.camera.Y,
-			CameraZoom: g.camera.Scale,
+			GridWidth:    g.grid.Width,
+			GridHeight:   g.grid.Height,
+			Tiles:        g.grid.Tiles(),
+			Buildings:    dereferenceBuildings(g.buildings),
+			Stockpile:    *g.stock,
+			Population:   *g.pop,
+			Units:        g.serializeUnits(),
+			TreeRegrowth: g.serializeTreeRegrowth(),
+			TreeSeed:     g.treeSeed,
+			CameraX:      g.camera.X,
+			CameraY:      g.camera.Y,
+			CameraZoom:   g.camera.Scale,
 		}
 		if err := save.Save(savePath, state); err != nil {
 			g.statusMsg = i18n.T().SaveFailedPrefix + err.Error()
@@ -432,7 +469,7 @@ func (g *Game) handleSaveLoad() {
 			return
 		}
 		buildings := referenceBuildings(state.Buildings)
-		buildings, hadTrees := ensureTrees(grid, buildings)
+		buildings, hadTrees := ensureTrees(grid, buildings, len(state.TreeRegrowth) > 0)
 		warehouse := findWarehouse(buildings)
 		if warehouse == nil {
 			g.statusMsg = i18n.T().LoadFailedNoWarehouse
@@ -448,6 +485,11 @@ func (g *Game) handleSaveLoad() {
 		g.stock = &stock
 		pop := state.Population
 		g.pop = &pop
+		g.treeRegrowth = restoreTreeRegrowth(state.TreeRegrowth)
+		g.treeSeed = state.TreeSeed
+		if g.treeSeed == 0 {
+			g.treeSeed = defaultTreeSeed
+		}
 		g.camera.X, g.camera.Y = state.CameraX, state.CameraY
 		if !hadTrees && g.camera.X == 0 {
 			// Old saves were usually made from the original left-aligned view;
@@ -473,6 +515,7 @@ func (g *Game) handleSaveLoad() {
 			}
 		}
 		g.vills = villagers.NewController()
+		g.jacks = lumberjack.NewController()
 		if len(state.Units) == 0 {
 			// Saves from before unit persistence did not contain a roster.
 			// Keep those saves playable with the old sensible defaults.
@@ -483,12 +526,12 @@ func (g *Game) handleSaveLoad() {
 				}
 			}
 			for _, b := range buildings {
-				g.spawnVillagerFor(b)
+				g.spawnWorkersFor(b)
 			}
 		} else {
 			g.restoreUnits(state.Units, buildings)
 		}
-		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers)
+		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks)
 
 		g.statusMsg = i18n.T().Loaded
 	}
@@ -512,7 +555,7 @@ func dereferenceBuildings(in []*building.Building) []building.Building {
 }
 
 func (g *Game) serializeUnits() []save.UnitState {
-	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers))
+	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks))
 	for _, s := range g.logi.Serfs {
 		units = append(units, save.UnitState{
 			Kind:        save.UnitSerf,
@@ -538,6 +581,23 @@ func (g *Game) serializeUnits() []save.UnitState {
 			State:       int(v.State()),
 		})
 	}
+	for _, j := range g.jacks.Lumberjacks {
+		_, cargoAmount := j.Cargo()
+		targetIndex := indexOfBuilding(g.buildings, j.TargetTree())
+		units = append(units, save.UnitState{
+			Kind:        save.UnitLumberjack,
+			X:           j.X,
+			Y:           j.Y,
+			HomeIndex:   indexOfBuilding(g.buildings, j.HomeBuilding()),
+			HungerTicks: j.HungerTicks(),
+			Starving:    j.Starving,
+			State:       int(j.State()),
+			TargetIndex: targetIndex,
+			WorkTicks:   j.WorkTicks(),
+			Cargo:       resource.Log,
+			CargoAmount: cargoAmount,
+		})
+	}
 	return units
 }
 
@@ -560,6 +620,15 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				continue
 			}
 			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings)
+		case save.UnitLumberjack:
+			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.LumberjackHut {
+				continue
+			}
+			var target *building.Building
+			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.Tree {
+				target = buildings[state.TargetIndex]
+			}
+			g.jacks.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, lumberjack.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings)
 		}
 	}
 }
@@ -631,11 +700,14 @@ func treeScatterScore(x, y int) uint32 {
 // ensureTrees migrates saves created before persistent tree objects existed.
 // Current saves already contain at least one Tree and are left untouched so
 // each tree's individual growth timer remains authoritative.
-func ensureTrees(grid *world.Grid, buildings []*building.Building) ([]*building.Building, bool) {
+func ensureTrees(grid *world.Grid, buildings []*building.Building, hasRegrowth bool) ([]*building.Building, bool) {
 	for _, b := range buildings {
 		if b.Kind == building.Tree {
 			return buildings, true
 		}
+	}
+	if hasRegrowth {
+		return buildings, false
 	}
 
 	// The pre-tree prototype represented a forest as a 10x10 terrain patch.
@@ -653,12 +725,137 @@ func ensureTrees(grid *world.Grid, buildings []*building.Building) ([]*building.
 	return seedTrees(grid, buildings), false
 }
 
+func (g *Game) cutTree(tree *building.Building) {
+	if tree == nil || tree.Kind != building.Tree {
+		return
+	}
+	for i, candidate := range g.buildings {
+		if candidate != tree {
+			continue
+		}
+		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+		g.scheduleTreeRegrowth()
+		return
+	}
+}
+
+func (g *Game) scheduleTreeRegrowth() {
+	seed := g.nextTreeSeed()
+	target := treeRegrowthMinTicks + int(seed%treeRegrowthVariationTicks)
+	g.treeRegrowth = append(g.treeRegrowth, treeRegrowth{target: target, seed: seed})
+}
+
+func (g *Game) nextTreeSeed() uint32 {
+	if g.treeSeed == 0 {
+		g.treeSeed = defaultTreeSeed
+	}
+	// xorshift32 is small, deterministic, and saves as one ordinary integer.
+	g.treeSeed ^= g.treeSeed << 13
+	g.treeSeed ^= g.treeSeed >> 17
+	g.treeSeed ^= g.treeSeed << 5
+	return g.treeSeed
+}
+
+func (g *Game) tickTreeRegrowth() {
+	maxTrees := g.grid.Width * g.grid.Height / 100
+	if maxTrees <= 0 {
+		return
+	}
+	currentTrees := countTrees(g.buildings)
+	for i := 0; i < len(g.treeRegrowth); {
+		regrowth := &g.treeRegrowth[i]
+		if regrowth.target <= 0 {
+			regrowth.target = treeRegrowthMinTicks
+		}
+		if regrowth.ticks < regrowth.target {
+			regrowth.ticks++
+			i++
+			continue
+		}
+		if currentTrees >= maxTrees {
+			regrowth.ticks = regrowth.target
+			i++
+			continue
+		}
+
+		x, y, ok := g.findTreeSpawnCell(regrowth.seed)
+		if !ok {
+			// The settlement may have filled the available land. Retry later
+			// without discarding the delayed respawn.
+			regrowth.ticks = regrowth.target - treeRegrowthRetryTicks
+			if regrowth.ticks < 0 {
+				regrowth.ticks = 0
+			}
+			i++
+			continue
+		}
+
+		g.buildings = append(g.buildings, building.NewTree(x, y))
+		currentTrees++
+		g.treeRegrowth = append(g.treeRegrowth[:i], g.treeRegrowth[i+1:]...)
+	}
+}
+
+func (g *Game) findTreeSpawnCell(seed uint32) (int, int, bool) {
+	bestScore := ^uint32(0)
+	bestX, bestY := 0, 0
+	found := false
+	for y := 0; y < g.grid.Height; y++ {
+		for x := 0; x < g.grid.Width; x++ {
+			if !g.grid.At(x, y).Buildable() || !building.CanPlace(g.grid, g.buildings, building.Tree, x, y) {
+				continue
+			}
+			score := treeScatterScore(x, y) ^ seed
+			if !found || score < bestScore {
+				bestScore = score
+				bestX, bestY = x, y
+				found = true
+			}
+		}
+	}
+	return bestX, bestY, found
+}
+
+func countTrees(buildings []*building.Building) int {
+	count := 0
+	for _, b := range buildings {
+		if b != nil && b.Kind == building.Tree {
+			count++
+		}
+	}
+	return count
+}
+
+func (g *Game) serializeTreeRegrowth() []save.TreeRegrowthState {
+	regrowth := make([]save.TreeRegrowthState, 0, len(g.treeRegrowth))
+	for _, r := range g.treeRegrowth {
+		regrowth = append(regrowth, save.TreeRegrowthState{Ticks: r.ticks, TargetTicks: r.target, Seed: r.seed})
+	}
+	return regrowth
+}
+
+func restoreTreeRegrowth(states []save.TreeRegrowthState) []treeRegrowth {
+	regrowth := make([]treeRegrowth, 0, len(states))
+	for _, state := range states {
+		ticks, target := state.Ticks, state.TargetTicks
+		if ticks < 0 {
+			ticks = 0
+		}
+		if target <= 0 {
+			target = treeRegrowthMinTicks
+		}
+		regrowth = append(regrowth, treeRegrowth{ticks: ticks, target: target, seed: state.Seed})
+	}
+	return regrowth
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
 	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawBuildings(screen, g.buildings, g.camera)
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
+	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera)
 
 	mx, my := ebiten.CursorPosition()
 	tx, ty := g.camera.ScreenToTile(mx, my)
@@ -677,7 +874,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
 		}
 	}
-	render.DrawWorkerMarkers(screen, g.buildings, g.vills.Villagers, g.camera)
+	render.DrawWorkerMarkers(screen, g.buildings, g.vills.Villagers, g.jacks.Lumberjacks, g.camera)
 	ui.DrawSelectionMarker(screen, g.camera, g.selection)
 	connected := false
 	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil {

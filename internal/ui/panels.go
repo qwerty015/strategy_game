@@ -12,6 +12,7 @@ import (
 	"strategy_game/internal/economy"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
+	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/villagers"
@@ -73,6 +74,8 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		drawSerfInspector(screen, r.Min.X+18, 62, selection.Serf)
 	case SelectionVillager:
 		drawVillagerInspector(screen, r.Min.X+18, 62, selection.Villager)
+	case SelectionLumberjack:
+		drawLumberjackInspector(screen, r.Min.X+18, 62, selection.Lumberjack)
 	}
 }
 
@@ -84,7 +87,19 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	if b.Kind == building.Tree {
 		DrawText(screen, fmt.Sprintf("%s: %d%%", t.GrowthLabel, int(b.GrowthProgress()*100)), float64(x), float64(y))
 		y += 20
-		DrawText(screen, t.IndestructibleLabel, float64(x), float64(y))
+		DrawText(screen, t.HarvestableLabel, float64(x), float64(y))
+		return
+	}
+	if b.Kind == building.LumberjackHut {
+		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		y += 20
+		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Log], b.OutputBuffer[resource.Log], building.BufferCapacity), float64(x), float64(y))
+		y += 20
+		routeState := t.Disconnected
+		if connected {
+			routeState = t.Connected
+		}
+		DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
 		return
 	}
 	if b.Kind == building.Warehouse && stock != nil {
@@ -211,6 +226,47 @@ func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager
 	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, v.HungerTicks(), villagers.HungerInterval), float64(x), float64(y))
 }
 
+func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumberjack) {
+	t := i18n.T()
+	DrawText(screen, t.UnitLumberjack, float64(x), float64(y))
+	y += 24
+
+	state := t.StateIdle
+	switch j.State() {
+	case lumberjack.StateToTree:
+		state = t.StateWalking
+	case lumberjack.StateChopping:
+		state = t.StateChopping
+	case lumberjack.StateToHome:
+		state = t.StateDelivering
+	case lumberjack.StateUnloading:
+		state = t.StateUnloading
+	case lumberjack.StateToTavern, lumberjack.StateToHomeAfterMeal:
+		state = t.StateWalking
+	}
+	if j.Starving {
+		state += " (" + t.StateStarving + ")"
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	y += 20
+
+	_, amount := j.Cargo()
+	cargo := t.NoCargo
+	if amount > 0 {
+		cargo = fmt.Sprintf("%s × %d", t.ResourceName[resource.Log], amount)
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
+	y += 20
+
+	target := t.NoRoute
+	if j.TargetTree() != nil {
+		target = t.BuildingName[building.Tree]
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.LumberjackHut]), float64(x), float64(y))
+	y += 20
+	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, j.HungerTicks(), lumberjack.HungerInterval), float64(x), float64(y))
+}
+
 // DrawSelectionMarker draws a warm outline under the selected object so the
 // player can connect the inspector to the world even when sprites overlap.
 func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Selection) {
@@ -223,6 +279,8 @@ func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Sel
 		x, y = cam.TileToScreen(selection.Serf.X, selection.Serf.Y)
 	} else if selection.Kind == SelectionVillager && selection.Villager != nil {
 		x, y = cam.TileToScreen(selection.Villager.X, selection.Villager.Y)
+	} else if selection.Kind == SelectionLumberjack && selection.Lumberjack != nil {
+		x, y = cam.TileToScreen(selection.Lumberjack.X, selection.Lumberjack.Y)
 	} else {
 		return
 	}
@@ -325,6 +383,8 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.Road
 	case building.Warehouse:
 		img = assets.Warehouse
+	case building.LumberjackHut:
+		img = assets.LumberjackHut
 	}
 	if img == nil {
 		return

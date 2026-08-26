@@ -12,7 +12,8 @@ prototype with the built-in OpenAI image generation tool on 2026-08-25.
 The transparent `tree_stages.png` atlas contains three growth stages and is
 sliced into individual frames by the game at startup. Other active sprites
 were then reduced to 64×64 transparent/opaque game sprites. The cobblestone road
-tile was generated in the same pass on 2026-08-25. They are original
+tile, the three-stage tree atlas, the Lumberjack Hut and lumberjack sprites were
+generated in the same pass on 2026-08-25. They are original
 project art, not a recreation of any specific existing commercial game's
 assets. The source atlases remain outside the repository; the cropped files
 in `generated/` are the assets used by the game.

@@ -14,6 +14,7 @@ const (
 	Fish
 	Wine
 	Sausage
+	Log
 )
 
 var typeNames = map[Type]string{
@@ -23,6 +24,7 @@ var typeNames = map[Type]string{
 	Fish:    "fish",
 	Wine:    "wine",
 	Sausage: "sausage",
+	Log:     "log",
 }
 
 var namesToType = func() map[string]Type {
@@ -67,5 +69,5 @@ func (t *Type) UnmarshalText(data []byte) error {
 // are intentionally used for buffers, but UI and service logic must not
 // change order from one frame to the next.
 func AllTypes() []Type {
-	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage}
+	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Log}
 }

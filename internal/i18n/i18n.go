@@ -50,7 +50,7 @@ type Catalog struct {
 	ContentsLabel         string
 	UnlimitedLabel        string
 	GrowthLabel           string
-	IndestructibleLabel   string
+	HarvestableLabel      string
 	RoadLabel             string
 	Connected             string
 	Disconnected          string
@@ -62,9 +62,13 @@ type Catalog struct {
 	StateDelivering       string
 	StateEating           string
 	StateStarving         string
+	StateSearching        string
+	StateChopping         string
+	StateUnloading        string
 	UnitSerf              string
 	UnitFarmer            string
 	UnitBaker             string
+	UnitLumberjack        string
 	HireSerf              string
 	Deleted               string
 	CannotDeleteWarehouse string

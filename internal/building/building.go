@@ -41,9 +41,14 @@ const (
 	Tavern
 
 	// Tree is a world object rather than a player-buildable structure. It
-	// occupies a tile, grows over time, and is deliberately indestructible
-	// until the future lumberjack system is introduced.
+	// occupies a tile and grows over time. A lumberjack can harvest it; the
+	// player still cannot remove it directly.
 	Tree
+
+	// LumberjackHut is the workplace and temporary log store for one
+	// lumberjack. It is appended after Tree to preserve the numeric Tree value
+	// in existing save files.
+	LumberjackHut
 )
 
 // Recipe describes how a building turns raw resources into a product

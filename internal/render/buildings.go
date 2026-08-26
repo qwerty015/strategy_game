@@ -113,6 +113,9 @@ func DrawBuildings(screen *ebiten.Image, buildings []*building.Building, cam *Ca
 
 		case building.Tavern:
 			drawStandingAtScale(screen, assets.Tavern, sx, sy, buildingHeight, tilePixels)
+
+		case building.LumberjackHut:
+			drawStandingAtScale(screen, assets.LumberjackHut, sx, sy, buildingHeight, tilePixels)
 		}
 
 		if bt.Recipe.TicksToProduce > 0 {
