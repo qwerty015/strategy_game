@@ -517,20 +517,24 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 func (g *Game) handleSaveLoad() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyS) {
 		state := save.GameState{
-			GridWidth:    g.grid.Width,
-			GridHeight:   g.grid.Height,
-			Tiles:        g.grid.Tiles(),
-			Buildings:    dereferenceBuildings(g.buildings),
-			Stockpile:    *g.stock,
-			Population:   *g.pop,
-			Units:        g.serializeUnits(),
-			TreeRegrowth: g.serializeTreeRegrowth(),
-			TreeSeed:     g.treeSeed,
-			FishRegrowth: g.serializeFishRegrowth(),
-			FishSeed:     g.fishSeed,
-			CameraX:      g.camera.X,
-			CameraY:      g.camera.Y,
-			CameraZoom:   g.camera.Scale,
+			GridWidth:          g.grid.Width,
+			GridHeight:         g.grid.Height,
+			Tiles:              g.grid.Tiles(),
+			Buildings:          dereferenceBuildings(g.buildings),
+			Stockpile:          *g.stock,
+			Population:         *g.pop,
+			Units:              g.serializeUnits(),
+			TreeRegrowth:       g.serializeTreeRegrowth(),
+			TreeSeed:           g.treeSeed,
+			FishRegrowth:       g.serializeFishRegrowth(),
+			FishSeed:           g.fishSeed,
+			SerfMealSeed:       g.logi.MealSeed(),
+			VillagerMealSeed:   g.vills.MealSeed(),
+			LumberjackMealSeed: g.jacks.MealSeed(),
+			FishermanMealSeed:  g.fishers.MealSeed(),
+			CameraX:            g.camera.X,
+			CameraY:            g.camera.Y,
+			CameraZoom:         g.camera.Scale,
 		}
 		if err := save.Save(savePath, state); err != nil {
 			g.statusMsg = i18n.T().SaveFailedPrefix + err.Error()
@@ -619,6 +623,18 @@ func (g *Game) handleSaveLoad() {
 			}
 		} else {
 			g.restoreUnits(state.Units, buildings)
+		}
+		if state.SerfMealSeed != 0 {
+			g.logi.SetMealSeed(state.SerfMealSeed)
+		}
+		if state.VillagerMealSeed != 0 {
+			g.vills.SetMealSeed(state.VillagerMealSeed)
+		}
+		if state.LumberjackMealSeed != 0 {
+			g.jacks.SetMealSeed(state.LumberjackMealSeed)
+		}
+		if state.FishermanMealSeed != 0 {
+			g.fishers.SetMealSeed(state.FishermanMealSeed)
 		}
 		g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen)
 

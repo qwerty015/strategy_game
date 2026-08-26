@@ -8,6 +8,7 @@ package villagers
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
@@ -139,13 +140,20 @@ func (v *Villager) Meal() resource.Type { return v.meal }
 // Controller owns every Farmer/Baker/Winemaker in town.
 type Controller struct {
 	Villagers []*Villager
+	meals     meal.Selector
 }
 
 // NewController creates an empty roster; use Spawn to add villagers as
 // their buildings get placed.
 func NewController() *Controller {
-	return &Controller{}
+	return &Controller{meals: meal.NewSelector(0x13198a2e)}
 }
+
+// MealSeed returns the persistent pseudo-random state for villager meal choices.
+func (c *Controller) MealSeed() uint32 { return c.meals.Seed() }
+
+// SetMealSeed restores the persistent pseudo-random state for villager meals.
+func (c *Controller) SetMealSeed(seed uint32) { c.meals.SetSeed(seed) }
 
 // Spawn adds a villager working at home (Farm, Bakery or Winery).
 func (c *Controller) Spawn(profession Profession, home *building.Building) {
@@ -172,9 +180,13 @@ func (c *Controller) RestoreVillager(profession Profession, home *building.Build
 	case VillagerToTavern:
 		// From the saved (x, y), not home -- the villager may already have
 		// been partway to the Tavern when the game was saved. No ledger
-		// exists yet at load time, so this searches purely by reachability
-		// (nil ledger skips the food-availability check).
-		if tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: x, Y: y}, nil); ok {
+		// exists yet at load time, so the saved meal is used to find a
+		// reachable Tavern that still physically holds that exact food.
+		wanted := []resource.Type(nil)
+		if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
+			wanted = append(wanted, savedMeal[0])
+		}
+		if tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: x, Y: y}, nil, &c.meals, wanted...); ok {
 			v.path, v.pathIdx, v.tileTicks = path, 0, 0
 			v.tavern = tavern
 			if len(savedMeal) == 0 || !resource.IsFood(savedMeal[0]) {
@@ -271,52 +283,72 @@ func (c *Controller) MaxWaitingHunger() int {
 // chance to Reserve its own pre-existing in-flight units.
 func (c *Controller) Tick(buildings []*building.Building, ledger *reservations.Ledger) {
 	for _, v := range c.Villagers {
-		tick(v, buildings, ledger)
+		c.tick(v, buildings, ledger)
 	}
 }
 
 // nearestTavernWithFood returns the nearest reachable Tavern that has any
-// available food. Bread, fish, wine and sausage are all equivalent meals;
-// the stable resource order only makes the simulation reproducible. Pass a
-// nil ledger to search by reachability while rebuilding a saved route.
+// available food. The selector randomly chooses one item from that Tavern's
+// currently available menu. Pass a nil ledger to search by reachability while
+// rebuilding a saved route.
 //
 // `from` is a Point rather than a building precisely so RestoreVillager
 // can search from the exact saved (x, y) -- which can differ from Home if
 // the villager was already mid-walk to eat when the game was saved.
 // Searching from Home instead used to make a restored, already-hungry
 // villager jump back to the farmhouse tile before setting off again.
-func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, meal resource.Type, path []pathfind.Point, ok bool) {
+func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
+	var available []resource.Type
 	for _, b := range buildings {
-		if b.Kind != building.Tavern {
+		if b == nil || b.Kind != building.Tavern {
 			continue
 		}
+		foods := make([]resource.Type, 0, len(resource.FoodTypes()))
 		for _, food := range resource.FoodTypes() {
+			if len(wanted) > 0 && food != wanted[0] {
+				continue
+			}
 			if ledger != nil && ledger.AvailableInput(b, food) <= 0 {
 				continue
 			}
-			p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
-			if !reachable {
+			if ledger == nil && b.InputBuffer[food] <= 0 {
 				continue
 			}
-			if bestLen == -1 || len(p) < bestLen {
-				tavern, meal, path, bestLen = b, food, p, len(p)
-			}
+			foods = append(foods, food)
+		}
+		if len(foods) == 0 {
+			continue
+		}
+		p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
+		if !reachable {
+			continue
+		}
+		if bestLen == -1 || len(p) < bestLen {
+			tavern, available, path, bestLen = b, foods, p, len(p)
 		}
 	}
-	return tavern, meal, path, tavern != nil
+	if tavern == nil {
+		return nil, 0, nil, false
+	}
+	if selector == nil || len(wanted) > 0 {
+		selected = available[0]
+	} else {
+		selected, _ = selector.Pick(available)
+	}
+	return tavern, selected, path, true
 }
 
-func tick(v *Villager, buildings []*building.Building, ledger *reservations.Ledger) {
+func (c *Controller) tick(v *Villager, buildings []*building.Building, ledger *reservations.Ledger) {
 	switch v.ph {
 	case working:
-		tickWorking(v, buildings, ledger)
+		c.tickWorking(v, buildings, ledger)
 	case toTavern, toHome:
 		tickWalking(v, buildings)
 	}
 }
 
-func tickWorking(v *Villager, buildings []*building.Building, ledger *reservations.Ledger) {
+func (c *Controller) tickWorking(v *Villager, buildings []*building.Building, ledger *reservations.Ledger) {
 	// Deliberately uncapped: see MaxWaitingHunger's doc comment for why
 	// this must keep counting past HungerInterval instead of saturating
 	// there. HungerTicks() still returns the true value; UI code clamps
@@ -328,7 +360,7 @@ func tickWorking(v *Villager, buildings []*building.Building, ledger *reservatio
 	}
 
 	// Hungry enough to need a meal now.
-	tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: v.Home.X, Y: v.Home.Y}, ledger)
+	tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: v.Home.X, Y: v.Home.Y}, ledger, &c.meals)
 	if !ok {
 		v.Starving = true
 		v.animateFieldWork()

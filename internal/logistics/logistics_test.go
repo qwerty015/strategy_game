@@ -129,10 +129,15 @@ func TestController_SerfEatsAtTavernWhenHungry(t *testing.T) {
 func TestController_SerfEatsWineAtTavern(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 0}
+	tavern.AddInput(resource.Bread, 1)
+	tavern.AddInput(resource.Fish, 1)
 	tavern.AddInput(resource.Wine, 1)
 
 	buildings := append([]*building.Building{warehouse, tavern}, straightRoad(1, 5, 0)...)
 	c := NewController(warehouse, 1)
+	// Seed 2 selects the third entry from [Bread, Fish, Wine]. Wine must be
+	// selectable even while the formerly preferred foods are present.
+	c.SetMealSeed(2)
 	s := c.Serfs[0]
 	s.ticksSinceMeal = HungerInterval
 	stock := resource.NewStockpile(100)
@@ -146,6 +151,9 @@ func TestController_SerfEatsWineAtTavern(t *testing.T) {
 
 	if got := tavern.InputBuffer[resource.Wine]; got != 0 {
 		t.Fatalf("tavern Wine = %d, want 0 (wine is a valid meal)", got)
+	}
+	if got := tavern.InputBuffer[resource.Bread] + tavern.InputBuffer[resource.Fish]; got != 2 {
+		t.Fatalf("bread and fish changed to %d, want 2 (serf should have chosen wine)", got)
 	}
 	if s.Starving {
 		t.Fatal("Starving = true after a successful wine meal")

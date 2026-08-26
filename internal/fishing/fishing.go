@@ -5,6 +5,7 @@ package fishing
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
@@ -71,10 +72,17 @@ type Fisherman struct {
 // Controller owns all fishermen in the settlement.
 type Controller struct {
 	Fishermen []*Fisherman
+	meals     meal.Selector
 }
 
 // NewController creates an empty fishing roster.
-func NewController() *Controller { return &Controller{} }
+func NewController() *Controller { return &Controller{meals: meal.NewSelector(0x082efa98)} }
+
+// MealSeed returns the persistent pseudo-random state for fisherman meals.
+func (c *Controller) MealSeed() uint32 { return c.meals.Seed() }
+
+// SetMealSeed restores the persistent pseudo-random state for fisherman meals.
+func (c *Controller) SetMealSeed(seed uint32) { c.meals.SetSeed(seed) }
 
 // NewFisherman creates a worker at the hut's road access point.
 func NewFisherman(home *building.Building) *Fisherman {
@@ -130,7 +138,11 @@ func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, sta
 			f.state = StateUnloading
 		}
 	case StateToTavern:
-		if tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: x, Y: y}, nil); ok {
+		wanted := []resource.Type(nil)
+		if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
+			wanted = append(wanted, savedMeal[0])
+		}
+		if tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: x, Y: y}, nil, &c.meals, wanted...); ok {
 			f.tavern, f.path = tavern, path
 			f.pathIdx, f.tileTicks = 0, 0
 			if len(savedMeal) == 0 || !resource.IsFood(savedMeal[0]) {
@@ -341,7 +353,7 @@ func (c *Controller) fishReserved(target *building.Building, skip *Fisherman) bo
 }
 
 func (c *Controller) tryStartMeal(f *Fisherman, buildings []*building.Building, ledger *reservations.Ledger) bool {
-	tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: f.X, Y: f.Y}, ledger)
+	tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: f.X, Y: f.Y}, ledger, &c.meals)
 	if !ok {
 		f.Starving = true
 		return false
@@ -353,13 +365,18 @@ func (c *Controller) tryStartMeal(f *Fisherman, buildings []*building.Building, 
 	return true
 }
 
-func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, meal resource.Type, path []pathfind.Point, ok bool) {
+func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
+	var available []resource.Type
 	for _, b := range buildings {
 		if b == nil || b.Kind != building.Tavern {
 			continue
 		}
+		foods := make([]resource.Type, 0, len(resource.FoodTypes()))
 		for _, food := range resource.FoodTypes() {
+			if len(wanted) > 0 && food != wanted[0] {
+				continue
+			}
 			if ledger != nil {
 				if ledger.AvailableInput(b, food) <= 0 {
 					continue
@@ -369,14 +386,26 @@ func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, 
 				// must still pick food that really exists in the Tavern.
 				continue
 			}
-			p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
-			if !reachable || (bestLen >= 0 && len(p) >= bestLen) {
-				continue
-			}
-			tavern, meal, path, bestLen = b, food, p, len(p)
+			foods = append(foods, food)
 		}
+		if len(foods) == 0 {
+			continue
+		}
+		p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
+		if !reachable || (bestLen >= 0 && len(p) >= bestLen) {
+			continue
+		}
+		tavern, available, path, bestLen = b, foods, p, len(p)
 	}
-	return tavern, meal, path, tavern != nil
+	if tavern == nil {
+		return nil, 0, nil, false
+	}
+	if selector == nil || len(wanted) > 0 {
+		selected = available[0]
+	} else {
+		selected, _ = selector.Pick(available)
+	}
+	return tavern, selected, path, true
 }
 
 func (f *Fisherman) routeWaterTo(grid *world.Grid, goal pathfind.Point) bool {

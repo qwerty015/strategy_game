@@ -50,6 +50,14 @@ type GameState struct {
 	FishRegrowth []FishRegrowthState
 	FishSeed     uint32
 
+	// Meal seeds preserve the pseudo-random choice among foods actually
+	// available in a Tavern. Every controller has an independent stream so
+	// loading does not silently reintroduce a fixed food preference.
+	SerfMealSeed       uint32
+	VillagerMealSeed   uint32
+	LumberjackMealSeed uint32
+	FishermanMealSeed  uint32
+
 	CameraX    float64
 	CameraY    float64
 	CameraZoom float64

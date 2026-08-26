@@ -3,8 +3,8 @@
 ## Архитектура
 
 Игровая логика не импортирует Ebitengine. Пакеты `building`, `economy`,
-`logistics`, `villagers`, `lumberjack`, `fishing`, `pathfind`, `resource`,
-`save` и `i18n` должны оставаться тестируемыми без окна и GPU.
+`logistics`, `villagers`, `lumberjack`, `fishing`, `meal`, `pathfind`,
+`resource`, `save` и `i18n` должны оставаться тестируемыми без окна и GPU.
 
 Пакеты `render`, `ui` и `cmd/game` отвечают за экран, ввод и связывание
 подсистем.
@@ -69,7 +69,11 @@
    Если в городе несколько харчевен или складов, выбирается ближайший
    **достижимый до цели** — см. `nearestTavernWithFood`,
    `nearestReachableWarehouse`/`nearestReachableWarehouseTo` в
-   `logistics`/`villagers`/`lumberjack`/`fishing`.
+   `logistics`/`villagers`/`lumberjack`/`fishing`. После выбора харчевни
+   `nearestTavernWithFood` передаёт весь её реально доступный в текущем
+   тике список еды в `meal.Selector`; тот равновероятно выбирает один вид,
+   а своё псевдослучайное состояние сохраняет в `GameState`. Поэтому у еды
+   нет скрытого приоритета и результат не меняется из-за сохранения/загрузки.
 
 4. **Поиск нехватки ресурса на складе пробует следующую нехватку, если
    текущей нечем закрыть.** `findSupplyJob` проверяет реальное наличие

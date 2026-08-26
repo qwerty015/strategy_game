@@ -6,6 +6,7 @@ package lumberjack
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
@@ -75,12 +76,19 @@ type Lumberjack struct {
 // Controller owns all lumberjacks in the settlement.
 type Controller struct {
 	Lumberjacks []*Lumberjack
+	meals       meal.Selector
 }
 
 // NewController creates an empty lumberjack roster.
 func NewController() *Controller {
-	return &Controller{}
+	return &Controller{meals: meal.NewSelector(0xa4093822)}
 }
+
+// MealSeed returns the persistent pseudo-random state for lumberjack meals.
+func (c *Controller) MealSeed() uint32 { return c.meals.Seed() }
+
+// SetMealSeed restores the persistent pseudo-random state for lumberjack meals.
+func (c *Controller) SetMealSeed(seed uint32) { c.meals.SetSeed(seed) }
 
 // NewLumberjack creates a worker at the hut's access point.
 func NewLumberjack(home *building.Building) *Lumberjack {
@@ -143,10 +151,11 @@ func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, sta
 			}
 		}
 	case StateToTavern:
-		// No ledger exists yet at load time, so this searches purely by
-		// reachability (nil ledger skips the food-availability check) --
-		// same as the original findTavern-based lookup it replaces.
-		if tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: x, Y: y}, nil); ok {
+		wanted := []resource.Type(nil)
+		if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
+			wanted = append(wanted, savedMeal[0])
+		}
+		if tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: x, Y: y}, nil, &c.meals, wanted...); ok {
 			j.setPath(path)
 			j.tavern = tavern
 			if len(savedMeal) == 0 || !resource.IsFood(savedMeal[0]) {
@@ -377,34 +386,54 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 	return events
 }
 
-// nearestTavernWithFood returns the nearest reachable Tavern with any food.
-// Bread, fish, wine and sausage are interchangeable meals; the stable
-// resource order only makes job selection reproducible.
-func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, meal resource.Type, path []pathfind.Point, ok bool) {
+// nearestTavernWithFood returns the nearest reachable Tavern with food. The
+// selector randomly chooses from its available menu; wanted restores an
+// already-reserved saved meal without consuming another random choice.
+func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
+	var available []resource.Type
 	for _, b := range buildings {
 		if b == nil || b.Kind != building.Tavern {
 			continue
 		}
+		foods := make([]resource.Type, 0, len(resource.FoodTypes()))
 		for _, food := range resource.FoodTypes() {
+			if len(wanted) > 0 && food != wanted[0] {
+				continue
+			}
 			if ledger != nil && ledger.AvailableInput(b, food) <= 0 {
 				continue
 			}
-			p := b.AccessPoint()
-			route, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: p.X, Y: p.Y})
-			if !reachable {
+			if ledger == nil && b.InputBuffer[food] <= 0 {
 				continue
 			}
-			if bestLen == -1 || len(route) < bestLen {
-				tavern, meal, path, bestLen = b, food, route, len(route)
-			}
+			foods = append(foods, food)
+		}
+		if len(foods) == 0 {
+			continue
+		}
+		p := b.AccessPoint()
+		route, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: p.X, Y: p.Y})
+		if !reachable {
+			continue
+		}
+		if bestLen == -1 || len(route) < bestLen {
+			tavern, available, path, bestLen = b, foods, route, len(route)
 		}
 	}
-	return tavern, meal, path, tavern != nil
+	if tavern == nil {
+		return nil, 0, nil, false
+	}
+	if selector == nil || len(wanted) > 0 {
+		selected = available[0]
+	} else {
+		selected, _ = selector.Pick(available)
+	}
+	return tavern, selected, path, true
 }
 
 func (c *Controller) tryStartMeal(j *Lumberjack, grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) bool {
-	tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: j.X, Y: j.Y}, ledger)
+	tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: j.X, Y: j.Y}, ledger, &c.meals)
 	if !ok {
 		j.Starving = true
 		return false

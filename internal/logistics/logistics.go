@@ -35,6 +35,7 @@ import (
 	"slices"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
@@ -173,16 +174,23 @@ type Controller struct {
 	Warehouse  *building.Building // primary spawn/root warehouse
 	Warehouses []*building.Building
 	Serfs      []*Serf
+	meals      meal.Selector
 }
 
 // NewController spawns count serfs standing at the warehouse.
 func NewController(warehouse *building.Building, count int) *Controller {
-	c := &Controller{Warehouse: warehouse, Warehouses: []*building.Building{warehouse}}
+	c := &Controller{Warehouse: warehouse, Warehouses: []*building.Building{warehouse}, meals: meal.NewSelector(0x243f6a88)}
 	for range count {
 		c.Hire()
 	}
 	return c
 }
+
+// MealSeed returns the persistent pseudo-random state for serf meal choices.
+func (c *Controller) MealSeed() uint32 { return c.meals.Seed() }
+
+// SetMealSeed restores the persistent pseudo-random state for serf meals.
+func (c *Controller) SetMealSeed(seed uint32) { c.meals.SetSeed(seed) }
 
 // AddWarehouse registers another physical warehouse as a valid logistics
 // endpoint. All warehouses share the same unlimited town stockpile, while the
@@ -322,29 +330,49 @@ func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockp
 	}
 }
 
-// nearestTavernWithFood returns the nearest reachable Tavern with any food.
-// Bread, fish, wine and sausage are interchangeable meals; the stable
-// resource order only makes job selection reproducible.
-func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger) (tavern *building.Building, meal resource.Type, path []pathfind.Point, ok bool) {
+// nearestTavernWithFood returns the nearest reachable Tavern with at least one
+// available food. The selector chooses randomly from that Tavern's available
+// menu; wanted is used only to restore an already reserved saved meal.
+func nearestTavernWithFood(buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
+	var available []resource.Type
 	for _, b := range buildings {
-		if b.Kind != building.Tavern {
+		if b == nil || b.Kind != building.Tavern {
 			continue
 		}
+		foods := make([]resource.Type, 0, len(resource.FoodTypes()))
 		for _, food := range resource.FoodTypes() {
+			if len(wanted) > 0 && food != wanted[0] {
+				continue
+			}
 			if ledger != nil && ledger.AvailableInput(b, food) <= 0 {
 				continue
 			}
-			p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
-			if !reachable {
+			if ledger == nil && b.InputBuffer[food] <= 0 {
 				continue
 			}
-			if bestLen == -1 || len(p) < bestLen {
-				tavern, meal, path, bestLen = b, food, p, len(p)
-			}
+			foods = append(foods, food)
+		}
+		if len(foods) == 0 {
+			continue
+		}
+		p, reachable := pathfind.FindPathFromPoint(buildings, from, b)
+		if !reachable {
+			continue
+		}
+		if bestLen == -1 || len(p) < bestLen {
+			tavern, available, path, bestLen = b, foods, p, len(p)
 		}
 	}
-	return tavern, meal, path, tavern != nil
+	if tavern == nil {
+		return nil, 0, nil, false
+	}
+	if selector == nil || len(wanted) > 0 {
+		selected = available[0]
+	} else {
+		selected, _ = selector.Pick(available)
+	}
+	return tavern, selected, path, true
 }
 
 // nearestReachableWarehouse returns the warehouse in candidates with the
@@ -403,7 +431,7 @@ func (c *Controller) tryStartMeal(s *Serf, buildings []*building.Building, ledge
 	if s.ticksSinceMeal < HungerInterval {
 		return false
 	}
-	tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: s.X, Y: s.Y}, ledger)
+	tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: s.X, Y: s.Y}, ledger, &c.meals)
 	if !ok {
 		s.Starving = true
 		return false
