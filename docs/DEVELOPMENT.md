@@ -3,8 +3,9 @@
 ## Архитектура
 
 Игровая логика не импортирует Ebitengine. Пакеты `building`, `economy`,
-`logistics`, `villagers`, `lumberjack`, `fishing`, `meal`, `pathfind`,
-`resource`, `save` и `i18n` должны оставаться тестируемыми без окна и GPU.
+`logistics`, `villagers`, `lumberjack`, `fishing`, `reservations`, `meal`,
+`hunger`, `pathfind`, `resource`, `save` и `i18n` должны оставаться
+тестируемыми без окна и GPU.
 
 Пакеты `render`, `ui` и `cmd/game` отвечают за экран, ввод и связывание
 подсистем.
