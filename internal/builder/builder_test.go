@@ -9,6 +9,46 @@ import (
 	"strategy_game/internal/world"
 )
 
+// TestBuilder_EatsAtNearestReachableTavern mirrors quarry/lumberjack's test
+// of the same shape: a hungry, idle builder (no construction site to work
+// on) must prioritize walking to the nearest reachable, stocked Tavern over
+// staying idle, and must actually eat there -- taking food from that
+// Tavern's InputBuffer and resetting hunger to 0 -- not just walk there and
+// stand around.
+func TestBuilder_EatsAtNearestReachableTavern(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	tavernFar := &building.Building{Kind: building.Tavern, X: 12, Y: 0}
+	tavernNear := &building.Building{Kind: building.Tavern, X: 3, Y: 0}
+	tavernFar.AddInput(resource.Bread, 3)
+	tavernNear.AddInput(resource.Bread, 3)
+
+	buildings := []*building.Building{warehouse, tavernFar, tavernNear}
+	controller := NewController()
+	b := controller.Hire(warehouse)
+
+	var ate bool
+	for range HungerInterval + 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if b.hungerTick == 0 {
+			ate = true
+			break
+		}
+	}
+
+	if !ate {
+		t.Fatal("builder never ate in time")
+	}
+	if got := tavernNear.InputBuffer[resource.Bread]; got != 2 {
+		t.Fatalf("nearer tavern Bread = %d, want 2 (builder should have eaten there)", got)
+	}
+	if got := tavernFar.InputBuffer[resource.Bread]; got != 3 {
+		t.Fatalf("farther tavern Bread = %d, want 3 (untouched)", got)
+	}
+}
+
 // TestBuilderCompletesConstructionInTwoPhases covers the core two-phase
 // flow the user asked for: the builder starts working the instant he
 // arrives (foundation, no materials needed yet), then waits once the

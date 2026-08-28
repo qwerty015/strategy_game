@@ -19,8 +19,12 @@ const lumberjackHeight = 0.88
 // of being drawn on top of the roof.
 func DrawLumberjacks(screen *ebiten.Image, jacks []*lumberjack.Lumberjack, cam *Camera) {
 	tilePixels := cam.TilePixels()
+	visible := cam.VisibleTileBounds(1)
 	for _, j := range jacks {
 		if !j.VisibleOnMap() {
+			continue
+		}
+		if !visible.Intersects(j.X, j.Y, 1) {
 			continue
 		}
 

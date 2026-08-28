@@ -16,8 +16,12 @@ import (
 // "monitor what's sitting in each building" the user asked for.
 // Warehouse/Road, which have no buffers of their own, are skipped.
 func DrawBufferLevels(screen *ebiten.Image, buildings []*building.Building, cam *render.Camera) {
+	visible := cam.VisibleTileBounds(1)
 	for _, b := range buildings {
 		bt := building.Types[b.Kind]
+		if !visible.Intersects(b.X, b.Y, bt.Footprint) {
+			continue
+		}
 		hasInputs := len(bt.Recipe.Inputs) > 0
 		hasOutput := bt.Recipe.TicksToProduce > 0
 		isLumberjackHut := b.Kind == building.LumberjackHut

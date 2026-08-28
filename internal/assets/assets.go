@@ -1,8 +1,9 @@
 // Package assets embeds the game's terrain, building and unit art and
 // decodes it into ready-to-draw *ebiten.Image values once at startup. The
-// generated sprites are deliberately small 64x64 pixel-art assets, so they
-// stay readable at the game's 24-pixel tile scale without turning this pet
-// project into a large art pipeline. See assets/CREDITS.md for provenance.
+// generated sprites are normalized to small 64x64 pixel-art canvases before
+// they reach the GPU. Some source PNGs retain high-resolution originals, but
+// keeping those full-size textures alive wastes memory for 24-pixel tiles.
+// See CREDITS.md for provenance.
 package assets
 
 import (
@@ -80,89 +81,29 @@ var (
 	// TreeFrames are the three growth stages from one transparent horizontal
 	// sprite sheet. They are sliced once at startup and then drawn with nearest
 	// neighbour scaling by the renderer.
-	TreeFrames = [3]*ebiten.Image{
-		mustLoadAtlasFrame("generated/tree_stages.png", 0),
-		mustLoadAtlasFrame("generated/tree_stages.png", 1),
-		mustLoadAtlasFrame("generated/tree_stages.png", 2),
-	}
+	TreeFrames = mustLoadAtlasFrames("generated/tree_stages.png")
 
 	// FishFrames contains the three transparent growth stages of a fish. A
 	// sprite replaces the former procedural marker, keeping mature fish legible
 	// while letting fry remain a quiet detail of the water surface.
-	FishFrames = [3]*ebiten.Image{
-		mustLoadAtlasFrame("generated/fish_stages.png", 0),
-		mustLoadAtlasFrame("generated/fish_stages.png", 1),
-		mustLoadAtlasFrame("generated/fish_stages.png", 2),
-	}
+	FishFrames = mustLoadAtlasFrames("generated/fish_stages.png")
 
 	// There is one purpose-built silhouette per profession for now. The
 	// renderer still exposes frame arrays so directional/walking variants can
 	// be added without changing the simulation packages.
-	Serf = [3]*ebiten.Image{
-		mustLoad("generated/unit_serf.png"),
-		mustLoad("generated/unit_serf.png"),
-		mustLoad("generated/unit_serf.png"),
-	}
-	Farmer = [3]*ebiten.Image{
-		mustLoad("generated/unit_farmer.png"),
-		mustLoad("generated/unit_farmer.png"),
-		mustLoad("generated/unit_farmer.png"),
-	}
-	Baker = [3]*ebiten.Image{
-		mustLoad("generated/unit_baker.png"),
-		mustLoad("generated/unit_baker.png"),
-		mustLoad("generated/unit_baker.png"),
-	}
-	Lumberjack = [3]*ebiten.Image{
-		mustLoad("generated/unit_lumberjack.png"),
-		mustLoad("generated/unit_lumberjack.png"),
-		mustLoad("generated/unit_lumberjack.png"),
-	}
-	Winemaker = [3]*ebiten.Image{
-		mustLoad("generated/unit_winemaker.png"),
-		mustLoad("generated/unit_winemaker.png"),
-		mustLoad("generated/unit_winemaker.png"),
-	}
-	Fisherman = [3]*ebiten.Image{
-		mustLoad("generated/unit_fisherman.png"),
-		mustLoad("generated/unit_fisherman.png"),
-		mustLoad("generated/unit_fisherman.png"),
-	}
-	Swineherd = [3]*ebiten.Image{
-		mustLoad("generated/unit_swineherd.png"),
-		mustLoad("generated/unit_swineherd.png"),
-		mustLoad("generated/unit_swineherd.png"),
-	}
-	Butcher = [3]*ebiten.Image{
-		mustLoad("generated/unit_butcher.png"),
-		mustLoad("generated/unit_butcher.png"),
-		mustLoad("generated/unit_butcher.png"),
-	}
-	Carpenter = [3]*ebiten.Image{
-		mustLoad("generated/unit_carpenter.png"),
-		mustLoad("generated/unit_carpenter.png"),
-		mustLoad("generated/unit_carpenter.png"),
-	}
-	Quarryman = [3]*ebiten.Image{
-		mustLoad("generated/unit_quarryman.png"),
-		mustLoad("generated/unit_quarryman.png"),
-		mustLoad("generated/unit_quarryman.png"),
-	}
-	Builder = [3]*ebiten.Image{
-		mustLoad("generated/unit_builder.png"),
-		mustLoad("generated/unit_builder.png"),
-		mustLoad("generated/unit_builder.png"),
-	}
-	Miner = [3]*ebiten.Image{
-		mustLoad("generated/unit_miner.png"),
-		mustLoad("generated/unit_miner.png"),
-		mustLoad("generated/unit_miner.png"),
-	}
-	Smelter = [3]*ebiten.Image{
-		mustLoad("generated/unit_smelter.png"),
-		mustLoad("generated/unit_smelter.png"),
-		mustLoad("generated/unit_smelter.png"),
-	}
+	Serf        = staticFrames("generated/unit_serf.png")
+	Farmer      = staticFrames("generated/unit_farmer.png")
+	Baker       = staticFrames("generated/unit_baker.png")
+	Lumberjack  = staticFrames("generated/unit_lumberjack.png")
+	Winemaker   = staticFrames("generated/unit_winemaker.png")
+	Fisherman   = staticFrames("generated/unit_fisherman.png")
+	Swineherd   = staticFrames("generated/unit_swineherd.png")
+	Butcher     = staticFrames("generated/unit_butcher.png")
+	Carpenter   = staticFrames("generated/unit_carpenter.png")
+	Quarryman   = staticFrames("generated/unit_quarryman.png")
+	Builder     = staticFrames("generated/unit_builder.png")
+	Miner       = staticFrames("generated/unit_miner.png")
+	Smelter     = staticFrames("generated/unit_smelter.png")
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 
@@ -179,14 +120,22 @@ func mustDecode(name string) image.Image {
 }
 
 func mustLoad(name string) *ebiten.Image {
-	return ebiten.NewImageFromImage(mustDecode(name))
+	return ebiten.NewImageFromImage(normalizeSprite(mustDecode(name)))
+}
+
+// staticFrames returns three references to one image while a profession has
+// no genuine walk-direction animation. Separate GPU textures for the same
+// static PNG previously tripled memory consumption for every unit.
+func staticFrames(name string) [3]*ebiten.Image {
+	frame := mustLoad(name)
+	return [3]*ebiten.Image{frame, frame, frame}
 }
 
 // mustLoadRotated makes a nearest-neighbour 90-degree rotation once during
 // startup. It keeps a waterside building's pier attached to its selected
 // launch tile without adding per-frame image transformations.
 func mustLoadRotated(name string, turns int) *ebiten.Image {
-	src := mustDecode(name)
+	src := normalizeSprite(mustDecode(name))
 	turns %= 4
 	if turns < 0 {
 		turns += 4
@@ -218,17 +167,58 @@ func mustLoadRotated(name string, turns int) *ebiten.Image {
 	return ebiten.NewImageFromImage(out)
 }
 
-func mustLoadAtlasFrame(name string, index int) *ebiten.Image {
+// mustLoadAtlasFrames decodes a three-stage source atlas once and shrinks
+// each stage directly to TileSize. This avoids retaining large atlas crops
+// as independent GPU textures.
+func mustLoadAtlasFrames(name string) [3]*ebiten.Image {
 	src := mustDecode(name)
 	b := src.Bounds()
 	const frameCount = 3
-	if index < 0 || index >= frameCount || b.Dx()%frameCount != 0 {
+	if b.Dx()%frameCount != 0 {
 		panic("assets: invalid three-frame sprite sheet")
 	}
 	frameWidth := b.Dx() / frameCount
-	out := image.NewNRGBA(image.Rect(0, 0, frameWidth, b.Dy()))
-	draw.Draw(out, out.Bounds(), src, image.Point{X: index * frameWidth, Y: 0}, draw.Src)
-	return ebiten.NewImageFromImage(out)
+	var frames [frameCount]*ebiten.Image
+	for index := range frames {
+		frameBounds := image.Rect(b.Min.X+index*frameWidth, b.Min.Y, b.Min.X+(index+1)*frameWidth, b.Max.Y)
+		frames[index] = ebiten.NewImageFromImage(normalizeSpriteBounds(src, frameBounds))
+	}
+	return frames
+}
+
+// normalizeSprite keeps the original aspect ratio, then downsamples it with
+// nearest-neighbour sampling into the fixed source canvas used by render.
+// It runs once at startup: every on-screen sprite is at most one 64-pixel
+// tile before camera scaling.
+func normalizeSprite(src image.Image) image.Image {
+	return normalizeSpriteBounds(src, src.Bounds())
+}
+
+func normalizeSpriteBounds(src image.Image, bounds image.Rectangle) image.Image {
+	if bounds.Dx() == TileSize && bounds.Dy() == TileSize {
+		return src
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, TileSize, TileSize))
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 {
+		return out
+	}
+	writeWidth, writeHeight := TileSize, TileSize
+	if width > height {
+		writeHeight = maxInt(1, height*TileSize/width)
+	} else if height > width {
+		writeWidth = maxInt(1, width*TileSize/height)
+	}
+	offsetX := (TileSize - writeWidth) / 2
+	offsetY := (TileSize - writeHeight) / 2
+	for y := 0; y < writeHeight; y++ {
+		sourceY := bounds.Min.Y + y*height/writeHeight
+		for x := 0; x < writeWidth; x++ {
+			sourceX := bounds.Min.X + x*width/writeWidth
+			out.Set(offsetX+x, offsetY+y, src.At(sourceX, sourceY))
+		}
+	}
+	return out
 }
 
 // mustLoadGround repairs a one-pixel white export fringe present in a few of
@@ -344,6 +334,13 @@ func absInt(value int) int {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

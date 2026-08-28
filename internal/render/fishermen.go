@@ -18,8 +18,12 @@ const fishermanHeight = 0.9
 // compact worker marker rather than sitting on top of the roof.
 func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Camera) {
 	tilePixels := cam.TilePixels()
+	visible := cam.VisibleTileBounds(1)
 	for _, f := range fishermen {
 		if !f.VisibleOnMap() {
+			continue
+		}
+		if !visible.Intersects(f.X, f.Y, 1) {
 			continue
 		}
 		sx, sy := cam.TileToScreen(f.X, f.Y)

@@ -238,6 +238,67 @@ func TestController_SuppliesConsumerFromWarehouse(t *testing.T) {
 	}
 }
 
+// TestController_DeliversConstructionMaterialsDirectlyFromProducer guards
+// the construction route that must not bounce Planks through the Warehouse:
+// with a workshop buffer ready and no stockpile planks, the serf still has
+// to complete one producer -> construction-site delivery.
+func TestController_DeliversConstructionMaterialsDirectlyFromProducer(t *testing.T) {
+	grid := world.NewGrid(12, 3)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	workshop := &building.Building{Kind: building.CarpentryWorkshop, X: 4, Y: 0}
+	site := building.NewConstructionSite(building.Bakery, 8, 0)
+	workshop.AddOutput(resource.Plank, CarryCapacity)
+	buildings := []*building.Building{warehouse, workshop, site}
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(0)
+	for range 100 {
+		tick(c, grid, buildings, stock)
+		if site.InputBuffer[resource.Plank] == CarryCapacity {
+			break
+		}
+	}
+
+	if got := site.InputBuffer[resource.Plank]; got != CarryCapacity {
+		t.Fatalf("construction site Plank = %d, want %d (direct delivery from workshop)", got, CarryCapacity)
+	}
+	if got := workshop.OutputBuffer[resource.Plank]; got != 0 {
+		t.Fatalf("workshop Plank output = %d, want 0 (cargo delivered)", got)
+	}
+	if got := stock.Amount(resource.Plank); got != 0 {
+		t.Fatalf("warehouse Plank = %d, want 0 (construction must not detour through stock)", got)
+	}
+}
+
+// TestController_DeliversConstructionMaterialsFromWarehouse covers the
+// fallback route used when no producer currently has the material ready.
+// The cargo must remain in the construction InputBuffer after arrival; a
+// failed hand-off here would make the serf repeat Warehouse -> site trips
+// forever and eventually starve.
+func TestController_DeliversConstructionMaterialsFromWarehouse(t *testing.T) {
+	grid := world.NewGrid(12, 3)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.Bakery, 8, 0)
+	buildings := []*building.Building{warehouse, site}
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Plank, CarryCapacity)
+	for range 100 {
+		tick(c, grid, buildings, stock)
+		if site.InputBuffer[resource.Plank] == CarryCapacity {
+			break
+		}
+	}
+
+	if got := site.InputBuffer[resource.Plank]; got != CarryCapacity {
+		t.Fatalf("construction site Plank = %d, want %d (warehouse delivery)", got, CarryCapacity)
+	}
+	if got := stock.Amount(resource.Plank); got != 0 {
+		t.Fatalf("warehouse Plank = %d, want 0 (cargo must stay at the site)", got)
+	}
+}
+
 func TestController_HaulsDirectlyBetweenProducerAndConsumer(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20} // far away, off this road entirely
 	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
@@ -268,6 +329,83 @@ func TestController_HaulsDirectlyBetweenProducerAndConsumer(t *testing.T) {
 	}
 	if got := stock.Amount(resource.Wheat); got != 0 {
 		t.Fatalf("warehouse Wheat = %d, want 0 (never should have routed through the warehouse)", got)
+	}
+}
+
+// TestController_DeliversConstructionMaterialDirectlyFromProducer covers
+// the user's explicit request ("если требуется строителям - несем их им а
+// не на склад"): a construction site short on Plank must be suppliable
+// straight from a Carpentry Workshop's own OutputBuffer -- the same
+// producer->consumer priority ordinary buildings already get via
+// findDirectJob -- instead of being forced through the Warehouse first,
+// even though the Warehouse has room and would otherwise happily take it.
+// Uses a real grid (not nil, unlike most of this file's tests): unlike an
+// ordinary haul, construction delivery is checked with
+// pathfind.FindLandPath, which short-circuits false on a nil grid.
+func TestController_DeliversConstructionMaterialDirectlyFromProducer(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	workshop := &building.Building{Kind: building.CarpentryWorkshop, X: 5, Y: 0}
+	site := building.NewConstructionSite(building.LumberjackHut, 10, 0)
+	want := building.Types[building.LumberjackHut].PlankCost
+	// AddOutput lazily inits the map but caps at BufferCapacity (6); the
+	// site needs 10, more than one Workshop ever holds at once in normal
+	// play. Set the raw buffer directly to stand in for "the workshop kept
+	// producing while the serf made more than one trip" without also
+	// having to simulate its Recipe tick in this test.
+	workshop.AddOutput(resource.Plank, 1)
+	workshop.OutputBuffer[resource.Plank] = want
+
+	buildings := []*building.Building{warehouse, workshop, site}
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100) // plenty of room, but never actually gets any Plank
+
+	for range 500 {
+		tick(c, grid, buildings, stock)
+		if site.InputBuffer[resource.Plank] >= want {
+			break
+		}
+	}
+
+	if got := site.InputBuffer[resource.Plank]; got != want {
+		t.Fatalf("site InputBuffer[Plank] = %d, want %d (full cost delivered)", got, want)
+	}
+	if got := workshop.OutputBuffer[resource.Plank]; got != 0 {
+		t.Fatalf("workshop OutputBuffer[Plank] = %d, want 0 (all of it hauled straight to the site)", got)
+	}
+	if got := stock.Amount(resource.Plank); got != 0 {
+		t.Fatalf("warehouse Plank = %d, want 0 (never should have routed through the warehouse)", got)
+	}
+}
+
+// TestController_FallsBackToWarehouseForConstructionMaterialWhenNoProducerHasIt
+// covers the other half of the same priority order: with no Carpentry
+// Workshop in town at all, a construction site's Plank must still come
+// from the Warehouse -- the fallback findConstructionSupplyJob provided
+// even before findConstructionDirectJob existed.
+func TestController_FallsBackToWarehouseForConstructionMaterialWhenNoProducerHasIt(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.LumberjackHut, 10, 0)
+
+	buildings := []*building.Building{warehouse, site}
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+	stock.Add(resource.Plank, building.Types[building.LumberjackHut].PlankCost)
+
+	want := building.Types[building.LumberjackHut].PlankCost
+	for range 500 {
+		tick(c, grid, buildings, stock)
+		if site.InputBuffer[resource.Plank] >= want {
+			break
+		}
+	}
+
+	if got := site.InputBuffer[resource.Plank]; got != want {
+		t.Fatalf("site InputBuffer[Plank] = %d, want %d (delivered from the warehouse)", got, want)
+	}
+	if got := stock.Amount(resource.Plank); got != 0 {
+		t.Fatalf("warehouse Plank = %d, want 0 (fully delivered)", got)
 	}
 }
 

@@ -22,6 +22,24 @@ type Camera struct {
 	viewportWidth, viewportHeight int
 }
 
+// TileBounds is the inclusive world-tile rectangle currently relevant to a
+// render pass. It lets each renderer discard off-screen entities before it
+// allocates draw options or submits a GPU draw call.
+type TileBounds struct {
+	MinX, MinY int
+	MaxX, MaxY int
+}
+
+// Intersects reports whether a square building footprint overlaps these
+// visible tiles. Footprints are always at least one tile wide in the building
+// registry; a defensive zero value remains one tile for callers in UI code.
+func (b TileBounds) Intersects(x, y, footprint int) bool {
+	if footprint < 1 {
+		footprint = 1
+	}
+	return x <= b.MaxX && y <= b.MaxY && x+footprint-1 >= b.MinX && y+footprint-1 >= b.MinY
+}
+
 // NewCamera creates a camera positioned at the world origin.
 func NewCamera() *Camera {
 	return &Camera{Scale: 1}
@@ -135,4 +153,27 @@ func (c *Camera) ScreenToTile(sx, sy int) (tx, ty int) {
 	wx := float64(sx-c.viewportX)/c.Scale + c.X
 	wy := float64(sy-c.viewportY)/c.Scale + c.Y
 	return int(math.Floor(wx / TileSize)), int(math.Floor(wy / TileSize))
+}
+
+// VisibleTileBounds returns the tiles touched by the map viewport. margin
+// expands the rectangle for sprites that rise above their own footprint or
+// for a small prefetch ring while panning.
+func (c *Camera) VisibleTileBounds(margin int) TileBounds {
+	if margin < 0 {
+		margin = 0
+	}
+	left, top := c.viewportX, c.viewportY
+	width, height := c.viewportWidth, c.viewportHeight
+	if width <= 0 || height <= 0 {
+		left, top = 0, 0
+		width, height = TileSize, TileSize
+	}
+	minX, minY := c.ScreenToTile(left, top)
+	maxX, maxY := c.ScreenToTile(left+width, top+height)
+	return TileBounds{
+		MinX: minX - margin,
+		MinY: minY - margin,
+		MaxX: maxX + margin,
+		MaxY: maxY + margin,
+	}
 }

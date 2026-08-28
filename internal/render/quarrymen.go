@@ -19,8 +19,12 @@ const quarrymanHeight = 0.88
 // of being drawn on top of the roof, same as DrawLumberjacks.
 func DrawQuarrymen(screen *ebiten.Image, quarrymen []*quarry.Quarryman, cam *Camera) {
 	tilePixels := cam.TilePixels()
+	visible := cam.VisibleTileBounds(1)
 	for _, q := range quarrymen {
 		if !q.VisibleOnMap() {
+			continue
+		}
+		if !visible.Intersects(q.X, q.Y, 1) {
 			continue
 		}
 

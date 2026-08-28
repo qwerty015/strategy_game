@@ -9,6 +9,49 @@ import (
 	"strategy_game/internal/world"
 )
 
+// TestMiner_EatsAtNearestReachableTavern mirrors quarry/lumberjack's test
+// of the same shape: a hungry, idle miner (no deposit to work) must
+// prioritize walking to the nearest reachable, stocked Tavern over staying
+// idle, and must actually eat there -- taking food from that Tavern's
+// InputBuffer and resetting hunger to 0 -- not just walk there and stand
+// around.
+func TestMiner_EatsAtNearestReachableTavern(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	hut := &building.Building{Kind: building.MinerHut, X: 0, Y: 0}
+	tavernFar := &building.Building{Kind: building.Tavern, X: 12, Y: 0}
+	tavernNear := &building.Building{Kind: building.Tavern, X: 3, Y: 0}
+	tavernFar.AddInput(resource.Bread, 3)
+	tavernNear.AddInput(resource.Bread, 3)
+
+	buildings := []*building.Building{hut, tavernFar, tavernNear}
+	controller := NewController()
+	m := controller.Spawn(hut)
+	if m == nil {
+		t.Fatal("Spawn() returned nil")
+	}
+
+	var ate bool
+	for range HungerInterval + 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if m.HungerTicks() == 0 {
+			ate = true
+			break
+		}
+	}
+
+	if !ate {
+		t.Fatal("miner never ate in time")
+	}
+	if got := tavernNear.InputBuffer[resource.Bread]; got != 2 {
+		t.Fatalf("nearer tavern Bread = %d, want 2 (miner should have eaten there)", got)
+	}
+	if got := tavernFar.InputBuffer[resource.Bread]; got != 3 {
+		t.Fatalf("farther tavern Bread = %d, want 3 (untouched)", got)
+	}
+}
+
 // TestMinerFollowsQuotaNotJustNearestDeposit covers the whole reason
 // DefaultQuota exists: a Coal deposit sitting right next to the hut must
 // not make the miner ignore Gold ore and Iron ore forever just because

@@ -73,6 +73,10 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // periodically to animate the windmill.
 func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera, unstaffed map[*building.Building]bool) {
 	tilePixels := cam.TilePixels()
+	// Two tiles cover tall roofs, construction effects and the one-tile
+	// prefetch ring while the camera pans. Objects outside this rectangle are
+	// still simulated; they simply submit no draw calls this frame.
+	visible := cam.VisibleTileBounds(2)
 	// Ground is drawn before this function. Roads and stone deposits are
 	// both flat, terrain-scale ground decoration rather than standing
 	// objects, so both render in this same bottom pass -- otherwise a
@@ -80,6 +84,9 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 	// of) a tall standing building it happens to be adjacent to, purely
 	// because of where it sits in the save/build slice.
 	for _, b := range buildings {
+		if !visible.Intersects(b.X, b.Y, 1) {
+			continue
+		}
 		sx, sy := cam.TileToScreen(b.X, b.Y)
 		switch {
 		case b.Kind == building.Road && b.ConstructionStage != building.ConstructionNone:
@@ -101,6 +108,9 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			continue
 		}
 		bt := building.Types[b.Kind]
+		if !visible.Intersects(b.X, b.Y, bt.Footprint) {
+			continue
+		}
 		sx, sy := cam.TileToScreen(b.X, b.Y)
 
 		if b.ConstructionStage != building.ConstructionNone {

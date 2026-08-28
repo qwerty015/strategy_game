@@ -23,7 +23,11 @@ const serfHeight = 0.85
 // consistent pose); an idle one is dimmed.
 func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 	tilePixels := cam.TilePixels()
+	visible := cam.VisibleTileBounds(1)
 	for _, s := range serfs {
+		if !visible.Intersects(s.X, s.Y, 1) {
+			continue
+		}
 		sx, sy := cam.TileToScreen(s.X, s.Y)
 
 		frame := 0

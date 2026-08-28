@@ -5,13 +5,16 @@
 // core to how the reference genre actually plays: a building not
 // connected by road simply never gets serviced.
 //
-// Job queue order (see assign): keeping the Tavern fed comes first, then a
-// direct producer -> consumer haul (e.g. Mill's Flour straight to
-// Bakery), then draining leftover OutputBuffer to the Warehouse, then
-// pulling from the Warehouse to cover a shortage no producer can. This
-// matches the reference behavior the user asked for: processing
-// buildings feed each other directly, the Warehouse is overflow/backup,
-// not the only path.
+// Job queue order (see assign): keeping the Tavern fed comes first, then
+// topping up a construction site short on Plank/StoneBlock -- straight
+// from the Carpentry Workshop/Quarry Hut's own OutputBuffer when one has
+// enough on hand, falling back to the Warehouse only if not -- then a
+// direct producer -> consumer haul for the ordinary production chain (e.g.
+// Mill's Flour straight to Bakery), then draining leftover OutputBuffer to
+// the Warehouse, then pulling from the Warehouse to cover a shortage no
+// producer can. This matches the reference behavior the user asked for:
+// processing buildings feed each other (and construction sites) directly,
+// the Warehouse is overflow/backup, not the only path.
 //
 // Every job search reads availability through a *reservations.Ledger
 // (see package reservations) instead of raw buffer values, and every
@@ -589,9 +592,12 @@ func (c *Controller) tryStartMeal(s *Serf, buildings []*building.Building, ledge
 
 // assign gives an idle serf a job, if one exists that it can currently
 // reach, in priority order: keep the Tavern supplied first, then top up any
-// construction site waiting on materials, then direct producer->consumer
-// haul, then drain leftover OutputBuffer to the Warehouse, then pull from
-// the Warehouse to cover a shortage no producer can. Construction is placed
+// construction site waiting on materials -- straight from a producer's
+// OutputBuffer if one has enough on hand (findConstructionDirectJob),
+// falling back to the Warehouse only if not (findConstructionSupplyJob) --
+// then direct producer->consumer haul for the ordinary production chain,
+// then drain leftover OutputBuffer to the Warehouse, then pull from the
+// Warehouse to cover a shortage no producer can. Construction is placed
 // second (right after hunger, ahead of the ordinary production chain)
 // because a stalled build is what the player is actively watching, and
 // because a road that only gets built "when a serf is otherwise idle" would
@@ -601,6 +607,10 @@ func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Bui
 	from := pathfind.Point{X: s.X, Y: s.Y}
 	if pickup, dropoff, t, n, path, ok := findTavernSupplyJob(buildings, c.warehouses(), stock, ledger, from); ok {
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
+		return
+	}
+	if pickup, site, t, n, path, ok := findConstructionDirectJob(grid, buildings, ledger, from); ok {
+		c.startConstructionLeg(s, pickup, site, t, n, path, ledger)
 		return
 	}
 	if dropoff, t, n, ok := findConstructionSupplyJob(buildings, stock, ledger); ok {
@@ -863,6 +873,93 @@ func findConstructionSupplyJob(buildings []*building.Building, stock *resource.S
 		}
 	}
 	return nil, 0, 0, false
+}
+
+// constructionMaterialProducer maps each construction material to the
+// building kind that produces it, for findConstructionDirectJob. A site's
+// material need isn't expressed as a Recipe.Input (see
+// Building.ConstructionMaterialCost), so it can't reuse findDirectJob's
+// generic recipe-driven consumer search -- this is its construction-site
+// counterpart, kept as a small explicit map rather than derived from
+// Recipe.Output since a producer's Recipe isn't guaranteed to exist purely
+// to make this construction material (Plank/StoneBlock happen to be each
+// one's only output today, but that's incidental, not a rule to lean on).
+var constructionMaterialProducer = map[resource.Type]building.Kind{
+	resource.Plank:      building.CarpentryWorkshop,
+	resource.StoneBlock: building.QuarryHut,
+}
+
+// findConstructionDirectJob looks for a construction site short on Plank or
+// StoneBlock that can be supplied straight from a producer's own
+// OutputBuffer -- a Carpentry Workshop's planks or a Quarry Hut's stone
+// blocks -- skipping the Warehouse entirely. Per the user's explicit
+// request ("если требуется строителям - несем их им а не на склад"), this
+// gives construction sites the same direct producer->consumer priority
+// findDirectJob already gives ordinary buildings (see the package doc
+// comment): the Warehouse should be a detour material passes through when
+// nothing needs it right now, not a mandatory stop on the way to a site
+// that does. Tried before findConstructionSupplyJob in assign, so a direct
+// haul wins whenever one is actually available; the Warehouse-sourced job
+// remains the fallback once nothing here reaches. Both legs use
+// pathfind.FindLandPath, the same off-road exception every construction
+// delivery gets (see startConstructionLeg) -- the site or its producer may
+// have no road yet.
+func findConstructionDirectJob(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger, from pathfind.Point) (pickup, site *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
+	for _, cand := range buildings {
+		if cand.ConstructionStage == building.ConstructionNone {
+			continue
+		}
+		for _, rt := range constructionMaterials {
+			target := cand.ConstructionMaterialCost(rt)
+			if target <= 0 {
+				continue
+			}
+			short := ledger.RoomFor(cand, rt, target)
+			if short <= 0 {
+				continue
+			}
+			producerKind, known := constructionMaterialProducer[rt]
+			if !known {
+				continue
+			}
+			siteAccess := cand.AccessPoint()
+			sitePoint := pathfind.Point{X: siteAccess.X, Y: siteAccess.Y}
+
+			var bestProducer *building.Building
+			var bestAmt int
+			var bestPath []pathfind.Point
+			bestLen := -1
+			for _, producer := range buildings {
+				if producer.Kind != producerKind {
+					continue
+				}
+				have := ledger.AvailableOutput(producer, rt)
+				if have <= 0 {
+					continue
+				}
+				amt := min(have, CarryCapacity, short)
+				if amt <= 0 {
+					continue
+				}
+				producerAccess := producer.AccessPoint()
+				producerPoint := pathfind.Point{X: producerAccess.X, Y: producerAccess.Y}
+				p, reachable := pathfind.FindLandPath(grid, buildings, from, producerPoint)
+				if !reachable {
+					continue
+				}
+				if _, deliverable := pathfind.FindLandPath(grid, buildings, producerPoint, sitePoint); !deliverable {
+					continue
+				}
+				if bestLen == -1 || len(p) < bestLen {
+					bestProducer, bestAmt, bestPath, bestLen = producer, amt, p, len(p)
+				}
+			}
+			if bestProducer != nil {
+				return bestProducer, cand, rt, bestAmt, bestPath, true
+			}
+		}
+	}
+	return nil, nil, 0, 0, nil, false
 }
 
 // nearestReachableWarehouseOverLand is nearestReachableWarehouse's

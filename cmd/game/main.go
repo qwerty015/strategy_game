@@ -188,6 +188,11 @@ type Game struct {
 	// Coal/GoldOre/IronOre regions together.
 	oreSeeded bool
 
+	// connectionCache memoizes the expensive road-only BFS used by the
+	// connection marker and inspector. It is cleared whenever a player
+	// changes the road/building topology, never every render frame.
+	connectionCache map[*building.Building]bool
+
 	camera        *render.Camera
 	palette       *ui.Palette
 	layout        ui.Layout
@@ -825,6 +830,7 @@ func (g *Game) handleMouse() {
 	// see finishConstruction.
 	placed := building.NewConstructionSite(kind, tx, ty)
 	g.buildings = append(g.buildings, placed)
+	g.invalidateConnectionCache()
 	g.statusMsg = ""
 }
 
@@ -895,6 +901,7 @@ func (g *Game) deleteSelectedBuilding() {
 				continue
 			}
 			g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+			g.invalidateConnectionCache()
 			g.selection.Clear()
 			g.statusMsg = i18n.T().Deleted
 			return
@@ -942,6 +949,7 @@ func (g *Game) deleteSelectedBuilding() {
 			continue
 		}
 		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+		g.invalidateConnectionCache()
 		if g.pop != nil {
 			g.pop.Removed++
 		}
@@ -1130,12 +1138,26 @@ func (g *Game) buildingConnected(b *building.Building) bool {
 	if b == nil || b.Kind == building.Warehouse {
 		return true
 	}
+	if !showsAccessMarker(b.Kind) {
+		return false
+	}
+	if g.connectionCache == nil {
+		g.connectionCache = make(map[*building.Building]bool)
+	}
+	if connected, known := g.connectionCache[b]; known {
+		return connected
+	}
 	warehouse := findWarehouse(g.buildings)
 	if warehouse == nil {
 		return false
 	}
-	_, ok := pathfind.FindPath(g.buildings, warehouse, b)
-	return ok
+	_, connected := pathfind.FindPath(g.buildings, warehouse, b)
+	g.connectionCache[b] = connected
+	return connected
+}
+
+func (g *Game) invalidateConnectionCache() {
+	g.connectionCache = nil
 }
 
 // spawnWorkersFor gives each worker building its physical resident. Other
@@ -1185,6 +1207,7 @@ func (g *Game) finishConstruction(b *building.Building) {
 	if b.Kind == building.Warehouse {
 		g.logi.AddWarehouse(b)
 	}
+	g.invalidateConnectionCache()
 	g.statusMsg = ""
 }
 
@@ -1432,6 +1455,7 @@ func (g *Game) loadGame(path string) error {
 
 	g.grid = grid
 	g.buildings = buildings
+	g.invalidateConnectionCache()
 	stock := state.Stockpile
 	// Older saves carried the temporary 200-unit limit. The town rule is
 	// now explicit: every warehouse shares an unlimited stockpile.
@@ -2780,8 +2804,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// Every non-road building exposes its access tile. This keeps the road
 	// connection rule visible without requiring the player to click buildings
 	// one by one; the inspector still explains the selected building in detail.
+	visible := g.camera.VisibleTileBounds(2)
 	for _, b := range g.buildings {
-		if showsAccessMarker(b.Kind) {
+		if showsAccessMarker(b.Kind) && visible.Intersects(b.X, b.Y, building.Types[b.Kind].Footprint) {
 			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
 		}
 	}

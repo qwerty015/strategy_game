@@ -14,19 +14,16 @@ import (
 // DrawGrid renders every tile currently visible in the camera's viewport.
 // Off-screen tiles are skipped so panning stays cheap on a big map.
 func DrawGrid(screen *ebiten.Image, g *world.Grid, cam *Camera) {
-	screenW, screenH := screen.Bounds().Dx(), screen.Bounds().Dy()
+	visible := cam.VisibleTileBounds(0)
+	tilePixels := cam.TilePixels()
 
-	firstX, firstY := cam.ScreenToTile(0, 0)
-	lastX, lastY := cam.ScreenToTile(screenW, screenH)
-
-	for ty := firstY; ty <= lastY; ty++ {
-		for tx := firstX; tx <= lastX; tx++ {
+	for ty := visible.MinY; ty <= visible.MaxY; ty++ {
+		for tx := visible.MinX; tx <= visible.MaxX; tx++ {
 			if !g.InBounds(tx, ty) {
 				continue
 			}
 			sx, sy := cam.TileToScreen(tx, ty)
 			terrain := g.At(tx, ty).Terrain
-			tilePixels := cam.TilePixels()
 			drawGround(screen, terrainImage(terrain), sx, sy, tilePixels)
 			if terrain == world.Grass {
 				drawGrassSway(screen, sx, sy, tx, ty, tilePixels)

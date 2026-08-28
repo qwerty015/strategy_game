@@ -19,8 +19,12 @@ const minerHeight = 0.88
 // of being drawn on top of the roof, same as DrawQuarrymen.
 func DrawMiners(screen *ebiten.Image, miners []*miner.Miner, cam *Camera) {
 	tilePixels := cam.TilePixels()
+	visible := cam.VisibleTileBounds(1)
 	for _, m := range miners {
 		if !m.VisibleOnMap() {
+			continue
+		}
+		if !visible.Intersects(m.X, m.Y, 1) {
 			continue
 		}
 

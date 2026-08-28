@@ -17,7 +17,11 @@ const builderHeight = 0.88
 // builder.Builder.VisibleOnMap), so every one of them is always drawn.
 func DrawBuilders(screen *ebiten.Image, builders []*builder.Builder, cam *Camera) {
 	tilePixels := cam.TilePixels()
+	visible := cam.VisibleTileBounds(1)
 	for _, b := range builders {
+		if !visible.Intersects(b.X, b.Y, 1) {
+			continue
+		}
 		sx, sy := cam.TileToScreen(b.X, b.Y)
 		frame := (animFrame / 10) % len(assets.Builder)
 		bob := unitBob()

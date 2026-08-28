@@ -17,11 +17,15 @@ import (
 // pseudo-animation, but make sowing/harvesting readable at game scale.
 func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camera) {
 	tilePixels := cam.TilePixels()
+	visible := cam.VisibleTileBounds(1)
 	for _, v := range vills {
 		// A working baker is represented by the building marker. A working
 		// farmer is the exception: its visible field route is part of the
 		// feedback for farm work.
 		if v.Working() && !v.VisibleOnMap() {
+			continue
+		}
+		if !visible.Intersects(v.X, v.Y, 1) {
 			continue
 		}
 		frames := assets.Farmer
