@@ -750,6 +750,31 @@ func TestHireSerfSpendsGoldAndFailsWhenBroke(t *testing.T) {
 // отдельно за золото": a building completing construction must NOT get a
 // resident automatically -- it stays empty until the player pays to hire
 // someone into it, exactly like a workplace whose resident died.
+// TestShowsAccessMarkerExcludesEveryDepositKind is a regression guard for
+// a real "high CPU load, game hangs" bug: the per-frame access-marker loop
+// in Draw excluded StoneDeposit but was never updated to exclude the three
+// ore-family kinds when they shipped, so every ore/coal deposit triggered a
+// full pathfind BFS (g.buildingConnected) 60 times a second. On the bigger
+// procedural map, with hundreds of individual deposit Buildings, that's
+// what actually caused the stall.
+func TestShowsAccessMarkerExcludesEveryDepositKind(t *testing.T) {
+	for _, kind := range []building.Kind{
+		building.Road, building.Tree, building.Fish, building.Warehouse,
+		building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit,
+	} {
+		if showsAccessMarker(kind) {
+			t.Errorf("showsAccessMarker(%v) = true, want false", kind)
+		}
+	}
+	for _, kind := range []building.Kind{
+		building.Farm, building.LumberjackHut, building.Tavern, building.MinerHut, building.Smeltery,
+	} {
+		if !showsAccessMarker(kind) {
+			t.Errorf("showsAccessMarker(%v) = false, want true", kind)
+		}
+	}
+}
+
 func TestFinishConstructionDoesNotAutoSpawnAWorker(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	hut := building.NewConstructionSite(building.LumberjackHut, 5, 0)

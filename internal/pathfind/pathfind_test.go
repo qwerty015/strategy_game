@@ -2,6 +2,7 @@ package pathfind
 
 import (
 	"testing"
+	"time"
 
 	"strategy_game/internal/building"
 	"strategy_game/internal/world"
@@ -45,6 +46,45 @@ func TestFindLandPath_WalksWithoutRoadButNotThroughWater(t *testing.T) {
 	}
 	if _, ok := FindLandPath(grid, nil, from, to); ok {
 		t.Fatal("FindLandPath() across a full water barrier = found, want not found")
+	}
+}
+
+// TestFindLandPathStaysFastWithManyBuildings is a regression guard for a
+// real "high CPU, game hangs" bug: landWalkable used to rescan the whole
+// buildings slice for every single tile the BFS visited, turning
+// FindLandPath into O(visited tiles * building count). That was invisible
+// on a small map with a handful of buildings, but on a generated map sized
+// like a real town (100x75, with hundreds of individual stone/ore deposit
+// Buildings -- each deposit cell is its own Building, not one region
+// object) it made every lumberjack/quarryman/miner/builder/serf route
+// request visibly stall the game. buildingOccupancy fixed it to O(visited
+// tiles + building count); this test's time budget catches the O(n*m)
+// blowup coming back.
+func TestFindLandPathStaysFastWithManyBuildings(t *testing.T) {
+	grid := world.NewGrid(100, 75)
+	const clearRow = 37 // guaranteed clear lane so a path always exists
+	var buildings []*building.Building
+	for y := 0; y < grid.Height; y++ {
+		if y == clearRow {
+			continue
+		}
+		for x := 0; x < grid.Width; x += 2 {
+			buildings = append(buildings, &building.Building{Kind: building.StoneDeposit, X: x, Y: y, Reserve: 1})
+		}
+	}
+
+	start := time.Now()
+	path, ok := FindLandPath(grid, buildings, Point{X: 0, Y: clearRow}, Point{X: 99, Y: clearRow})
+	elapsed := time.Since(start)
+
+	if !ok {
+		t.Fatal("FindLandPath() with many scattered buildings = not found, want the clear row to connect")
+	}
+	if path[0] != (Point{X: 0, Y: clearRow}) || path[len(path)-1] != (Point{X: 99, Y: clearRow}) {
+		t.Fatalf("path endpoints = %v -> %v, want (0,%d) -> (99,%d)", path[0], path[len(path)-1], clearRow, clearRow)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("FindLandPath with %d buildings took %v, want well under 200ms", len(buildings), elapsed)
 	}
 }
 

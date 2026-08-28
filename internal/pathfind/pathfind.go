@@ -48,6 +48,12 @@ func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Poi
 		return []Point{from}, true
 	}
 
+	// Occupancy is computed once per call, not once per visited tile --
+	// see landWalkable's doc comment for why this matters on a large,
+	// densely-decorated map (hundreds of stone/ore deposits, each its own
+	// Building).
+	blocked := buildingOccupancy(buildings)
+
 	visited := map[Point]Point{from: from}
 	queue := []Point{from}
 	found := false
@@ -58,7 +64,7 @@ func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Poi
 			break
 		}
 		for _, n := range neighbors(p) {
-			if _, seen := visited[n]; seen || !landWalkable(grid, buildings, n, from, to) {
+			if _, seen := visited[n]; seen || !landWalkable(grid, blocked, n, from, to) {
 				continue
 			}
 			visited[n] = p
@@ -122,23 +128,40 @@ func FindWaterPath(grid *world.Grid, from, to Point) ([]Point, bool) {
 	return path, true
 }
 
-func landWalkable(grid *world.Grid, buildings []*building.Building, p, start, goal Point) bool {
+// buildingOccupancy indexes every tile covered by a building's footprint
+// (Road excluded -- it's walkable as ordinary land, same as landWalkable
+// always treated it) into an O(1)-lookup set. Building this once per
+// FindLandPath call, instead of having landWalkable rescan the whole
+// buildings slice for every single tile the BFS visits, is what turns
+// FindLandPath from O(visited tiles × building count) into O(visited tiles
+// + building count) -- on a map with hundreds of individual stone/ore
+// deposit Buildings this was the difference between an imperceptible
+// lookup and the game visibly stalling under high CPU load every time a
+// lumberjack/quarryman/miner/builder/serf needed a new route.
+func buildingOccupancy(buildings []*building.Building) map[Point]bool {
+	blocked := make(map[Point]bool, len(buildings))
+	for _, b := range buildings {
+		if b == nil || b.Kind == building.Road {
+			continue
+		}
+		footprint := building.Types[b.Kind].Footprint
+		for dy := 0; dy < footprint; dy++ {
+			for dx := 0; dx < footprint; dx++ {
+				blocked[Point{b.X + dx, b.Y + dy}] = true
+			}
+		}
+	}
+	return blocked
+}
+
+func landWalkable(grid *world.Grid, blocked map[Point]bool, p, start, goal Point) bool {
 	if !grid.InBounds(p.X, p.Y) || !grid.At(p.X, p.Y).Buildable() {
 		return false
 	}
 	if p == start || p == goal {
 		return true
 	}
-	for _, b := range buildings {
-		if b == nil || b.Kind == building.Road {
-			continue
-		}
-		footprint := building.Types[b.Kind].Footprint
-		if p.X >= b.X && p.X < b.X+footprint && p.Y >= b.Y && p.Y < b.Y+footprint {
-			return false
-		}
-	}
-	return true
+	return !blocked[p]
 }
 
 func findPathBetween(buildings []*building.Building, start, goal Point, requireRoad bool) ([]Point, bool) {

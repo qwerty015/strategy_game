@@ -2701,6 +2701,28 @@ func priorityEligible(kind building.Kind) bool {
 	return len(building.Types[kind].Recipe.Inputs) > 0
 }
 
+// showsAccessMarker reports whether a building kind gets the per-frame road-
+// connection dot in Draw (see ui.DrawAccessMarker). Road/Tree/Fish/Warehouse
+// and every finite deposit kind are never connected to the road network, so
+// drawing the marker for them would be meaningless -- and, more importantly,
+// each call also runs a full pathfind BFS (g.buildingConnected), so skipping
+// deposits here is a real performance fix, not just a visual one: when ore/
+// coal shipped, only StoneDeposit was added to this exclusion, not the three
+// new ore kinds. On the original small map that was just a little wasteful;
+// on the bigger procedural map (hundreds of individual deposit Buildings,
+// each its own footprint-1 object) it meant hundreds of full BFS calls every
+// single frame -- 60 times a second, not once per simulation tick -- which
+// is what actually caused the "high CPU load, game hangs" symptom.
+func showsAccessMarker(kind building.Kind) bool {
+	switch kind {
+	case building.Road, building.Tree, building.Fish, building.Warehouse,
+		building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+		return false
+	default:
+		return true
+	}
+}
+
 func countTrees(buildings []*building.Building) int {
 	count := 0
 	for _, b := range buildings {
@@ -2759,7 +2781,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// connection rule visible without requiring the player to click buildings
 	// one by one; the inspector still explains the selected building in detail.
 	for _, b := range g.buildings {
-		if b.Kind != building.Road && b.Kind != building.Tree && b.Kind != building.Fish && b.Kind != building.Warehouse && b.Kind != building.StoneDeposit {
+		if showsAccessMarker(b.Kind) {
 			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
 		}
 	}
