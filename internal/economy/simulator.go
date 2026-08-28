@@ -109,6 +109,13 @@ func Tick(buildings []*building.Building, starving map[*building.Building]bool) 
 // the building instead of destroying its progress.
 func TickWithConnectivity(buildings []*building.Building, starving, disconnected map[*building.Building]bool) {
 	for _, b := range buildings {
+		// A building still under construction (see package builder) isn't
+		// a working producer yet -- its ProgressTicks/InputBuffer are
+		// tracking construction progress and delivered materials, not
+		// this recipe's normal meaning.
+		if b.ConstructionStage != building.ConstructionNone {
+			continue
+		}
 		recipe := building.Types[b.Kind].Recipe
 		if recipe.TicksToProduce <= 0 || starving[b] || disconnected[b] {
 			continue

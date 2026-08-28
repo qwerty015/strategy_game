@@ -137,6 +137,20 @@ type Type struct {
 	// than one food type. Tavern accepts every current and planned food type;
 	// the menu is deliberately not ordered by gameplay value.
 	AcceptedResources []resource.Type
+
+	// PlankCost/StoneCost are the Plank/StoneBlock units a Builder needs
+	// delivered before finishing this building (or, for Road, before
+	// finishing one tile of it). Zero for kinds that are never placed
+	// through the normal construction flow (Tree, Fish, StoneDeposit).
+	PlankCost int
+	StoneCost int
+
+	// ConstructionFoundationTicks/ConstructionBuildTicks are how long a
+	// Builder spends on each of the two construction phases -- see
+	// ConstructionStage. The foundation phase needs no materials at all;
+	// the build phase needs PlankCost/StoneCost already delivered.
+	ConstructionFoundationTicks int
+	ConstructionBuildTicks      int
 }
 
 // AccessPoint returns the world tile that serves as this building's door or
@@ -194,6 +208,109 @@ type Building struct {
 	// (currently only StoneDeposit). Unlike GrowthTicks it only ever
 	// decreases; there is no regrowth. Zero for every other building kind.
 	Reserve int
+
+	// ConstructionStage is ConstructionNone (the zero value) for a
+	// finished building -- which is exactly what every pre-existing
+	// Building in an old save, and every world object never placed
+	// through construction (Tree, Fish, StoneDeposit), already is,
+	// without any migration needed. While non-zero the building performs
+	// no production and has no resident worker; ProgressTicks counts
+	// ticks within the *current* stage (reused, not a second counter),
+	// and InputBuffer holds Plank/StoneBlock delivered so far toward
+	// Type.PlankCost/StoneCost -- see AddConstructionMaterial.
+	ConstructionStage ConstructionStage
+}
+
+// ConstructionStage is where a placed-but-unfinished building or road
+// currently stands in package builder's two-phase process: a builder
+// starts on-site work immediately (ConstructionFoundation, no materials
+// needed yet), then either waits for delivery (ConstructionWaitingMaterials)
+// or -- if a serf already got there first -- goes straight to finishing
+// (ConstructionFinishing).
+type ConstructionStage int
+
+const (
+	ConstructionNone ConstructionStage = iota
+	ConstructionFoundation
+	ConstructionWaitingMaterials
+	ConstructionFinishing
+)
+
+// NewConstructionSite creates a placed-but-unfinished Building of kind at
+// (x, y), starting in the foundation stage. Used by the normal build-palette
+// placement flow; Tree/Fish/StoneDeposit use their own dedicated
+// constructors and are never "under construction".
+func NewConstructionSite(kind Kind, x, y int) *Building {
+	return &Building{Kind: kind, X: x, Y: y, ConstructionStage: ConstructionFoundation}
+}
+
+// AddConstructionMaterial deposits up to n units of a construction
+// material (Plank or StoneBlock) into a site's InputBuffer, capped by this
+// building kind's total requirement -- not the usual BufferCapacity=6, a
+// build can need up to 15 planks. Any other resource type is rejected.
+// Returns how many units actually fit, like AddInput.
+func (b *Building) AddConstructionMaterial(t resource.Type, n int) int {
+	limit := b.ConstructionMaterialCost(t)
+	if limit <= 0 {
+		return 0
+	}
+	return addCapped(&b.InputBuffer, t, n, limit)
+}
+
+// ConstructionMaterialCost returns how many units of t (Plank or
+// StoneBlock; zero for any other type) this building kind needs delivered
+// in total before construction can finish. Used both to cap
+// AddConstructionMaterial and as the "target" passed to
+// reservations.Ledger.RoomFor by the logistics job search -- the same
+// shape every other consumer's recipe.Inputs[rt] already uses there, just
+// sourced from the construction cost instead of the finished recipe.
+func (b *Building) ConstructionMaterialCost(t resource.Type) int {
+	switch t {
+	case resource.Plank:
+		return Types[b.Kind].PlankCost
+	case resource.StoneBlock:
+		return Types[b.Kind].StoneCost
+	default:
+		return 0
+	}
+}
+
+// ConstructionMaterialsReady reports whether every required Plank/
+// StoneBlock unit has already been delivered to this site.
+func (b *Building) ConstructionMaterialsReady() bool {
+	t := Types[b.Kind]
+	return b.InputBuffer[resource.Plank] >= t.PlankCost && b.InputBuffer[resource.StoneBlock] >= t.StoneCost
+}
+
+// ConstructionProgress returns a clamped 0..1 value across both
+// construction phases combined, for the progress bar shown on an
+// unfinished site -- see render.DrawBuildings and the inspector panel.
+func (b *Building) ConstructionProgress() float64 {
+	if b == nil || b.ConstructionStage == ConstructionNone {
+		return 1
+	}
+	t := Types[b.Kind]
+	total := t.ConstructionFoundationTicks + t.ConstructionBuildTicks
+	if total <= 0 {
+		return 0
+	}
+	done := 0
+	switch b.ConstructionStage {
+	case ConstructionFoundation:
+		done = b.ProgressTicks
+	case ConstructionWaitingMaterials:
+		done = t.ConstructionFoundationTicks
+	case ConstructionFinishing:
+		done = t.ConstructionFoundationTicks + b.ProgressTicks
+	}
+	progress := float64(done) / float64(total)
+	if progress > 1 {
+		return 1
+	}
+	if progress < 0 {
+		return 0
+	}
+	return progress
 }
 
 const (

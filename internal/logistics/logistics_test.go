@@ -8,14 +8,18 @@ import (
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
+	"strategy_game/internal/world"
 )
 
 // tick runs one simulation step exactly like cmd/game does: a fresh
 // ledger, seeded from this controller's own in-flight serfs, then Tick.
-func tick(c *Controller, buildings []*building.Building, stock *resource.Stockpile) {
+// grid is nil-safe (pathfind.FindLandPath short-circuits on a nil grid) and
+// only matters for the construction-supply job, which none of these tests
+// exercise -- callers pass nil.
+func tick(c *Controller, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
 	ledger := reservations.New()
 	c.Reserve(ledger)
-	c.Tick(buildings, stock, ledger)
+	c.Tick(grid, buildings, stock, ledger)
 }
 
 // straightRoad returns Road buildings filling every tile from x=fromX to
@@ -44,7 +48,7 @@ func TestController_DoesNotOvercommitMultipleIdleSerfsToOneJob(t *testing.T) {
 
 	c := NewController(warehouse, 10) // a crowd, like the user described
 	stock := resource.NewStockpile(100)
-	tick(c, buildings, stock)
+	tick(c, nil, buildings, stock)
 
 	// CarryCapacity (5) is less than the 6 units sitting on the farm, so
 	// it correctly takes two serfs to claim all of it (5 + 1) -- that's
@@ -90,7 +94,7 @@ func TestController_OverflowAtDropoffGoesToStock(t *testing.T) {
 	s.tileTicks = TicksPerTile - 1
 
 	stock := resource.NewStockpile(100)
-	c.advance(s, nil, stock)
+	c.advance(s, nil, nil, stock)
 
 	if got := mill.InputBuffer[resource.Wheat]; got != building.BufferCapacity {
 		t.Fatalf("mill InputBuffer[Wheat] = %d, want %d (filled to capacity)", got, building.BufferCapacity)
@@ -112,7 +116,7 @@ func TestController_SerfEatsAtTavernWhenHungry(t *testing.T) {
 	stock := resource.NewStockpile(100)
 
 	for range HungerInterval + 200 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if s.ph == idle && s.ticksSinceMeal == 0 {
 			break
 		}
@@ -143,7 +147,7 @@ func TestController_SerfEatsWineAtTavern(t *testing.T) {
 	stock := resource.NewStockpile(100)
 
 	for range 100 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if s.ticksSinceMeal == 0 {
 			break
 		}
@@ -171,7 +175,7 @@ func TestController_CollectsFromProducerToWarehouse(t *testing.T) {
 	stock := resource.NewStockpile(100)
 
 	for range 500 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if stock.Amount(resource.Wheat) > 0 {
 			break
 		}
@@ -195,7 +199,7 @@ func TestController_CollectsLogsFromLumberjackHut(t *testing.T) {
 	stock := resource.NewStockpile(0)
 
 	for range 500 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if stock.Amount(resource.Log) > 0 {
 			break
 		}
@@ -220,7 +224,7 @@ func TestController_SuppliesConsumerFromWarehouse(t *testing.T) {
 	stock.Add(resource.Wheat, 20)
 
 	for range 500 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if mill.InputBuffer[resource.Wheat] > 0 {
 			break
 		}
@@ -250,7 +254,7 @@ func TestController_HaulsDirectlyBetweenProducerAndConsumer(t *testing.T) {
 	stock := resource.NewStockpile(100)
 
 	for range 500 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if mill.InputBuffer[resource.Wheat] > 0 {
 			break
 		}
@@ -279,7 +283,7 @@ func TestController_DisconnectedBuildingIsNeverServiced(t *testing.T) {
 	stock := resource.NewStockpile(100)
 
 	for range 200 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 	}
 
 	if got := stock.Amount(resource.Wheat); got != 0 {
@@ -340,7 +344,7 @@ func TestController_DoesNotDoubleReservePickupAfterCargoCollected(t *testing.T) 
 
 	idle := c.Serfs[1]
 
-	tick(c, buildings, resource.NewStockpile(100))
+	tick(c, nil, buildings, resource.NewStockpile(100))
 
 	if !idle.Busy() || idle.PickupBuilding() != farm {
 		t.Fatalf("idle serf did not claim the farm's remaining Wheat (busy=%v pickup=%v) -- the hauler's Reserve() is still reserving the pickup side after cargo was already collected", idle.Busy(), idle.PickupBuilding())
@@ -371,7 +375,7 @@ func TestController_SkipsUnreachableSourceForReachableOne(t *testing.T) {
 	stock := resource.NewStockpile(100)
 
 	for range 500 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if stock.Amount(resource.Wheat) > 0 {
 			break
 		}
@@ -423,7 +427,7 @@ func TestController_EatsAtNearestReachableTavern(t *testing.T) {
 	stock := resource.NewStockpile(100)
 
 	for range HungerInterval + 200 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if s.ph == idle && s.ticksSinceMeal == 0 {
 			break
 		}
@@ -458,7 +462,7 @@ func TestController_CollectsToNearestReachableWarehouse(t *testing.T) {
 	c.Serfs[0].X, c.Serfs[0].Y = hut.X, hut.Y
 	c.Serfs[0].atBuilding = hut
 
-	tick(c, buildings, resource.NewStockpile(100))
+	tick(c, nil, buildings, resource.NewStockpile(100))
 
 	s := c.Serfs[0]
 	if s.DropoffBuilding() != warehouseNear {
@@ -497,7 +501,7 @@ func TestController_DismissalWaitsForCurrentHaul(t *testing.T) {
 
 	c := NewController(warehouse, 1)
 	stock := resource.NewStockpile(0)
-	tick(c, buildings, stock) // assigns the farm -> warehouse haul
+	tick(c, nil, buildings, stock) // assigns the farm -> warehouse haul
 	serf := c.Serfs[0]
 	if !serf.Busy() {
 		t.Fatal("serf did not receive the expected haul before dismissal")
@@ -507,7 +511,7 @@ func TestController_DismissalWaitsForCurrentHaul(t *testing.T) {
 	}
 
 	for range 100 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if len(c.Serfs) == 0 {
 			break
 		}
@@ -526,7 +530,7 @@ func TestController_DismissalRemovesIdleSerfBeforeNewJob(t *testing.T) {
 	if !c.RequestDismissal(c.Serfs[0]) {
 		t.Fatal("RequestDismissal(idle serf) = false")
 	}
-	tick(c, []*building.Building{warehouse}, resource.NewStockpile(0))
+	tick(c, nil, []*building.Building{warehouse}, resource.NewStockpile(0))
 	if got := len(c.Serfs); got != 0 {
 		t.Fatalf("idle dismissed serfs = %d, want 0", got)
 	}
@@ -556,7 +560,7 @@ func TestController_TavernSupplySkipsProducerThatCannotReachTavern(t *testing.T)
 
 	c := NewController(warehouse, 1)
 	c.Serfs[0].X, c.Serfs[0].Y = 0, 0
-	tick(c, buildings, resource.NewStockpile(100))
+	tick(c, nil, buildings, resource.NewStockpile(100))
 
 	s := c.Serfs[0]
 	if s.PickupBuilding() != producer2 {
@@ -584,7 +588,7 @@ func TestController_DirectHaulSkipsProducerThatCannotReachConsumer(t *testing.T)
 
 	c := NewController(warehouse, 1)
 	c.Serfs[0].X, c.Serfs[0].Y = 0, 0
-	tick(c, buildings, resource.NewStockpile(100))
+	tick(c, nil, buildings, resource.NewStockpile(100))
 
 	s := c.Serfs[0]
 	if s.PickupBuilding() != producer2 || s.DropoffBuilding() != mill {
@@ -609,7 +613,7 @@ func TestController_SupplySkipsShortageNotInStock(t *testing.T) {
 	stock.Add(resource.Flour, 20) // no Wheat anywhere
 
 	for range 500 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 		if bakery.InputBuffer[resource.Flour] > 0 {
 			break
 		}
@@ -638,7 +642,7 @@ func TestController_MaxWaitingHungerKeepsGrowingPastInterval(t *testing.T) {
 	stock := resource.NewStockpile(100)
 
 	for range HungerInterval + 50 {
-		tick(c, buildings, stock)
+		tick(c, nil, buildings, stock)
 	}
 
 	if got := c.Serfs[0].HungerTicks(); got <= HungerInterval {
@@ -658,7 +662,7 @@ func TestController_PrioritizesTavernSupply(t *testing.T) {
 	buildings := append([]*building.Building{warehouse, bakery, tavern}, straightRoad(1, 5, 0)...)
 	buildings = append(buildings, &building.Building{Kind: building.Road, X: 6, Y: 0})
 	c := NewController(warehouse, 1)
-	tick(c, buildings, resource.NewStockpile(100))
+	tick(c, nil, buildings, resource.NewStockpile(100))
 
 	s := c.Serfs[0]
 	if s.PickupBuilding() != bakery || s.DropoffBuilding() != tavern {
@@ -706,7 +710,7 @@ func TestController_PriorityBreaksDirectHaulTie(t *testing.T) {
 
 	c := NewController(warehouse, 1)
 	c.Serfs[0].X, c.Serfs[0].Y = farm.X, farm.Y
-	tick(c, buildings, resource.NewStockpile(100))
+	tick(c, nil, buildings, resource.NewStockpile(100))
 	if got := c.Serfs[0].DropoffBuilding(); got != mill {
 		t.Fatalf("without priority, dropoff = %v, want mill (first in buildings, tie-broken by order)", got)
 	}
@@ -714,7 +718,7 @@ func TestController_PriorityBreaksDirectHaulTie(t *testing.T) {
 	c2 := NewController(warehouse, 1)
 	c2.Serfs[0].X, c2.Serfs[0].Y = farm.X, farm.Y
 	c2.SetPriority(building.PigFarm, PriorityHigh)
-	tick(c2, buildings, resource.NewStockpile(100))
+	tick(c2, nil, buildings, resource.NewStockpile(100))
 	if got := c2.Serfs[0].DropoffBuilding(); got != pigFarm {
 		t.Fatalf("with Pig Farm prioritized, dropoff = %v, want pigFarm", got)
 	}
@@ -732,7 +736,7 @@ func TestController_PriorityBreaksSupplyTie(t *testing.T) {
 	c := NewController(warehouse, 1)
 	stock := resource.NewStockpile(100)
 	stock.Add(resource.Wheat, 20)
-	tick(c, buildings, stock)
+	tick(c, nil, buildings, stock)
 	if got := c.Serfs[0].DropoffBuilding(); got != mill {
 		t.Fatalf("without priority, dropoff = %v, want mill (first in buildings, tie-broken by order)", got)
 	}
@@ -741,7 +745,7 @@ func TestController_PriorityBreaksSupplyTie(t *testing.T) {
 	c2.SetPriority(building.PigFarm, PriorityHigh)
 	stock2 := resource.NewStockpile(100)
 	stock2.Add(resource.Wheat, 20)
-	tick(c2, buildings, stock2)
+	tick(c2, nil, buildings, stock2)
 	if got := c2.Serfs[0].DropoffBuilding(); got != pigFarm {
 		t.Fatalf("with Pig Farm prioritized, dropoff = %v, want pigFarm", got)
 	}

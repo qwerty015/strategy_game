@@ -40,6 +40,7 @@ import (
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
+	"strategy_game/internal/world"
 )
 
 // sortedResourceTypes returns a building's buffer/recipe resource keys in a
@@ -96,6 +97,12 @@ type Serf struct {
 	resource   resource.Type
 	amount     int
 	eating     bool // true: this trip is "walk to pickup (a Tavern) and eat", not haul
+
+	// construction is true for a Plank/StoneBlock delivery to a building
+	// site or road tile still under construction (package builder). Unlike
+	// every other haul, both legs of this trip may cross open land instead
+	// of requiring a road -- see startConstructionLeg's doc comment for why.
+	construction bool
 
 	ticksSinceMeal int
 	dismissing     bool
@@ -188,6 +195,7 @@ func (s *Serf) reset() {
 	s.pickup, s.dropoff = nil, nil
 	s.amount = 0
 	s.eating = false
+	s.construction = false
 }
 
 // Controller owns every serf and the warehouse they work out of.
@@ -425,8 +433,10 @@ func (c *Controller) MaxWaitingHunger() int {
 // Tick assigns jobs to idle serfs and advances every serf by one
 // movement step. Call once per simulation tick (see economy.Simulator),
 // after every controller sharing ledger has had a chance to Reserve its
-// own pre-existing in-flight units.
-func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) TickResult {
+// own pre-existing in-flight units. grid is only used for the off-road
+// construction-material delivery leg (see startConstructionLeg); every
+// other job still routes exclusively over the road network.
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) TickResult {
 	var result TickResult
 	remaining := c.Serfs[:0]
 	for _, s := range c.Serfs {
@@ -450,10 +460,10 @@ func (c *Controller) Tick(buildings []*building.Building, stock *resource.Stockp
 		}
 		if s.ph == idle {
 			if !c.tryStartMeal(s, buildings, ledger) {
-				c.assign(s, buildings, stock, ledger)
+				c.assign(s, grid, buildings, stock, ledger)
 			}
 		}
-		c.advance(s, buildings, stock)
+		c.advance(s, grid, buildings, stock)
 		remaining = append(remaining, s)
 	}
 	c.Serfs = remaining
@@ -578,14 +588,26 @@ func (c *Controller) tryStartMeal(s *Serf, buildings []*building.Building, ledge
 }
 
 // assign gives an idle serf a job, if one exists that it can currently
-// reach, in priority order: keep the Tavern supplied first, then direct
-// producer->consumer haul, then drain leftover OutputBuffer to the Warehouse,
-// then pull from the Warehouse to cover a shortage no producer can.
-func (c *Controller) assign(s *Serf, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) {
+// reach, in priority order: keep the Tavern supplied first, then top up any
+// construction site waiting on materials, then direct producer->consumer
+// haul, then drain leftover OutputBuffer to the Warehouse, then pull from
+// the Warehouse to cover a shortage no producer can. Construction is placed
+// second (right after hunger, ahead of the ordinary production chain)
+// because a stalled build is what the player is actively watching, and
+// because a road that only gets built "when a serf is otherwise idle" would
+// make the very first road -- the one everything else's connectivity
+// depends on -- unreasonably slow to appear.
+func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) {
 	from := pathfind.Point{X: s.X, Y: s.Y}
 	if pickup, dropoff, t, n, path, ok := findTavernSupplyJob(buildings, c.warehouses(), stock, ledger, from); ok {
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
 		return
+	}
+	if dropoff, t, n, ok := findConstructionSupplyJob(buildings, stock, ledger); ok {
+		if warehouse, path, ok := nearestReachableWarehouseOverLand(grid, buildings, c.warehouses(), from, dropoff); ok {
+			c.startConstructionLeg(s, warehouse, dropoff, t, n, path, ledger)
+			return
+		}
 	}
 	if pickup, dropoff, t, n, path, ok := findDirectJob(buildings, c.Warehouse, ledger, from, c.priority); ok {
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
@@ -806,6 +828,69 @@ func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, le
 	return
 }
 
+// constructionMaterials is the fixed pair a construction site ever wants,
+// visited in this order so which one gets hauled first (when a site is
+// short on both) is stable from tick to tick.
+var constructionMaterials = [...]resource.Type{resource.Plank, resource.StoneBlock}
+
+// findConstructionSupplyJob looks for a building or road tile still under
+// construction (see building.ConstructionStage) that's short on Plank or
+// StoneBlock, with some of that resource actually available in the shared
+// stockpile. It deliberately doesn't pick a specific warehouse or check
+// reachability itself, for the same reason findSupplyJob doesn't: which
+// registered warehouse is actually reachable depends on the serf's current
+// position, and here "reachable" additionally means over open land, not
+// necessarily a road -- see nearestReachableWarehouseOverLand.
+func findConstructionSupplyJob(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) (site *building.Building, t resource.Type, amount int, ok bool) {
+	for _, cand := range buildings {
+		if cand.ConstructionStage == building.ConstructionNone {
+			continue
+		}
+		for _, rt := range constructionMaterials {
+			target := cand.ConstructionMaterialCost(rt)
+			if target <= 0 {
+				continue
+			}
+			short := ledger.RoomFor(cand, rt, target)
+			if short <= 0 {
+				continue
+			}
+			amt := min(CarryCapacity, short, ledger.AvailableStock(stock, rt))
+			if amt <= 0 {
+				continue // nothing in stock for this shortage -- try the next one
+			}
+			return cand, rt, amt, true
+		}
+	}
+	return nil, 0, 0, false
+}
+
+// nearestReachableWarehouseOverLand is nearestReachableWarehouse's
+// construction-delivery counterpart: both legs (serf to warehouse, warehouse
+// to the site) are checked with pathfind.FindLandPath instead of the
+// road-only pathfind.FindPath, since a site with no road to it yet must
+// still be reachable -- that's the entire point of allowing this one job
+// type off the road network.
+func nearestReachableWarehouseOverLand(grid *world.Grid, buildings []*building.Building, candidates []*building.Building, from pathfind.Point, dest *building.Building) (warehouse *building.Building, path []pathfind.Point, ok bool) {
+	destAccess := dest.AccessPoint()
+	destPoint := pathfind.Point{X: destAccess.X, Y: destAccess.Y}
+	bestLen := -1
+	for _, w := range candidates {
+		access := w.AccessPoint()
+		p, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y})
+		if !reachable {
+			continue
+		}
+		if _, deliverable := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: access.X, Y: access.Y}, destPoint); !deliverable {
+			continue
+		}
+		if bestLen == -1 || len(p) < bestLen {
+			warehouse, path, bestLen = w, p, len(p)
+		}
+	}
+	return warehouse, path, warehouse != nil
+}
+
 func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ledger *reservations.Ledger) {
 	s.pickup, s.dropoff = pickup, dropoff
 	s.resource, s.amount = t, amount
@@ -815,7 +900,27 @@ func (c *Controller) startLeg(s *Serf, pickup, dropoff *building.Building, t res
 	ledger.ReserveDropoff(dropoff, t, amount)
 }
 
-func (c *Controller) advance(s *Serf, buildings []*building.Building, stock *resource.Stockpile) {
+// startConstructionLeg is startLeg plus the one flag (Serf.construction)
+// that lets arriveAtPickup route the second leg over open land instead of
+// requiring a road. Construction material is the deliberate single
+// exception to "serfs only walk the road network": a site with no road to
+// it yet -- most importantly the very first road segment, which by
+// definition has no finished road anywhere near it -- would otherwise be
+// permanently unreachable by normal logistics. ReserveDropoff still applies
+// normally; findConstructionSupplyJob passes the site's
+// Building.ConstructionMaterialCost as the "target" reservations.Ledger.RoomFor
+// expects, in place of the usual recipe input amount.
+func (c *Controller) startConstructionLeg(s *Serf, pickup, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ledger *reservations.Ledger) {
+	s.pickup, s.dropoff = pickup, dropoff
+	s.resource, s.amount = t, amount
+	s.path, s.pathIdx, s.tileTicks = path, 0, 0
+	s.ph = toPickup
+	s.construction = true
+	ledger.ReservePickup(pickup, t, amount)
+	ledger.ReserveDropoff(dropoff, t, amount)
+}
+
+func (c *Controller) advance(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
 	if s.ph == idle || len(s.path) == 0 {
 		return
 	}
@@ -834,13 +939,13 @@ func (c *Controller) advance(s *Serf, buildings []*building.Building, stock *res
 
 	switch s.ph {
 	case toPickup:
-		c.arriveAtPickup(s, buildings, stock)
+		c.arriveAtPickup(s, grid, buildings, stock)
 	case toDropoff:
 		c.arriveAtDropoff(s, stock)
 	}
 }
 
-func (c *Controller) arriveAtPickup(s *Serf, buildings []*building.Building, stock *resource.Stockpile) {
+func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
 	s.atBuilding = s.pickup
 
 	if s.eating {
@@ -867,10 +972,18 @@ func (c *Controller) arriveAtPickup(s *Serf, buildings []*building.Building, sto
 		return
 	}
 
-	path, found := pathfind.FindPath(buildings, s.pickup, s.dropoff)
+	var path []pathfind.Point
+	var found bool
+	if s.construction {
+		dest := s.dropoff.AccessPoint()
+		path, found = pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: dest.X, Y: dest.Y})
+	} else {
+		path, found = pathfind.FindPath(buildings, s.pickup, s.dropoff)
+	}
 	if !found {
-		// Road got cut after the job was assigned. Return the goods
-		// rather than lose them, then give up on the job.
+		// Road got cut (or, for a construction delivery, the site became
+		// unreachable over land) after the job was assigned. Return the
+		// goods rather than lose them, then give up on the job.
 		if s.pickup.Kind == building.Warehouse {
 			stock.Add(s.resource, s.amount)
 		} else {
@@ -885,9 +998,15 @@ func (c *Controller) arriveAtPickup(s *Serf, buildings []*building.Building, sto
 
 func (c *Controller) arriveAtDropoff(s *Serf, stock *resource.Stockpile) {
 	s.atBuilding = s.dropoff
-	if s.dropoff.Kind == building.Warehouse {
+	switch {
+	case s.dropoff.Kind == building.Warehouse:
 		stock.Add(s.resource, s.amount)
-	} else {
+	case s.construction:
+		fit := s.dropoff.AddConstructionMaterial(s.resource, s.amount)
+		if leftover := s.amount - fit; leftover > 0 {
+			stock.Add(s.resource, leftover)
+		}
+	default:
 		fit := s.dropoff.AddInput(s.resource, s.amount)
 		if leftover := s.amount - fit; leftover > 0 {
 			// The reservation ledger should prevent this in the normal

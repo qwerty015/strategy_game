@@ -11,6 +11,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/fishing"
@@ -71,6 +72,22 @@ const (
 	// regrow, so once they're placed as ordinary Buildings, the exact seed
 	// that produced them no longer matters -- see save.GameState.StoneSeeded.
 	defaultStoneSeed uint32 = 0x1b873593
+
+	// maxBuilders is a flat town-wide cap, unlike every other profession
+	// (which is capped by matching building count instead) -- a Builder has
+	// no dedicated hut to be limited by.
+	maxBuilders = 3
+
+	// Starting stockpile: enough construction material for several ordinary
+	// buildings or one fenced one (see building.Type's PlankCost/StoneCost),
+	// plus a first batch of every food so an early Tavern isn't immediately
+	// empty while its own supply chains are still being built.
+	startingPlanks  = 200
+	startingStone   = 100
+	startingBread   = 100
+	startingFish    = 100
+	startingSausage = 100
+	startingWine    = 100
 )
 
 type treeRegrowth struct {
@@ -97,6 +114,7 @@ type Game struct {
 	jacks     *lumberjack.Controller
 	fishers   *fishing.Controller
 	quarry    *quarry.Controller
+	builders  *builder.Controller
 
 	treeRegrowth []treeRegrowth
 	treeSeed     uint32
@@ -143,6 +161,14 @@ func NewGame() *Game {
 	buildings = seedFish(grid, buildings)
 	buildings = seedStoneDeposits(grid, buildings, defaultStoneSeed)
 
+	stock := resource.NewStockpile(stockpileCapacity)
+	stock.Add(resource.Plank, startingPlanks)
+	stock.Add(resource.StoneBlock, startingStone)
+	stock.Add(resource.Bread, startingBread)
+	stock.Add(resource.Fish, startingFish)
+	stock.Add(resource.Sausage, startingSausage)
+	stock.Add(resource.Wine, startingWine)
+
 	layout := ui.NewLayout(screenWidth, screenHeight)
 	camera := render.NewCamera()
 	mapRect := layout.MapRect()
@@ -154,7 +180,7 @@ func NewGame() *Game {
 	game := &Game{
 		grid:        grid,
 		buildings:   buildings,
-		stock:       resource.NewStockpile(stockpileCapacity),
+		stock:       stock,
 		pop:         &economy.Population{},
 		sim:         economy.NewSimulator(framesPerSimTick),
 		logi:        logistics.NewController(warehouse, startingSerfs),
@@ -162,6 +188,7 @@ func NewGame() *Game {
 		jacks:       lumberjack.NewController(),
 		fishers:     fishing.NewController(),
 		quarry:      quarry.NewController(),
+		builders:    builder.NewController(),
 		treeSeed:    defaultTreeSeed,
 		fishSeed:    defaultFishSeed,
 		stoneSeeded: true,
@@ -212,6 +239,7 @@ func (g *Game) Update() error {
 		g.jacks.Reserve(ledger)
 		g.fishers.Reserve(ledger)
 		g.quarry.Reserve(ledger)
+		g.builders.Reserve(ledger)
 
 		// Whichever controller's Tick runs first this simulation tick
 		// effectively wins any contention over shared Tavern food: its
@@ -222,6 +250,7 @@ func (g *Game) Update() error {
 		var jackEvents []lumberjack.Event
 		var fishEvents []fishing.Event
 		var quarryEvents []quarry.Event
+		var builderEvents []builder.Event
 		var serfResult logistics.TickResult
 		var villagerDeaths int
 		type unitStep struct {
@@ -229,11 +258,12 @@ func (g *Game) Update() error {
 			run    func()
 		}
 		steps := []unitStep{
-			{g.logi.MaxWaitingHunger(), func() { serfResult = g.logi.Tick(g.buildings, g.stock, ledger) }},
+			{g.logi.MaxWaitingHunger(), func() { serfResult = g.logi.Tick(g.grid, g.buildings, g.stock, ledger) }},
 			{g.vills.MaxWaitingHunger(), func() { villagerDeaths = g.vills.Tick(g.buildings, ledger) }},
 			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, g.buildings, ledger) }},
 			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, g.buildings, ledger) }},
 			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, g.buildings, ledger) }},
+			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, g.buildings, ledger) }},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
 		for _, step := range steps {
@@ -275,6 +305,14 @@ func (g *Game) Update() error {
 					// quarry.Quarryman.Cargo's doc comment.
 					g.stock.Add(resource.StoneBlock, event.Cargo)
 				}
+			}
+		}
+		for _, event := range builderEvents {
+			switch event.Kind {
+			case builder.ConstructionComplete:
+				g.finishConstruction(event.Building)
+			case builder.WorkerDied:
+				g.pop.Deaths++
 			}
 		}
 		g.clearMissingUnitSelection()
@@ -405,6 +443,7 @@ func (g *Game) hireOptions() []ui.HireOption {
 		limited(ui.HireButcher, building.MeatWorkshop, countProfession(villagers.Butcher)),
 		limited(ui.HireCarpenter, building.CarpentryWorkshop, countProfession(villagers.Carpenter)),
 		limited(ui.HireQuarryman, building.QuarryHut, len(g.quarry.Quarrymen)),
+		{Kind: ui.HireBuilder, Current: len(g.builders.Builders), Limit: maxBuilders, Available: len(g.builders.Builders) < maxBuilders},
 	}
 }
 
@@ -455,6 +494,12 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 				g.statusMsg = ""
 				return
 			}
+		}
+	case ui.HireBuilder:
+		if len(g.builders.Builders) < maxBuilders {
+			g.builders.Hire(g.logi.Warehouse)
+			g.refreshPopulation()
+			g.statusMsg = ""
 		}
 	}
 }
@@ -643,12 +688,12 @@ func (g *Game) handleMouse() {
 		g.statusMsg = i18n.T().CantBuildHere
 		return
 	}
-	placed := &building.Building{Kind: kind, X: tx, Y: ty}
+	// Placement only reserves the footprint and starts a construction site
+	// (see package builder) -- it neither produces nor, for a Warehouse,
+	// acts as a logistics endpoint until a Builder actually finishes it;
+	// see finishConstruction.
+	placed := building.NewConstructionSite(kind, tx, ty)
 	g.buildings = append(g.buildings, placed)
-	if kind == building.Warehouse {
-		g.logi.AddWarehouse(placed)
-	}
-	g.spawnWorkersFor(placed)
 	g.statusMsg = ""
 }
 
@@ -682,6 +727,27 @@ func (g *Game) deleteSelectedBuilding() {
 		return
 	}
 	b := g.selection.Building
+	if b.ConstructionStage != building.ConstructionNone {
+		// A cancelled construction site was never registered as a
+		// Warehouse or given a resident (see finishConstruction), so none
+		// of the kind-specific protections below apply. Any materials
+		// already delivered go back to the stockpile, exactly like a
+		// cancelled haul returns carried cargo elsewhere.
+		g.stock.Add(resource.Plank, b.InputBuffer[resource.Plank])
+		g.stock.Add(resource.StoneBlock, b.InputBuffer[resource.StoneBlock])
+		g.builders.CancelRouteTo(b)
+		g.logi.CancelAllJobs(g.stock)
+		for i, candidate := range g.buildings {
+			if candidate != b {
+				continue
+			}
+			g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+			g.selection.Clear()
+			g.statusMsg = i18n.T().Deleted
+			return
+		}
+		return
+	}
 	if b.Kind == building.Tree {
 		g.statusMsg = i18n.T().CannotDeleteTree
 		return
@@ -756,6 +822,12 @@ func (g *Game) clearMissingUnitSelection() {
 				return
 			}
 		}
+	case ui.SelectionBuilder:
+		for _, bl := range g.builders.Builders {
+			if bl == g.selection.Builder {
+				return
+			}
+		}
 	default:
 		return
 	}
@@ -765,7 +837,7 @@ func (g *Game) clearMissingUnitSelection() {
 // refreshPopulation rebuilds the live headcount while retaining the
 // persistent death/removal history shown in the HUD.
 func (g *Game) refreshPopulation() {
-	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen)
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders)
 }
 
 // selectionAt resolves map coordinates to a live game object. Units have
@@ -808,6 +880,12 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		q := g.quarry.Quarrymen[i]
 		if q.X == tx && q.Y == ty && q.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionQuarryman, Quarryman: q}
+		}
+	}
+	for i := len(g.builders.Builders) - 1; i >= 0; i-- {
+		bl := g.builders.Builders[i]
+		if bl.X == tx && bl.Y == ty {
+			return ui.Selection{Kind: ui.SelectionBuilder, Builder: bl}
 		}
 	}
 	for i := len(g.buildings) - 1; i >= 0; i-- {
@@ -860,6 +938,11 @@ func (g *Game) unitsAt(b *building.Building) int {
 			count++
 		}
 	}
+	for _, bl := range g.builders.Builders {
+		if within(bl.X, bl.Y) {
+			count++
+		}
+	}
 	return count
 }
 
@@ -899,6 +982,21 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 	case building.QuarryHut:
 		g.quarry.Spawn(b)
 	}
+}
+
+// finishConstruction reacts to builder.ConstructionComplete: a freshly
+// finished building gets exactly the same treatment a normally-placed one
+// always has -- its resident worker, and, for a Warehouse specifically,
+// registration as an additional logistics endpoint. Both were deliberately
+// deferred from placement time to this point (see handleMouse) so an
+// unfinished building never produces or acts as a warehouse before a
+// Builder has actually finished it.
+func (g *Game) finishConstruction(b *building.Building) {
+	if b.Kind == building.Warehouse {
+		g.logi.AddWarehouse(b)
+	}
+	g.spawnWorkersFor(b)
+	g.statusMsg = ""
 }
 
 func (g *Game) handleSaveLoad() {
@@ -1079,6 +1177,7 @@ func (g *Game) buildSaveState(name string) save.GameState {
 		LumberjackMealSeed: g.jacks.MealSeed(),
 		FishermanMealSeed:  g.fishers.MealSeed(),
 		QuarrymanMealSeed:  g.quarry.MealSeed(),
+		BuilderMealSeed:    g.builders.MealSeed(),
 		CameraX:            g.camera.X,
 		CameraY:            g.camera.Y,
 		CameraZoom:         g.camera.Scale,
@@ -1161,6 +1260,7 @@ func (g *Game) loadGame(path string) error {
 	g.jacks = lumberjack.NewController()
 	g.fishers = fishing.NewController()
 	g.quarry = quarry.NewController()
+	g.builders = builder.NewController()
 	if len(state.Units) == 0 {
 		// Saves from before unit persistence did not contain a roster.
 		// Keep those saves playable with the old sensible defaults.
@@ -1190,6 +1290,9 @@ func (g *Game) loadGame(path string) error {
 	}
 	if state.QuarrymanMealSeed != 0 {
 		g.quarry.SetMealSeed(state.QuarrymanMealSeed)
+	}
+	if state.BuilderMealSeed != 0 {
+		g.builders.SetMealSeed(state.BuilderMealSeed)
 	}
 	for _, p := range state.BuildingPriority {
 		g.logi.SetPriority(p.Kind, p.Level)
@@ -1254,7 +1357,7 @@ func (g *Game) serializeBuildingPriorities() []save.BuildingPriorityState {
 }
 
 func (g *Game) serializeUnits() []save.UnitState {
-	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen)+len(g.quarry.Quarrymen))
+	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen)+len(g.quarry.Quarrymen)+len(g.builders.Builders))
 	for _, s := range g.logi.Serfs {
 		units = append(units, save.UnitState{
 			Kind:        save.UnitSerf,
@@ -1346,6 +1449,21 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Meal:        q.Meal(),
 		})
 	}
+	for _, bl := range g.builders.Builders {
+		targetIndex := indexOfBuilding(g.buildings, bl.TargetSite())
+		units = append(units, save.UnitState{
+			Kind:        save.UnitBuilder,
+			X:           bl.X,
+			Y:           bl.Y,
+			HomeIndex:   indexOfBuilding(g.buildings, bl.Warehouse),
+			HungerTicks: bl.HungerTicks(),
+			Starving:    bl.Starving,
+			State:       int(bl.State()),
+			TargetIndex: targetIndex,
+			WorkTicks:   bl.WorkTicks(),
+			Meal:        bl.Meal(),
+		})
+	}
 	return units
 }
 
@@ -1410,6 +1528,15 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				target = buildings[state.TargetIndex]
 			}
 			g.quarry.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, quarry.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
+		case save.UnitBuilder:
+			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.Warehouse {
+				continue
+			}
+			var target *building.Building
+			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].ConstructionStage != building.ConstructionNone {
+				target = buildings[state.TargetIndex]
+			}
+			g.builders.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, builder.State(state.State), target, state.WorkTicks, g.grid, buildings, state.Meal)
 		}
 	}
 }
@@ -1976,6 +2103,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera)
 	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera)
 	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera)
+	render.DrawBuilders(screen, g.builders.Builders, g.camera)
 
 	mx, my := ebiten.CursorPosition()
 	tx, ty := g.camera.ScreenToTile(mx, my)

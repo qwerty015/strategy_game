@@ -1,0 +1,189 @@
+package builder
+
+import (
+	"testing"
+
+	"strategy_game/internal/building"
+	"strategy_game/internal/reservations"
+	"strategy_game/internal/resource"
+	"strategy_game/internal/world"
+)
+
+// TestBuilderCompletesConstructionInTwoPhases covers the core two-phase
+// flow the user asked for: the builder starts working the instant he
+// arrives (foundation, no materials needed yet), then waits once the
+// foundation is done until materials are delivered, then finishes and
+// fires ConstructionComplete.
+func TestBuilderCompletesConstructionInTwoPhases(t *testing.T) {
+	grid := world.NewGrid(12, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.Mill, 5, 0)
+	buildings := []*building.Building{warehouse, site}
+	controller := NewController()
+	b := controller.Hire(warehouse)
+	if b == nil {
+		t.Fatal("Hire() returned nil")
+	}
+
+	// Run through the walk to the site plus the whole foundation phase (a
+	// generous budget covers both). No materials are on site, so the
+	// builder must be waiting, not finishing, the instant it ends.
+	for range building.Types[building.Mill].ConstructionFoundationTicks + 50 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if b.State() == StateWaitingMaterials {
+			break
+		}
+	}
+	if b.State() != StateWaitingMaterials {
+		t.Fatalf("state after the foundation phase = %v, want StateWaitingMaterials (no materials delivered yet)", b.State())
+	}
+	if site.ConstructionStage != building.ConstructionWaitingMaterials {
+		t.Fatalf("site ConstructionStage = %v, want ConstructionWaitingMaterials", site.ConstructionStage)
+	}
+
+	// Deliver the required materials (as a serf normally would) and confirm
+	// the builder resumes and eventually finishes.
+	site.AddConstructionMaterial(resource.Plank, building.Types[building.Mill].PlankCost)
+	site.AddConstructionMaterial(resource.StoneBlock, building.Types[building.Mill].StoneCost)
+
+	var completed *Event
+	for range building.Types[building.Mill].ConstructionBuildTicks + 5 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		for _, event := range controller.Tick(grid, buildings, ledger) {
+			e := event
+			completed = &e
+		}
+		if completed != nil {
+			break
+		}
+	}
+	if completed == nil {
+		t.Fatal("builder never finished construction after materials arrived")
+	}
+	if completed.Kind != ConstructionComplete || completed.Building != site {
+		t.Fatalf("event = %#v, want ConstructionComplete for the site", completed)
+	}
+	if site.ConstructionStage != building.ConstructionNone {
+		t.Fatalf("site ConstructionStage after completion = %v, want ConstructionNone", site.ConstructionStage)
+	}
+	if got := site.InputBuffer[resource.Plank]; got != 0 {
+		t.Fatalf("site InputBuffer[Plank] after completion = %d, want 0 (consumed, not left behind)", got)
+	}
+}
+
+// TestBuilderSkipsWaitingWhenMaterialsAlreadyDelivered covers the other
+// path through the two-phase gate: if a serf already delivered everything
+// before the foundation phase even ends, the builder must go straight to
+// finishing instead of idling in StateWaitingMaterials for one extra tick.
+func TestBuilderSkipsWaitingWhenMaterialsAlreadyDelivered(t *testing.T) {
+	grid := world.NewGrid(12, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.Road, 5, 0)
+	site.AddConstructionMaterial(resource.StoneBlock, building.Types[building.Road].StoneCost)
+	buildings := []*building.Building{warehouse, site}
+	controller := NewController()
+	controller.Hire(warehouse)
+
+	sawWaiting := false
+	sawFinishing := false
+	for range building.Types[building.Road].ConstructionFoundationTicks + building.Types[building.Road].ConstructionBuildTicks + 30 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if len(controller.Builders) == 0 {
+			break
+		}
+		switch controller.Builders[0].State() {
+		case StateWaitingMaterials:
+			sawWaiting = true
+		case StateFinishing:
+			sawFinishing = true
+		}
+		if site.ConstructionStage == building.ConstructionNone {
+			break
+		}
+	}
+	if sawWaiting {
+		t.Fatal("builder entered StateWaitingMaterials even though materials were already delivered before the foundation finished")
+	}
+	if !sawFinishing {
+		t.Fatal("builder never reached StateFinishing")
+	}
+}
+
+// TestOnlyOneBuilderClaimsASite covers "не даём второму строителю тот же
+// объект": a second builder must go looking for a different site rather
+// than pile onto one already claimed, unlike a stone deposit where sharing
+// is fine.
+func TestOnlyOneBuilderClaimsASite(t *testing.T) {
+	grid := world.NewGrid(12, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.Mill, 5, 0)
+	buildings := []*building.Building{warehouse, site}
+	controller := NewController()
+	controller.Hire(warehouse)
+	controller.Hire(warehouse)
+
+	for range 10 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+	}
+
+	claimants := 0
+	for _, b := range controller.Builders {
+		if b.TargetSite() == site {
+			claimants++
+		}
+	}
+	if claimants != 1 {
+		t.Fatalf("builders targeting the one site = %d, want 1", claimants)
+	}
+}
+
+// TestController_CancelRouteToResetsBuilderWithoutDanglingPointer mirrors
+// the equivalent lumberjack/quarry test: cancelling a site (or deleting a
+// Tavern a builder is mid-walk to eat at) must not leave a dangling
+// pointer to a building no longer in the world.
+func TestController_CancelRouteToResetsBuilderWithoutDanglingPointer(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.Mill, 5, 0)
+
+	controller := NewController()
+	b := controller.Hire(warehouse)
+	b.state = StateFoundation
+	b.target = site
+
+	controller.CancelRouteTo(site)
+
+	if b.state != StateIdle {
+		t.Fatalf("builder state = %v, want StateIdle", b.state)
+	}
+	if b.target != nil {
+		t.Fatal("b.target is still set after CancelRouteTo -- dangling pointer to the cancelled site")
+	}
+}
+
+// TestController_SurvivesManyIdleTicksWithNoWork mirrors the same guard
+// used for every other free-roaming worker controller: a builder with
+// nothing to build must not silently vanish from the roster while idle.
+func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
+	grid := world.NewGrid(8, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	buildings := []*building.Building{warehouse} // nothing under construction
+	controller := NewController()
+	controller.Hire(warehouse)
+
+	for range 50 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+	}
+
+	if got := len(controller.Builders); got != 1 {
+		t.Fatalf("builders after 50 idle ticks = %d, want 1 (worker must not vanish while merely idle)", got)
+	}
+}

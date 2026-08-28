@@ -197,10 +197,13 @@ func accessPoint(b *building.Building) Point {
 	return Point{X: p.X, Y: p.Y}
 }
 
+// roadSet only counts a finished Road tile -- one still under construction
+// (see building.ConstructionStage) isn't walkable as a road yet, the same
+// way an unfinished building isn't a working producer yet.
 func roadSet(buildings []*building.Building) map[Point]bool {
 	set := make(map[Point]bool)
 	for _, b := range buildings {
-		if b.Kind == building.Road {
+		if b.Kind == building.Road && b.ConstructionStage == building.ConstructionNone {
 			set[Point{b.X, b.Y}] = true
 		}
 	}

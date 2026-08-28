@@ -5,6 +5,26 @@ import (
 	"strategy_game/internal/world"
 )
 
+// Standard construction cost/pace for an ordinary building: 10 planks + 4
+// stone, ~15s digging the foundation and ~30s finishing once materials
+// arrive (60 simulation ticks/2 = 30s at the normal 2 ticks/sec pace). See
+// AGENTS.md's construction section for the three exceptions (Winery,
+// PigFarm, FisherHut need extra planks for a fence/boat) and Road (cheaper
+// and much faster, since the player lays many of them).
+const (
+	standardPlankCost = 10
+	standardStoneCost = 4
+
+	fencedPlankCost = 15 // Winery, PigFarm, FisherHut: fence and/or boat
+
+	standardFoundationTicks = 30
+	standardBuildTicks      = 60
+
+	roadStoneCost       = 1
+	roadFoundationTicks = 10
+	roadBuildTicks      = 10
+)
+
 // Types is the registry of every building kind in the game. This is the
 // data that defines the whole economy: to add a new production chain
 // later (winery, sawmill, ...), add entries here -- no other package
@@ -24,6 +44,10 @@ var Types = map[Kind]Type{
 			// original prototype's two-second cycle.
 			TicksToProduce: 120,
 		},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	Mill: {
 		Kind:      Mill,
@@ -38,6 +62,10 @@ var Types = map[Kind]Type{
 			// in the chain instead of completing instantly.
 			TicksToProduce: 48,
 		},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	Bakery: {
 		Kind:           Bakery,
@@ -52,6 +80,10 @@ var Types = map[Kind]Type{
 			// Baking takes roughly 36 seconds at normal speed.
 			TicksToProduce: 72,
 		},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	Warehouse: {
 		Kind:      Warehouse,
@@ -59,18 +91,30 @@ var Types = map[Kind]Type{
 		Footprint: 1,
 		// No Recipe: it produces nothing, it's the logistics hub serfs
 		// move goods through. See Building's doc comment.
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	Road: {
 		Kind:      Road,
 		Name:      "Road",
 		Footprint: 1,
 		// No AllowedTerrain restriction: a road can be laid on any
-		// buildable tile.
+		// buildable tile. Cheaper and quicker than a building -- the
+		// player lays many of these -- and needs no planks at all.
+		StoneCost:                   roadStoneCost,
+		ConstructionFoundationTicks: roadFoundationTicks,
+		ConstructionBuildTicks:      roadBuildTicks,
 	},
 	Tavern: {
-		Kind:      Tavern,
-		Name:      "Tavern",
-		Footprint: 1,
+		Kind:                        Tavern,
+		Name:                        "Tavern",
+		Footprint:                   1,
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 		Recipe: Recipe{
 			// TicksToProduce: 0 means economy.Tick skips it (it makes
 			// nothing) -- but logistics still reads the accepted menu to
@@ -104,6 +148,10 @@ var Types = map[Kind]Type{
 		// The hut has no recipe: the lumberjack physically walks to a tree
 		// and deposits finished Logs into OutputBuffer. Serfs collect them
 		// through the hut's road access point.
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	Winery: {
 		Kind:           Winery,
@@ -119,6 +167,12 @@ var Types = map[Kind]Type{
 			TicksToProduce: 240, // about two minutes at normal speed
 		},
 		OutputCapacity: 8,
+		// Extra planks: the vineyard's wooden fence around all eight crop
+		// cells.
+		PlankCost:                   fencedPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	FisherHut: {
 		Kind:           FisherHut,
@@ -127,6 +181,11 @@ var Types = map[Kind]Type{
 		RequiresWorker: true,
 		// The fisherman places caught Fish in OutputBuffer; ordinary serfs
 		// collect it along the hut's normal road access point.
+		// Extra planks: the boat.
+		PlankCost:                   fencedPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	Fish: {
 		Kind:           Fish,
@@ -149,6 +208,11 @@ var Types = map[Kind]Type{
 			TicksToProduce:       600,
 			ConsumeInputsAtStart: true,
 		},
+		// Extra planks: the pen fence.
+		PlankCost:                   fencedPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	MeatWorkshop: {
 		Kind:           MeatWorkshop,
@@ -163,6 +227,10 @@ var Types = map[Kind]Type{
 			OutputAmount:   2,
 			TicksToProduce: 72,
 		},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	CarpentryWorkshop: {
 		Kind:           CarpentryWorkshop,
@@ -177,6 +245,10 @@ var Types = map[Kind]Type{
 			OutputAmount:   2,
 			TicksToProduce: 72,
 		},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 	StoneDeposit: {
 		Kind:      StoneDeposit,
@@ -185,7 +257,8 @@ var Types = map[Kind]Type{
 		// Stone deposits are placed by map generation as one region, not
 		// player-built or offered in the palette. Ordinary occupancy rules
 		// still apply: nothing else can be built on one while it still has
-		// Reserve left (see CanPlace/footprintsOverlap).
+		// Reserve left (see CanPlace/footprintsOverlap). No construction
+		// cost/pace: it's never placed through the Builder flow.
 	},
 	QuarryHut: {
 		Kind:           QuarryHut,
@@ -197,5 +270,9 @@ var Types = map[Kind]Type{
 		// OutputBuffer (1 mined stone -> 2 blocks, applied on unload -- see
 		// package quarry). Serfs collect them through the hut's normal road
 		// access point, same as a Lumberjack Hut's Logs.
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
 	},
 }

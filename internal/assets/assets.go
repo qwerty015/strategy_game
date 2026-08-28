@@ -138,6 +138,10 @@ var (
 		mustLoad("generated/unit_quarryman.png"),
 		mustLoad("generated/unit_quarryman.png"),
 	}
+	// Builder temporarily reuses the Serf sprite -- a generic town laborer,
+	// matching Builder's own no-hut, always-visible role. Swap for its own
+	// unit_builder.png once that exists.
+	Builder     = Serf
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 

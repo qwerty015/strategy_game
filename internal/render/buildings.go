@@ -35,6 +35,10 @@ var (
 	unstaffedTint  = color.RGBA{R: 214, G: 63, B: 55, A: 90}    // translucent red over a workerless building
 	stoneFullColor = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
 	stoneWornColor = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
+
+	constructionColor     = color.RGBA{R: 156, G: 130, B: 92, A: 200} // raw timber/scaffolding tone -- no dedicated art yet
+	constructionWaitColor = color.RGBA{R: 214, G: 63, B: 55, A: 150}  // translucent red: stalled, waiting on delivery
+	constructionBarColor  = color.RGBA{R: 255, G: 255, B: 0, A: 220}  // matches the ordinary production progress bar
 )
 
 // lerpColor blends from a to b as t goes from 0 to 1, clamped.
@@ -73,10 +77,14 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 	// because of where it sits in the save/build slice.
 	for _, b := range buildings {
 		sx, sy := cam.TileToScreen(b.X, b.Y)
-		switch b.Kind {
-		case building.Road:
+		switch {
+		case b.Kind == building.Road && b.ConstructionStage != building.ConstructionNone:
+			// Not a real road yet -- see pathfind.roadSet. Drawing the
+			// cobblestone texture here would visually claim otherwise.
+			drawConstructionSite(screen, b, 1, sx, sy, tilePixels)
+		case b.Kind == building.Road:
 			drawStandingAtScale(screen, assets.Road, sx, sy, 1, tilePixels)
-		case building.StoneDeposit:
+		case b.Kind == building.StoneDeposit:
 			drawStoneDeposit(screen, sx, sy, tilePixels, b.Reserve)
 		}
 	}
@@ -87,6 +95,11 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		}
 		bt := building.Types[b.Kind]
 		sx, sy := cam.TileToScreen(b.X, b.Y)
+
+		if b.ConstructionStage != building.ConstructionNone {
+			drawConstructionSite(screen, b, bt.Footprint, sx, sy, tilePixels)
+			continue
+		}
 
 		switch b.Kind {
 		case building.Tree:
@@ -209,6 +222,27 @@ func drawTree(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 		stage = 2
 	}
 	drawStandingAtScale(screen, assets.TreeFrames[stage], sx, sy, 1.75, tilePixels)
+}
+
+// drawConstructionSite stands in for every building kind's own art while it
+// is still under construction (see package builder) -- there is no
+// dedicated scaffolding sprite per kind, so a flat placeholder plus the
+// usual yellow progress bar has to carry the "something is being built
+// here" read regardless of what it will become. The tint turns red while
+// stalled waiting on a materials delivery, mirroring unstaffedTint's
+// "needs the player's attention" language elsewhere on the map.
+func drawConstructionSite(screen *ebiten.Image, b *building.Building, footprint int, sx, sy, tilePixels float64) {
+	fill := constructionColor
+	if b.ConstructionStage == building.ConstructionWaitingMaterials {
+		fill = constructionWaitColor
+	}
+	size := float32(footprint) * float32(tilePixels)
+	vector.FillRect(screen, float32(sx), float32(sy), size, size, fill, false)
+
+	progress := float32(b.ConstructionProgress())
+	barY := float32(sy) + size - float32(3*tilePixels/TileSize)
+	barHeight := float32(3 * tilePixels / TileSize)
+	vector.FillRect(screen, float32(sx), barY, size*progress, barHeight, constructionBarColor, false)
 }
 
 // drawStoneDeposit draws a ground-level boulder cluster rather than a standing

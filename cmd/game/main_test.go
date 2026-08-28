@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/fishing"
@@ -174,6 +175,7 @@ func TestSelectionAt_BuildingWinsOverInvisibleResident(t *testing.T) {
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Baker, bakery)
@@ -202,6 +204,7 @@ func TestSelectionAt_VisibleFarmerStillSelectable(t *testing.T) {
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Farmer, farm)
@@ -234,6 +237,7 @@ func TestUnitsAt_CountsAnyoneOnTheFootprintEvenWithoutADedicatedResident(t *test
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
 	}
 	game.logi.Hire()
 	game.logi.Hire()
@@ -269,6 +273,7 @@ func TestSerializeAndRestorePigChainWorkers(t *testing.T) {
 			jacks:     lumberjack.NewController(),
 			fishers:   fishing.NewController(),
 			quarry:    quarry.NewController(),
+			builders:  builder.NewController(),
 		}
 	}
 	source := makeGame()
@@ -304,6 +309,7 @@ func TestSerializeAndRestoreCarpenter(t *testing.T) {
 			jacks:     lumberjack.NewController(),
 			fishers:   fishing.NewController(),
 			quarry:    quarry.NewController(),
+			builders:  builder.NewController(),
 		}
 	}
 	source := makeGame()
@@ -331,6 +337,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
 	}
 	if !source.logi.RequestDismissal(source.logi.Serfs[0]) {
 		t.Fatal("RequestDismissal = false")
@@ -344,6 +351,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
 	}
 	restored.restoreUnits(source.serializeUnits(), buildings)
 	if got := len(restored.logi.Serfs); got != 1 {
@@ -365,6 +373,7 @@ func TestDeleteWarehousePromotesRemainingWarehouse(t *testing.T) {
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: first},
 	}
 	game.logi.AddWarehouse(second)
@@ -398,6 +407,7 @@ func TestDeleteLastWarehouseIsRejected(t *testing.T) {
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: warehouse},
 	}
 
@@ -429,6 +439,7 @@ func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
 		jacks:     lumberjack.NewController(),
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
 	}
 
 	options := game.hireOptions()

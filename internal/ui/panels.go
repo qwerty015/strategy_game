@@ -8,6 +8,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"strategy_game/internal/assets"
+	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/fishing"
@@ -220,6 +221,8 @@ func hireName(kind HireKind) string {
 		return t.UnitCarpenter
 	case HireQuarryman:
 		return t.UnitQuarryman
+	case HireBuilder:
+		return t.UnitBuilder
 	default:
 		return t.UnitSerf
 	}
@@ -246,6 +249,8 @@ func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
 		img = assets.Carpenter[0]
 	case HireQuarryman:
 		img = assets.Quarryman[0]
+	case HireBuilder:
+		img = assets.Builder[0]
 	default:
 		img = assets.Serf[0]
 	}
@@ -295,6 +300,8 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		drawFishermanInspector(screen, r.Min.X+18, 62, selection.Fisherman)
 	case SelectionQuarryman:
 		drawQuarrymanInspector(screen, r.Min.X+18, 62, selection.Quarryman)
+	case SelectionBuilder:
+		drawBuilderInspector(screen, r.Min.X+18, 62, selection.Builder)
 	}
 	if showPriority {
 		drawPriorityControl(screen, layout, priorityLevel)
@@ -330,11 +337,41 @@ func drawPriorityControl(screen *ebiten.Image, layout Layout, current int) {
 	}
 }
 
+// drawConstructionInspector shows a placed-but-unfinished building or
+// road's stage, delivered materials, and overall progress -- see package
+// builder. Called instead of the rest of drawBuildingInspector for any
+// building still under construction, regardless of what it will become.
+func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Building, bt building.Type) {
+	t := i18n.T()
+	stage := t.ConstructionFoundationLabel
+	switch b.ConstructionStage {
+	case building.ConstructionWaitingMaterials:
+		stage = t.ConstructionWaitingLabel
+	case building.ConstructionFinishing:
+		stage = t.ConstructionFinishingLabel
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, stage), float64(x), float64(y))
+	y += 20
+	DrawText(screen, fmt.Sprintf("%s: %d%%", t.ConstructionProgressLabel, int(b.ConstructionProgress()*100)), float64(x), float64(y))
+	y += 20
+	if bt.PlankCost > 0 {
+		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Plank], b.InputBuffer[resource.Plank], bt.PlankCost), float64(x), float64(y))
+		y += 18
+	}
+	if bt.StoneCost > 0 {
+		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.InputBuffer[resource.StoneBlock], bt.StoneCost), float64(x), float64(y))
+	}
+}
+
 func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool, stock *resource.Stockpile, occupants int) {
 	t := i18n.T()
 	bt := building.Types[b.Kind]
 	DrawText(screen, t.BuildingName[b.Kind], float64(x), float64(y))
 	y += 24
+	if b.ConstructionStage != building.ConstructionNone {
+		drawConstructionInspector(screen, x, y, b, bt)
+		return
+	}
 	if b.Kind == building.Tree {
 		DrawText(screen, fmt.Sprintf("%s: %d%%", t.GrowthLabel, int(b.GrowthProgress()*100)), float64(x), float64(y))
 		y += 20
@@ -611,6 +648,37 @@ func drawQuarrymanInspector(screen *ebiten.Image, x, y int, q *quarry.Quarryman)
 	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.QuarryHut]), float64(x), float64(y))
 	y += 20
 	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, q.SatietyPercent()), float64(x), float64(y))
+}
+
+func drawBuilderInspector(screen *ebiten.Image, x, y int, bld *builder.Builder) {
+	t := i18n.T()
+	DrawText(screen, t.UnitBuilder, float64(x), float64(y))
+	y += 24
+
+	state := t.StateIdle
+	switch bld.State() {
+	case builder.StateToSite:
+		state = t.StateWalking
+	case builder.StateFoundation, builder.StateFinishing:
+		state = t.StateBuilding
+	case builder.StateWaitingMaterials:
+		state = t.StateWaitingMaterials
+	case builder.StateToTavern:
+		state = t.StateWalking
+	}
+	if bld.Starving {
+		state += " (" + t.StateStarving + ")"
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	y += 20
+
+	target := t.NoRoute
+	if site := bld.TargetSite(); site != nil {
+		target = t.BuildingName[site.Kind]
+	}
+	DrawText(screen, fmt.Sprintf("%s: %s", t.RouteLabel, target), float64(x), float64(y))
+	y += 20
+	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, bld.SatietyPercent()), float64(x), float64(y))
 }
 
 func drawFishermanInspector(screen *ebiten.Image, x, y int, f *fishing.Fisherman) {

@@ -83,6 +83,7 @@ type GameState struct {
 	LumberjackMealSeed uint32
 	FishermanMealSeed  uint32
 	QuarrymanMealSeed  uint32
+	BuilderMealSeed    uint32
 
 	CameraX    float64
 	CameraY    float64
@@ -104,6 +105,7 @@ const (
 	UnitButcher    UnitKind = "butcher"
 	UnitCarpenter  UnitKind = "carpenter"
 	UnitQuarryman  UnitKind = "quarryman"
+	UnitBuilder    UnitKind = "builder"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the

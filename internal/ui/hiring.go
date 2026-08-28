@@ -14,6 +14,9 @@ const (
 // HireKind identifies a unit the player may add through the hire tab.
 // Professional workers are constrained by their matching workplaces; serfs
 // are the only town-wide unit and deliberately have no building limit.
+// Builder is the one exception in between: town-wide like a serf (no
+// dedicated hut), but capped at a flat number (see cmd/game's maxBuilders)
+// rather than by building count.
 type HireKind int
 
 const (
@@ -27,6 +30,7 @@ const (
 	HireButcher
 	HireCarpenter
 	HireQuarryman
+	HireBuilder
 )
 
 // HireOption is the read-only state of a card in the hire menu. Limit is zero
