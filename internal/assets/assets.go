@@ -58,6 +58,10 @@ var (
 	MeatWorkshop      = mustLoad("generated/building_meat_workshop.png")
 	CarpentryWorkshop = mustLoad("generated/building_carpentry_workshop.png")
 	QuarryHut         = mustLoad("generated/building_quarry_hut.png")
+	// Construction art is deliberately generic: the same site can scale from
+	// a one-tile road to a 3×3 farm without previewing the finished building.
+	ConstructionFoundation  = mustLoad("generated/construction_foundation.png")
+	ConstructionScaffolding = mustLoad("generated/construction_scaffolding.png")
 	// The source fishing hut's pier points south. CPU-rotated variants let the
 	// renderer orient it toward whichever cardinal water tile borders the hut.
 	FisherHutFrames = [4]*ebiten.Image{
@@ -138,10 +142,11 @@ var (
 		mustLoad("generated/unit_quarryman.png"),
 		mustLoad("generated/unit_quarryman.png"),
 	}
-	// Builder temporarily reuses the Serf sprite -- a generic town laborer,
-	// matching Builder's own no-hut, always-visible role. Swap for its own
-	// unit_builder.png once that exists.
-	Builder     = Serf
+	Builder = [3]*ebiten.Image{
+		mustLoad("generated/unit_builder.png"),
+		mustLoad("generated/unit_builder.png"),
+		mustLoad("generated/unit_builder.png"),
+	}
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 

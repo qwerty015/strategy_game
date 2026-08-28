@@ -28,8 +28,10 @@ func DrawBuilders(screen *ebiten.Image, builders []*builder.Builder, cam *Camera
 		drawStandingTintedAtScale(screen, assets.Builder[frame], sx, sy+bob*tilePixels/TileSize, builderHeight, tilePixels, tint)
 
 		switch b.State() {
-		case builder.StateFoundation, builder.StateFinishing:
-			drawChopCue(screen, sx, sy+bob*tilePixels/TileSize, tilePixels)
+		case builder.StateFoundation:
+			drawBuilderWorkCue(screen, sx, sy+bob*tilePixels/TileSize, tilePixels, false)
+		case builder.StateFinishing:
+			drawBuilderWorkCue(screen, sx, sy+bob*tilePixels/TileSize, tilePixels, true)
 		}
 	}
 }

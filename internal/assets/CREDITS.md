@@ -34,3 +34,9 @@ derived from any specific commercial game's visual assets.
 the stone and wood-processing chains. The deposit sprite is a transparent
 object drawn over the stone terrain; the buildings and professions use their
 own distinct silhouettes and are original project art.
+
+The construction set includes `unit_builder.png`,
+`construction_foundation.png` and `construction_scaffolding.png`. It was
+generated with the same tool on 2026-08-28. These are transparent original
+project art: the first is the builder profession, while the latter two are
+generic frames rendered at the footprint of an unfinished road or building.

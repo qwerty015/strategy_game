@@ -6,6 +6,8 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+
+	"strategy_game/internal/building"
 )
 
 // drawCropGrowth adds a few deliberately chunky crop marks on top of the
@@ -117,4 +119,53 @@ func drawFire(screen *ebiten.Image, x, y, tilePixels float64) {
 	if phase == 1 {
 		vector.FillRect(screen, float32(x+2*float64(scale)), float32(y-5*float64(scale)), scale, 2*scale, color.RGBA{R: 255, G: 173, B: 49, A: 220}, false)
 	}
+}
+
+// drawConstructionSiteEffect keeps a site visibly alive without adding more
+// animation sheets. Foundation work throws brown dust, the finishing stage
+// throws pale sawdust and a paused site pulses a compact materials warning.
+func drawConstructionSiteEffect(screen *ebiten.Image, stage building.ConstructionStage, sx, sy, footprint, tilePixels float64) {
+	scale := tilePixels / TileSize
+	size := footprint * tilePixels
+	phase := (animFrame / 7) % 4
+
+	switch stage {
+	case building.ConstructionFoundation:
+		for i := 0; i < 3; i++ {
+			x := sx + size*(0.22+float64((i*3+phase)%5)*0.13)
+			y := sy + size*(0.67-float64((i+phase)%3)*0.07)
+			vector.FillCircle(screen, float32(x), float32(y), float32(maxPixel(scale)), color.RGBA{R: 181, G: 135, B: 73, A: 145}, false)
+		}
+	case building.ConstructionFinishing:
+		for i := 0; i < 3; i++ {
+			x := sx + size*(0.24+float64((i*5+phase)%6)*0.1)
+			y := sy + size*(0.23+float64((i+phase)%4)*0.11)
+			vector.FillRect(screen, float32(x), float32(y), float32(maxPixel(scale)), float32(maxPixel(scale)), color.RGBA{R: 237, G: 205, B: 126, A: 190}, false)
+		}
+	case building.ConstructionWaitingMaterials:
+		pulse := float64((animFrame/12)%2) * scale
+		x := sx + size - 7*scale
+		y := sy + 5*scale
+		vector.FillCircle(screen, float32(x), float32(y), float32(4*scale+pulse), color.RGBA{R: 129, G: 38, B: 34, A: 220}, false)
+		vector.FillRect(screen, float32(x-scale/2), float32(y-2*scale), float32(maxPixel(scale)), float32(3*scale), color.RGBA{R: 255, G: 221, B: 108, A: 255}, false)
+		vector.FillRect(screen, float32(x-scale/2), float32(y+2*scale), float32(maxPixel(scale)), float32(maxPixel(scale)), color.RGBA{R: 255, G: 221, B: 108, A: 255}, false)
+	}
+}
+
+// drawBuilderWorkCue adds a small hammer strike and a matching dust cloud to
+// the dedicated builder sprite. It deliberately differs from drawChopCue:
+// lumberjacks and quarrymen swing tools at a natural resource, while a
+// builder alternates between digging soil and fitting prepared materials.
+func drawBuilderWorkCue(screen *ebiten.Image, sx, sy, tilePixels float64, finishing bool) {
+	scale := tilePixels / TileSize
+	phase := (animFrame / 5) % 3
+	cueColor := color.RGBA{R: 166, G: 120, B: 64, A: 205}
+	if finishing {
+		cueColor = color.RGBA{R: 224, G: 193, B: 119, A: 220}
+	}
+
+	x := sx + float64(17+phase*2)*scale
+	y := sy + float64(19-phase)*scale
+	vector.FillRect(screen, float32(x), float32(y), float32(5*scale), float32(maxPixel(scale)), cueColor, false)
+	vector.FillCircle(screen, float32(x+4*scale), float32(y+2*scale), float32(maxPixel(scale)), cueColor, false)
 }

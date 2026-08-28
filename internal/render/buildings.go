@@ -36,9 +36,9 @@ var (
 	stoneFullColor = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
 	stoneWornColor = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
 
-	constructionColor     = color.RGBA{R: 156, G: 130, B: 92, A: 200} // raw timber/scaffolding tone -- no dedicated art yet
-	constructionWaitColor = color.RGBA{R: 214, G: 63, B: 55, A: 150}  // translucent red: stalled, waiting on delivery
-	constructionBarColor  = color.RGBA{R: 255, G: 255, B: 0, A: 220}  // matches the ordinary production progress bar
+	constructionGroundColor = color.RGBA{R: 109, G: 79, B: 45, A: 180}  // exposed earth beneath a site
+	constructionWaitColor   = color.RGBA{R: 214, G: 63, B: 55, A: 100}  // stalled, waiting on delivery
+	constructionBarColor    = color.RGBA{R: 255, G: 205, B: 61, A: 235} // construction progress
 )
 
 // lerpColor blends from a to b as t goes from 0 to 1, clamped.
@@ -224,20 +224,23 @@ func drawTree(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 	drawStandingAtScale(screen, assets.TreeFrames[stage], sx, sy, 1.75, tilePixels)
 }
 
-// drawConstructionSite stands in for every building kind's own art while it
-// is still under construction (see package builder) -- there is no
-// dedicated scaffolding sprite per kind, so a flat placeholder plus the
-// usual yellow progress bar has to carry the "something is being built
-// here" read regardless of what it will become. The tint turns red while
-// stalled waiting on a materials delivery, mirroring unstaffedTint's
-// "needs the player's attention" language elsewhere on the map.
+// drawConstructionSite renders the three shared visual construction stages.
+// The foundation/scaffolding frames intentionally remain generic: they show
+// progress without previewing the finished building before its resources arrive.
 func drawConstructionSite(screen *ebiten.Image, b *building.Building, footprint int, sx, sy, tilePixels float64) {
-	fill := constructionColor
-	if b.ConstructionStage == building.ConstructionWaitingMaterials {
-		fill = constructionWaitColor
-	}
 	size := float32(footprint) * float32(tilePixels)
-	vector.FillRect(screen, float32(sx), float32(sy), size, size, fill, false)
+	vector.FillRect(screen, float32(sx), float32(sy), size, size, constructionGroundColor, false)
+
+	siteArt := assets.ConstructionFoundation
+	if b.ConstructionStage == building.ConstructionFinishing {
+		siteArt = assets.ConstructionScaffolding
+	}
+	drawStandingAtScale(screen, siteArt, sx, sy, float64(footprint), tilePixels)
+
+	if b.ConstructionStage == building.ConstructionWaitingMaterials {
+		vector.FillRect(screen, float32(sx), float32(sy), size, size, constructionWaitColor, false)
+	}
+	drawConstructionSiteEffect(screen, b.ConstructionStage, sx, sy, float64(footprint), tilePixels)
 
 	progress := float32(b.ConstructionProgress())
 	barY := float32(sy) + size - float32(3*tilePixels/TileSize)
