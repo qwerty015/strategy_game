@@ -45,7 +45,10 @@ func TestSeedFishLimitsEveryConnectedWaterBody(t *testing.T) {
 // total count must land in the designed 5-10% of the map's area.
 func TestSeedStoneDepositsSplitsAcrossMultipleRegions(t *testing.T) {
 	grid := world.NewGrid(40, 30)
-	buildings := seedStoneDeposits(grid, nil, 0x1b873593)
+	// No keep-away point exercised here -- this test is only about the
+	// abundance percentage and region count; TestSeedDepositsKeepAllKindsAwayFromWarehouse
+	// covers the distance constraint on its own.
+	buildings := seedStoneDeposits(grid, nil, 0x1b873593, gridPoint{}, 0)
 
 	area := grid.Width * grid.Height
 	minCells, maxCells := area*5/100, area*10/100
@@ -104,7 +107,7 @@ func TestEnsureStoneDepositsDoesNotReseedAFullyMinedWorld(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	buildings := []*building.Building{warehouse} // no deposits left, world already seeded once
 
-	got := ensureStoneDeposits(grid, buildings, true, 0x1b873593)
+	got := ensureStoneDeposits(grid, buildings, true, 0x1b873593, gridPoint{warehouse.X, warehouse.Y})
 
 	if len(got) != 1 {
 		t.Fatalf("ensureStoneDeposits on an already-seeded, fully-mined world returned %d buildings, want 1 (no reseeding)", len(got))
@@ -119,7 +122,7 @@ func TestEnsureStoneDepositsSeedsAnUnmigratedSave(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	buildings := []*building.Building{warehouse}
 
-	got := ensureStoneDeposits(grid, buildings, false, 0x1b873593)
+	got := ensureStoneDeposits(grid, buildings, false, 0x1b873593, gridPoint{warehouse.X, warehouse.Y})
 
 	deposits := 0
 	for _, b := range got {
@@ -151,7 +154,10 @@ func TestSeedOreDepositsRespectsDesignedAbundance(t *testing.T) {
 		{"gold ore", building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed},
 	}
 	for _, c := range cases {
-		buildings := seedOreDeposits(grid, nil, c.kind, c.minPercent, c.maxPercent, c.seed)
+		// No keep-away point exercised here -- this test is only about the
+		// abundance percentages; TestSeedDepositsKeepAllKindsAwayFromWarehouse
+		// covers the distance constraint on its own.
+		buildings := seedOreDeposits(grid, nil, c.kind, c.minPercent, c.maxPercent, c.seed, gridPoint{}, 0)
 		minCells, maxCells := area*c.minPercent/100, area*c.maxPercent/100
 		if len(buildings) < minCells || len(buildings) > maxCells {
 			t.Fatalf("%s: placed %d cells, want between %d and %d (%d-%d%% of %d)", c.name, len(buildings), minCells, maxCells, c.minPercent, c.maxPercent, area)
@@ -168,6 +174,33 @@ func TestSeedOreDepositsRespectsDesignedAbundance(t *testing.T) {
 	}
 }
 
+// TestSeedDepositsKeepAllKindsAwayFromWarehouse covers "уголь, камень,
+// руды не спавнились ближе чем на 20 клеток от склада": every finite
+// deposit kind -- stone, coal, gold ore, iron ore -- must sit at least
+// minDepositDistanceFromWarehouse away from the given point.
+func TestSeedDepositsKeepAllKindsAwayFromWarehouse(t *testing.T) {
+	grid := world.NewGrid(80, 60)
+	warehouse := gridPoint{18, 10}
+	minDistSq := float64(minDepositDistanceFromWarehouse * minDepositDistanceFromWarehouse)
+
+	checkDistance := func(kind building.Kind, buildings []*building.Building) {
+		if len(buildings) == 0 {
+			t.Fatalf("%v: seeding placed no cells at all", kind)
+		}
+		for _, b := range buildings {
+			dx, dy := float64(b.X-warehouse.x), float64(b.Y-warehouse.y)
+			if dist := dx*dx + dy*dy; dist < minDistSq {
+				t.Fatalf("%v: deposit at (%d,%d) is within %d cells of the warehouse, want >= %d", kind, b.X, b.Y, minDepositDistanceFromWarehouse, minDepositDistanceFromWarehouse)
+			}
+		}
+	}
+
+	checkDistance(building.StoneDeposit, seedStoneDeposits(grid, nil, 0x1b873593, warehouse, minDepositDistanceFromWarehouse))
+	for _, kind := range []building.Kind{building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit} {
+		checkDistance(kind, seedOreDeposits(grid, nil, kind, 3, 4, 0xabcdef01, warehouse, minDepositDistanceFromWarehouse))
+	}
+}
+
 // TestEnsureOreDepositsDoesNotReseedAFullyMinedWorld mirrors
 // TestEnsureStoneDepositsDoesNotReseedAFullyMinedWorld for OreSeeded: a
 // modern save with every ore deposit mined dry must not have fresh regions
@@ -177,7 +210,7 @@ func TestEnsureOreDepositsDoesNotReseedAFullyMinedWorld(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	buildings := []*building.Building{warehouse}
 
-	got := ensureOreDeposits(grid, buildings, true, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed)
+	got := ensureOreDeposits(grid, buildings, true, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed, gridPoint{warehouse.X, warehouse.Y})
 
 	if len(got) != 1 {
 		t.Fatalf("ensureOreDeposits on an already-seeded, fully-mined world returned %d buildings, want 1 (no reseeding)", len(got))
@@ -191,7 +224,7 @@ func TestEnsureOreDepositsSeedsAnUnmigratedSave(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	buildings := []*building.Building{warehouse}
 
-	got := ensureOreDeposits(grid, buildings, false, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed)
+	got := ensureOreDeposits(grid, buildings, false, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed, gridPoint{warehouse.X, warehouse.Y})
 
 	found := map[building.Kind]bool{}
 	for _, b := range got {
@@ -617,6 +650,38 @@ func TestFinishConstructionDoesNotAutoSpawnAWorker(t *testing.T) {
 
 	if got := len(game.jacks.Lumberjacks); got != 0 {
 		t.Fatalf("lumberjacks after finishConstruction = %d, want 0 (no auto-spawn -- must be hired separately)", got)
+	}
+}
+
+// TestResetToNewGameDiscardsProgress covers the Settings tab's "New Game"
+// button: it must throw away every bit of the running town's mutable state
+// -- spent gold, deaths, the active selection, an open dialog -- and land
+// back on a game indistinguishable from a fresh NewGame().
+func TestResetToNewGameDiscardsProgress(t *testing.T) {
+	g := NewGame()
+	if !g.stock.Remove(resource.Gold, 50) {
+		t.Fatal("setup: could not spend starting gold")
+	}
+	g.pop.Deaths = 7
+	g.selection = ui.Selection{Kind: ui.SelectionBuilding, Building: g.buildings[0]}
+	g.dialog = ui.DialogConfirmNewGame
+
+	g.resetToNewGame()
+
+	if got := g.stock.Amount(resource.Gold); got != startingGold {
+		t.Fatalf("gold after reset = %d, want %d (fresh NewGame)", got, startingGold)
+	}
+	if g.pop.Deaths != 0 {
+		t.Fatalf("deaths after reset = %d, want 0", g.pop.Deaths)
+	}
+	if g.dialog != ui.DialogNone {
+		t.Fatalf("dialog after reset = %v, want DialogNone", g.dialog)
+	}
+	if g.selection.Kind != ui.SelectionNone {
+		t.Fatalf("selection after reset = %v, want SelectionNone", g.selection.Kind)
+	}
+	if g.statusMsg == "" {
+		t.Fatal("status message after reset is empty, want a confirmation message")
 	}
 }
 

@@ -69,8 +69,7 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 
 		drawBuildingIcon(screen, kind, x+8, y+6, 28)
 		DrawText(screen, i18n.T().BuildingName[kind], float64(x+44), float64(y+5))
-		shortcut := paletteShortcut(i)
-		DrawText(screen, fmt.Sprintf("%d×%d%s", building.Types[kind].Footprint, building.Types[kind].Footprint, shortcut), float64(x+50), float64(y+27))
+		DrawText(screen, fmt.Sprintf("%d×%d", building.Types[kind].Footprint, building.Types[kind].Footprint), float64(x+50), float64(y+27))
 	}
 }
 
@@ -123,6 +122,9 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 		DrawText(screen, label, float64(bx+4), float64(settingsSpeedRowY+8))
 	}
 
+	vector.FillRect(screen, float32(x), float32(settingsNewGameRowY), float32(w), float32(settingsNewGameRowH), panelInnerColor, false)
+	DrawText(screen, t.NewGameButton, float64(x+8), float64(settingsNewGameRowY+6))
+
 	if dialog != DialogNone {
 		drawSettingsDialog(screen, layout, dialog, dialogSlot, dialogText)
 		return
@@ -164,6 +166,12 @@ func drawSettingsDialog(screen *ebiten.Image, layout Layout, dialog DialogKind, 
 	if dialog == DialogConfirmOverwrite {
 		DrawText(screen, fmt.Sprintf(t.SlotOverwritePrompt, slot, text), float64(x), float64(settingsSlotsLabelY))
 		drawDialogButtons(screen, x, w, t.SlotOverwriteButton, t.SlotCancelButton)
+		return
+	}
+
+	if dialog == DialogConfirmNewGame {
+		DrawText(screen, t.NewGameConfirmPrompt, float64(x), float64(settingsSlotsLabelY))
+		drawDialogButtons(screen, x, w, t.NewGameConfirmButton, t.SlotCancelButton)
 		return
 	}
 
@@ -261,7 +269,7 @@ func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
 	case HireMiner:
 		img = assets.Miner[0]
 	case HireSmelter:
-		img = assets.Carpenter[0] // no dedicated sprite yet; both are indoor conversion workers
+		img = assets.Smelter[0]
 	default:
 		img = assets.Serf[0]
 	}
@@ -272,19 +280,6 @@ func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
 	op.GeoM.Translate(float64(x), float64(y))
 	op.Blend = ebiten.BlendSourceOver
 	screen.DrawImage(img, op)
-}
-
-func paletteShortcut(index int) string {
-	switch {
-	case index < 9:
-		return fmt.Sprintf("  [%d]", index+1)
-	case index == 9:
-		return "  [0]"
-	case index == 10:
-		return "  [Q]"
-	default:
-		return ""
-	}
 }
 
 // DrawInspectorPanel renders the currently selected object. It reads only
@@ -957,6 +952,10 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.LumberjackHut
 	case building.QuarryHut:
 		img = assets.QuarryHut
+	case building.MinerHut:
+		img = assets.MinerHut
+	case building.Smeltery:
+		img = assets.Smeltery
 	case building.FisherHut:
 		img = assets.FisherHutFrames[0]
 	}

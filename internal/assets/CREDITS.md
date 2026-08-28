@@ -40,3 +40,11 @@ The construction set includes `unit_builder.png`,
 generated with the same tool on 2026-08-28. These are transparent original
 project art: the first is the builder profession, while the latter two are
 generic frames rendered at the footprint of an unfinished road or building.
+
+`terrain_coal_deposit.png`, `terrain_gold_ore_deposit.png`,
+`terrain_iron_ore_deposit.png`, `building_miner_hut.png`,
+`building_smeltery.png`, `unit_miner.png` and `unit_smelter.png` were
+generated with the built-in OpenAI image generation tool on 2026-08-28 for
+the ore-and-smelting chain. They are transparent original project art: each
+ore type has its own deposit silhouette, and the two buildings and professions
+are visually distinct from the quarry and carpentry chain.

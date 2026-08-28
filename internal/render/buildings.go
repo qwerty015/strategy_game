@@ -36,11 +36,8 @@ var (
 	stoneFullColor = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
 	stoneWornColor = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
 
-	coalFullColor    = color.RGBA{R: 45, G: 45, B: 45, A: 255}    // freshly placed coal seam
 	coalWornColor    = color.RGBA{R: 150, G: 150, B: 150, A: 255} // nearly spent, ashen
-	goldOreFullColor = color.RGBA{R: 212, G: 175, B: 55, A: 255}  // freshly placed gold ore
 	goldOreWornColor = color.RGBA{R: 210, G: 200, B: 150, A: 255} // nearly spent, pale
-	ironOreFullColor = color.RGBA{R: 165, G: 96, B: 62, A: 255}   // freshly placed iron ore, rust-red
 	ironOreWornColor = color.RGBA{R: 200, G: 180, B: 160, A: 255} // nearly spent, pale rust
 
 	constructionGroundColor = color.RGBA{R: 109, G: 79, B: 45, A: 180}  // exposed earth beneath a site
@@ -281,11 +278,9 @@ func drawStoneDeposit(screen *ebiten.Image, sx, sy, tilePixels float64, reserve 
 	drawStandingTintedAtScale(screen, assets.StoneDeposit, sx, sy, 1, tilePixels, tint)
 }
 
-// drawOreDeposit is drawStoneDeposit generalized to the three ore-family
-// kinds. There is no dedicated ore-cluster art yet, so it reuses the stone
-// deposit's boulder sprite with a kind-specific tint (dark for coal, bright
-// gold for gold ore, rust for iron ore) -- enough to tell the three apart on
-// the map at a glance while depleting the same way stone does.
+// drawOreDeposit renders each ore family with its own transparent boulder
+// cluster. As a reserve is exhausted the cluster fades toward a pale worn
+// tint, keeping depletion readable without disguising its material type.
 func drawOreDeposit(screen *ebiten.Image, sx, sy, tilePixels float64, kind building.Kind, reserve int) {
 	fraction := float32(reserve) / float32(building.OreDepositReserve)
 	if fraction < 0 {
@@ -294,17 +289,19 @@ func drawOreDeposit(screen *ebiten.Image, sx, sy, tilePixels float64, kind build
 	if fraction > 1 {
 		fraction = 1
 	}
-	var full, worn color.RGBA
+	full := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	var sprite *ebiten.Image
+	var worn color.RGBA
 	switch kind {
 	case building.GoldOreDeposit:
-		full, worn = goldOreFullColor, goldOreWornColor
+		sprite, worn = assets.GoldOreDeposit, goldOreWornColor
 	case building.IronOreDeposit:
-		full, worn = ironOreFullColor, ironOreWornColor
+		sprite, worn = assets.IronOreDeposit, ironOreWornColor
 	default: // building.CoalDeposit
-		full, worn = coalFullColor, coalWornColor
+		sprite, worn = assets.CoalDeposit, coalWornColor
 	}
 	tint := lerpColor(worn, full, fraction)
-	drawStandingTintedAtScale(screen, assets.StoneDeposit, sx, sy, 1, tilePixels, tint)
+	drawStandingTintedAtScale(screen, sprite, sx, sy, 1, tilePixels, tint)
 }
 
 // drawFish uses the dedicated three-stage transparent fish sprite sheet. The

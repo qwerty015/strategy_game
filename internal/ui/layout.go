@@ -256,7 +256,14 @@ const (
 	settingsSpeedRowY = settingsLangRowY + settingsLangRowH + 10
 	settingsSpeedRowH = 30
 
-	settingsSlotsLabelY = settingsSpeedRowY + settingsSpeedRowH + 24
+	// settingsNewGameRowY/H is the full-width "New Game" button, docked
+	// between the speed row and the save-slot list -- always visible (like
+	// the language/speed rows), unlike the slot list which the confirm
+	// dialog below temporarily replaces.
+	settingsNewGameRowY = settingsSpeedRowY + settingsSpeedRowH + 14
+	settingsNewGameRowH = 28
+
+	settingsSlotsLabelY = settingsNewGameRowY + settingsNewGameRowH + 20
 	settingsSlotsStartY = settingsSlotsLabelY + 18
 	settingsSlotNameH   = 20
 	settingsSlotButtonH = 26
@@ -305,6 +312,19 @@ func (l Layout) SettingsSpeedAt(x, y int) (economy.Speed, bool) {
 		return economy.Normal, false
 	}
 	return economy.Speed(index), true
+}
+
+// SettingsNewGameAt reports whether the cursor is over the settings tab's
+// "New Game" button. Callers must also check that no dialog is currently
+// open (see Update's dialog branch), the same way every other settings-tab
+// hit-test already implicitly relies on handleMouse not running then.
+func (l Layout) SettingsNewGameAt(x, y int) bool {
+	if y < settingsNewGameRowY || y >= settingsNewGameRowY+settingsNewGameRowH {
+		return false
+	}
+	startX := 12
+	w := l.LeftWidth - 24
+	return x >= startX && x < startX+w
 }
 
 // SettingsSlotActionAt returns which save-slot button (1-5) the cursor is

@@ -49,11 +49,9 @@ const (
 	// placed later and share the same stockpile.
 	warehouseX, warehouseY = 18, 10
 
-	savePath = "saves/slot1.json"
-
 	// Named save-panel slots (side panel, settings tab) live in their own
-	// files, distinct from the S/L quicksave above, so neither mechanism
-	// can collide with or silently overwrite the other.
+	// files. Saving/loading is mouse-only through the Settings tab -- there
+	// is deliberately no keyboard-shortcut quicksave file alongside them.
 	slotPathFormat = "saves/panel_slot_%d.json"
 	slotCount      = 5
 	maxSlotNameLen = 10 // runes, not bytes -- a Cyrillic name still counts as 10 letters
@@ -89,6 +87,12 @@ const (
 	coalMinPercent, coalMaxPercent       = 4, 8
 	ironOreMinPercent, ironOreMaxPercent = 2, 4
 	goldOreMinPercent, goldOreMaxPercent = 1, 2
+
+	// minDepositDistanceFromWarehouse keeps every finite deposit kind --
+	// stone, coal, gold ore, iron ore -- away from the town's starting
+	// Warehouse, per the game design ("уголь, камень, руды... должны быть
+	// удалены от первоначального склада, минимум 20 клеток").
+	minDepositDistanceFromWarehouse = 20
 
 	// maxBuilders is a flat town-wide cap, unlike every other profession
 	// (which is capped by matching building count instead) -- a Builder has
@@ -184,14 +188,15 @@ func NewGame() *Game {
 	initialRoad := &building.Building{Kind: building.Road, X: warehouseX, Y: warehouseY + 1}
 
 	buildings := []*building.Building{warehouse, initialRoad}
+	warehousePoint := gridPoint{warehouseX, warehouseY}
 	// Trees are sparse persistent world objects, scattered across all free
 	// dry cells rather than confined to a special forest area.
 	buildings = seedTrees(grid, buildings)
 	buildings = seedFish(grid, buildings)
-	buildings = seedStoneDeposits(grid, buildings, defaultStoneSeed)
-	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed)
-	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed)
-	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed)
+	buildings = seedStoneDeposits(grid, buildings, defaultStoneSeed, warehousePoint, minDepositDistanceFromWarehouse)
+	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed, warehousePoint, minDepositDistanceFromWarehouse)
+	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed, warehousePoint, minDepositDistanceFromWarehouse)
+	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed, warehousePoint, minDepositDistanceFromWarehouse)
 
 	stock := resource.NewStockpile(stockpileCapacity)
 	stock.Add(resource.Plank, startingPlanks)
@@ -249,10 +254,8 @@ func (g *Game) Update() error {
 	if g.dialog != ui.DialogNone {
 		g.handleDialogInput()
 	} else {
-		g.handlePaletteSelect()
 		g.handleMouse()
 		g.handleUnitActions()
-		g.handleSaveLoad()
 	}
 
 	for range g.sim.Advance() {
@@ -690,21 +693,6 @@ func (g *Game) handleCameraZoom() {
 	}
 }
 
-var paletteKeys = []ebiten.Key{
-	ebiten.Key1, ebiten.Key2, ebiten.Key3, ebiten.Key4,
-	ebiten.Key5, ebiten.Key6, ebiten.Key7, ebiten.Key8, ebiten.Key9,
-	ebiten.Key0, ebiten.KeyQ,
-}
-
-func (g *Game) handlePaletteSelect() {
-	for i := 0; i < len(g.palette.Kinds) && i < len(paletteKeys); i++ {
-		if inpututil.IsKeyJustPressed(paletteKeys[i]) {
-			g.palette.Select(i)
-			g.buildMode = true
-		}
-	}
-}
-
 func (g *Game) handleMouse() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
 		g.buildMode = false
@@ -737,6 +725,10 @@ func (g *Game) handleMouse() {
 		}
 		if speed, ok := g.layout.SettingsSpeedAt(mx, my); ok {
 			g.sim.SetSpeed(speed)
+			return
+		}
+		if g.layout.SettingsNewGameAt(mx, my) {
+			g.dialog = ui.DialogConfirmNewGame
 			return
 		}
 		if slot, action, ok := g.layout.SettingsSlotActionAt(mx, my); ok {
@@ -1157,23 +1149,7 @@ func (g *Game) finishConstruction(b *building.Building) {
 	g.statusMsg = ""
 }
 
-func (g *Game) handleSaveLoad() {
-	if inpututil.IsKeyJustPressed(ebiten.KeyS) {
-		if err := g.saveGame(savePath, ""); err != nil {
-			g.statusMsg = i18n.T().SaveFailedPrefix + err.Error()
-		} else {
-			g.statusMsg = i18n.T().Saved
-		}
-	}
-
-	if inpututil.IsKeyJustPressed(ebiten.KeyL) {
-		g.loadAndReport(savePath)
-	}
-}
-
-// slotPath returns the file path for save-panel slot n (1-slotCount). It is
-// deliberately distinct from savePath, the S/L quicksave file, so the two
-// save mechanisms never collide.
+// slotPath returns the file path for save-panel slot n (1-slotCount).
 func slotPath(n int) string {
 	return fmt.Sprintf(slotPathFormat, n)
 }
@@ -1226,7 +1202,52 @@ func (g *Game) handleDialogInput() {
 		g.handleConfirmOverwriteInput()
 	case ui.DialogNaming:
 		g.handleNamingInput()
+	case ui.DialogConfirmNewGame:
+		g.handleConfirmNewGameInput()
 	}
+}
+
+// handleConfirmNewGameInput runs while the Settings tab's "New Game" confirm
+// dialog is open. Unlike the save-slot overwrite dialog (whose Enter/left
+// button just advances to a second, naming step), this one is a plain
+// confirm/cancel: Enter or the left button commit the reset immediately.
+func (g *Game) handleConfirmNewGameInput() {
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.dialog = ui.DialogNone
+		return
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
+		g.resetToNewGame()
+		return
+	}
+	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		return
+	}
+	mx, my := ebiten.CursorPosition()
+	if left, ok := g.layout.SettingsDialogButtonAt(mx, my); ok {
+		if left {
+			g.resetToNewGame()
+		} else {
+			g.dialog = ui.DialogNone
+		}
+	}
+}
+
+// resetToNewGame discards the running town and replaces it with a fresh one
+// -- the Settings tab's "New Game" button. The active language is a
+// package-level display preference (internal/i18n), not Game state, so it
+// survives the reset untouched. The current window layout is carried over
+// (and the fresh camera's viewport re-fitted to it) so the reset doesn't
+// visibly snap back to the default 1024x768 layout in a resized window; the
+// camera's own position keeps NewGame's usual initial pan.
+func (g *Game) resetToNewGame() {
+	layout := g.layout
+	fresh := NewGame()
+	fresh.layout = layout
+	mapRect := layout.MapRect()
+	fresh.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
+	*g = *fresh
+	g.statusMsg = i18n.T().NewGameStarted
 }
 
 func (g *Game) handleConfirmOverwriteInput() {
@@ -1363,12 +1384,12 @@ func (g *Game) loadGame(path string) error {
 	buildings := referenceBuildings(state.Buildings)
 	buildings, hadTrees := ensureTrees(grid, buildings, len(state.TreeRegrowth) > 0)
 	buildings, _ = ensureFish(grid, buildings, len(state.FishRegrowth) > 0)
-	buildings = ensureStoneDeposits(grid, buildings, state.StoneSeeded, defaultStoneSeed)
-	buildings = ensureOreDeposits(grid, buildings, state.OreSeeded, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed)
 	warehouse := findWarehouse(buildings)
 	if warehouse == nil {
 		return errNoWarehouseInSave
 	}
+	buildings = ensureStoneDeposits(grid, buildings, state.StoneSeeded, defaultStoneSeed, gridPoint{warehouse.X, warehouse.Y})
+	buildings = ensureOreDeposits(grid, buildings, state.OreSeeded, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed, gridPoint{warehouse.X, warehouse.Y})
 
 	g.grid = grid
 	g.buildings = buildings
@@ -1814,8 +1835,12 @@ func treeScatterScore(x, y int) uint32 {
 // player has more than one spot worth building a Quarry Hut near. Each
 // deposit cell holds a full building.StoneDepositReserve. Unlike trees and
 // fish, this only ever runs once per world -- see save.GameState.StoneSeeded
-// and ensureStoneDeposits.
-func seedStoneDeposits(grid *world.Grid, buildings []*building.Building, seed uint32) []*building.Building {
+// and ensureStoneDeposits. avoid/minDistance keep the region away from a
+// fixed point -- every call site passes the starting Warehouse and
+// minDepositDistanceFromWarehouse; minDistance <= 0 disables the
+// constraint, kept for callers (tests) that want to isolate the abundance
+// percentage from the distance rule.
+func seedStoneDeposits(grid *world.Grid, buildings []*building.Building, seed uint32, avoid gridPoint, minDistance int) []*building.Building {
 	area := grid.Width * grid.Height
 	percent := 5 + int(seed%6) // 5..10 inclusive, total share of the map
 	total := area * percent / 100
@@ -1832,7 +1857,7 @@ func seedStoneDeposits(grid *world.Grid, buildings []*building.Building, seed ui
 			target++
 		}
 		regionSeed := seed ^ uint32(i)*0x9e3779b9
-		buildings = growStoneRegion(grid, buildings, target, regionSeed)
+		buildings = growStoneRegion(grid, buildings, target, regionSeed, avoid, minDistance)
 	}
 	return buildings
 }
@@ -1840,11 +1865,11 @@ func seedStoneDeposits(grid *world.Grid, buildings []*building.Building, seed ui
 // growStoneRegion places one contiguous blob of up to target stone-deposit
 // cells, starting from a deterministically chosen free tile and expanding
 // outward. Called once per region by seedStoneDeposits.
-func growStoneRegion(grid *world.Grid, buildings []*building.Building, target int, seed uint32) []*building.Building {
+func growStoneRegion(grid *world.Grid, buildings []*building.Building, target int, seed uint32, avoid gridPoint, minDistance int) []*building.Building {
 	if target <= 0 {
 		return buildings
 	}
-	start, ok := findStoneStart(grid, buildings, seed)
+	start, ok := findStoneStart(grid, buildings, seed, avoid, minDistance)
 	if !ok {
 		return buildings
 	}
@@ -1867,7 +1892,7 @@ func growStoneRegion(grid *world.Grid, buildings []*building.Building, target in
 		p := frontier[bestIdx]
 		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
 
-		if !building.CanPlace(grid, buildings, building.StoneDeposit, p.x, p.y) {
+		if tooCloseToPoint(p.x, p.y, avoid, minDistance) || !building.CanPlace(grid, buildings, building.StoneDeposit, p.x, p.y) {
 			continue
 		}
 		buildings = append(buildings, building.NewStoneDeposit(p.x, p.y))
@@ -1885,13 +1910,13 @@ func growStoneRegion(grid *world.Grid, buildings []*building.Building, target in
 	return buildings
 }
 
-func findStoneStart(grid *world.Grid, buildings []*building.Building, seed uint32) (gridPoint, bool) {
+func findStoneStart(grid *world.Grid, buildings []*building.Building, seed uint32, avoid gridPoint, minDistance int) (gridPoint, bool) {
 	bestScore := ^uint32(0)
 	var best gridPoint
 	found := false
 	for y := 0; y < grid.Height; y++ {
 		for x := 0; x < grid.Width; x++ {
-			if !building.CanPlace(grid, buildings, building.StoneDeposit, x, y) {
+			if tooCloseToPoint(x, y, avoid, minDistance) || !building.CanPlace(grid, buildings, building.StoneDeposit, x, y) {
 				continue
 			}
 			score := stoneScatterScore(x, y) ^ seed
@@ -1911,12 +1936,15 @@ func stoneScatterScore(x, y int) uint32 {
 // genuinely never had one. alreadySeeded (see save.GameState.StoneSeeded)
 // is what tells that apart from a modern save where the player has
 // legitimately mined every deposit dry -- there is no regrowth queue to
-// infer it from, unlike trees or fish.
-func ensureStoneDeposits(grid *world.Grid, buildings []*building.Building, alreadySeeded bool, seed uint32) []*building.Building {
+// infer it from, unlike trees or fish. warehouse is the point the region
+// must stay minDepositDistanceFromWarehouse away from -- for a migrated
+// save this is the save's own original Warehouse, not the fixed NewGame
+// coordinates, since an old town may not sit at the default spot.
+func ensureStoneDeposits(grid *world.Grid, buildings []*building.Building, alreadySeeded bool, seed uint32, warehouse gridPoint) []*building.Building {
 	if alreadySeeded {
 		return buildings
 	}
-	return seedStoneDeposits(grid, buildings, seed)
+	return seedStoneDeposits(grid, buildings, seed, warehouse, minDepositDistanceFromWarehouse)
 }
 
 // removeDeposit deletes an exhausted deposit from the world once its
@@ -1945,8 +1973,12 @@ func (g *Game) removeDeposit(deposit *building.Building) {
 // finite ore-family kinds (Coal, GoldOre, IronOre), each with its own
 // abundance range -- per the game design, Coal is deliberately the most
 // common (it's needed by both Smeltery recipes), Gold ore the rarest (it
-// smelts directly into the hiring currency).
-func seedOreDeposits(grid *world.Grid, buildings []*building.Building, kind building.Kind, minPercent, maxPercent int, seed uint32) []*building.Building {
+// smelts directly into the hiring currency). avoid/minDistance keep a
+// region away from a fixed point -- every call site passes the starting
+// Warehouse and minDepositDistanceFromWarehouse; minDistance <= 0 disables
+// the constraint entirely, kept for callers (tests) that want to isolate
+// the abundance percentages from the distance rule.
+func seedOreDeposits(grid *world.Grid, buildings []*building.Building, kind building.Kind, minPercent, maxPercent int, seed uint32, avoid gridPoint, minDistance int) []*building.Building {
 	area := grid.Width * grid.Height
 	span := maxPercent - minPercent + 1
 	percent := minPercent
@@ -1967,17 +1999,28 @@ func seedOreDeposits(grid *world.Grid, buildings []*building.Building, kind buil
 			target++
 		}
 		regionSeed := seed ^ uint32(i)*0x9e3779b9
-		buildings = growOreRegion(grid, buildings, kind, target, regionSeed)
+		buildings = growOreRegion(grid, buildings, kind, target, regionSeed, avoid, minDistance)
 	}
 	return buildings
 }
 
-// growOreRegion is growStoneRegion generalized to kind.
-func growOreRegion(grid *world.Grid, buildings []*building.Building, kind building.Kind, target int, seed uint32) []*building.Building {
+// tooCloseToPoint reports whether (x,y) sits within minDistance grid cells
+// (Euclidean) of avoid. minDistance <= 0 means "no constraint" -- always false.
+func tooCloseToPoint(x, y int, avoid gridPoint, minDistance int) bool {
+	if minDistance <= 0 {
+		return false
+	}
+	dx, dy := float64(x-avoid.x), float64(y-avoid.y)
+	return dx*dx+dy*dy < float64(minDistance*minDistance)
+}
+
+// growOreRegion is growStoneRegion generalized to kind, with the same
+// avoid/minDistance keep-away as seedOreDeposits.
+func growOreRegion(grid *world.Grid, buildings []*building.Building, kind building.Kind, target int, seed uint32, avoid gridPoint, minDistance int) []*building.Building {
 	if target <= 0 {
 		return buildings
 	}
-	start, ok := findOreStart(grid, buildings, kind, seed)
+	start, ok := findOreStart(grid, buildings, kind, seed, avoid, minDistance)
 	if !ok {
 		return buildings
 	}
@@ -1997,7 +2040,7 @@ func growOreRegion(grid *world.Grid, buildings []*building.Building, kind buildi
 		p := frontier[bestIdx]
 		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
 
-		if !building.CanPlace(grid, buildings, kind, p.x, p.y) {
+		if tooCloseToPoint(p.x, p.y, avoid, minDistance) || !building.CanPlace(grid, buildings, kind, p.x, p.y) {
 			continue
 		}
 		buildings = append(buildings, building.NewOreDeposit(kind, p.x, p.y))
@@ -2015,13 +2058,13 @@ func growOreRegion(grid *world.Grid, buildings []*building.Building, kind buildi
 	return buildings
 }
 
-func findOreStart(grid *world.Grid, buildings []*building.Building, kind building.Kind, seed uint32) (gridPoint, bool) {
+func findOreStart(grid *world.Grid, buildings []*building.Building, kind building.Kind, seed uint32, avoid gridPoint, minDistance int) (gridPoint, bool) {
 	bestScore := ^uint32(0)
 	var best gridPoint
 	found := false
 	for y := 0; y < grid.Height; y++ {
 		for x := 0; x < grid.Width; x++ {
-			if !building.CanPlace(grid, buildings, kind, x, y) {
+			if tooCloseToPoint(x, y, avoid, minDistance) || !building.CanPlace(grid, buildings, kind, x, y) {
 				continue
 			}
 			score := oreScatterScore(x, y, kind) ^ seed
@@ -2044,14 +2087,17 @@ func oreScatterScore(x, y int, kind building.Kind) uint32 {
 // trio, seeded together and guarded by the same single flag
 // (save.GameState.OreSeeded) since they're always generated in the same
 // NewGame call -- there's no scenario where the game would want to seed
-// only one of the three without the others.
-func ensureOreDeposits(grid *world.Grid, buildings []*building.Building, alreadySeeded bool, coalSeed, goldOreSeed, ironOreSeed uint32) []*building.Building {
+// only one of the three without the others. warehouse is the point
+// GoldOre/IronOre must stay minOreDistanceFromWarehouse away from -- for a
+// migrated save this is the save's own original Warehouse, not the fixed
+// NewGame coordinates, since an old town may not sit at the default spot.
+func ensureOreDeposits(grid *world.Grid, buildings []*building.Building, alreadySeeded bool, coalSeed, goldOreSeed, ironOreSeed uint32, warehouse gridPoint) []*building.Building {
 	if alreadySeeded {
 		return buildings
 	}
-	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, coalSeed)
-	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, goldOreSeed)
-	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, ironOreSeed)
+	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, coalSeed, warehouse, minDepositDistanceFromWarehouse)
+	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, goldOreSeed, warehouse, minDepositDistanceFromWarehouse)
+	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, ironOreSeed, warehouse, minDepositDistanceFromWarehouse)
 	return buildings
 }
 

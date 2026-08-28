@@ -157,6 +157,28 @@ func TestSettingsLangAtTogglesBothLanguages(t *testing.T) {
 	}
 }
 
+// TestSettingsNewGameAtCoversItsRowOnly checks the "New Game" button's row
+// resolves to true only within its own bounds, and doesn't bleed into the
+// speed row above it or the save-slot list below it.
+func TestSettingsNewGameAtCoversItsRowOnly(t *testing.T) {
+	layout := NewLayout(1024, 768)
+	startX := 12
+	w := layout.LeftWidth - 24
+
+	if !layout.SettingsNewGameAt(startX+w/2, settingsNewGameRowY+settingsNewGameRowH/2) {
+		t.Fatal("a click in the middle of the New Game row resolved to false, want true")
+	}
+	if layout.SettingsNewGameAt(startX+w/2, settingsNewGameRowY-5) {
+		t.Fatal("a click above the New Game row resolved to true, want false")
+	}
+	if layout.SettingsNewGameAt(startX+w/2, settingsNewGameRowY+settingsNewGameRowH+5) {
+		t.Fatal("a click below the New Game row resolved to true, want false")
+	}
+	if layout.SettingsNewGameAt(startX-5, settingsNewGameRowY+settingsNewGameRowH/2) {
+		t.Fatal("a click left of the New Game row resolved to true, want false")
+	}
+}
+
 // TestSettingsDialogButtonAtCoversBothButtons checks the shared modal
 // button row (naming and overwrite-confirmation both use it) resolves left
 // vs right correctly, since a wrong read here would let a player who means

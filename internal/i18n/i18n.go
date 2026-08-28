@@ -124,6 +124,11 @@ type Catalog struct {
 	SlotOverwriteButton string
 	SlotCancelButton    string
 	SlotDefaultName     string // fallback base name when a slot is saved with an empty typed name
+
+	NewGameButton        string
+	NewGameConfirmPrompt string
+	NewGameConfirmButton string
+	NewGameStarted       string
 }
 
 var catalogs = map[Lang]Catalog{}

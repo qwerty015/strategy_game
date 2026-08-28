@@ -17,13 +17,15 @@ const (
 	SettingsSlotLoad
 )
 
-// DialogKind is the active side-panel modal for the settings tab's save
-// slots: none, typing a name for a slot about to be saved, or confirming an
-// overwrite of an already-occupied slot before naming it.
+// DialogKind is the active side-panel modal for the settings tab: none,
+// typing a name for a slot about to be saved, confirming an overwrite of an
+// already-occupied slot before naming it, or confirming the destructive
+// "New Game" reset.
 type DialogKind int
 
 const (
 	DialogNone DialogKind = iota
 	DialogNaming
 	DialogConfirmOverwrite
+	DialogConfirmNewGame
 )

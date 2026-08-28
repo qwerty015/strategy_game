@@ -129,7 +129,7 @@ func init() {
 		CannotDeleteStoneDeposit:    "Месторождение нельзя убрать вручную",
 		CatchableLabel:              "Доступна рыбаку",
 
-		Help:                  "Стрелки/СКМ: камера | Колесо +/-: масштаб | 1-0/Q: выбор | Клик: построить/выбрать | H: нанять слугу | Delete: удалить | S/L: сохранение/загрузка | Esc: выход",
+		Help:                  "Стрелки/СКМ: камера | Колесо +/-: масштаб | Клик: построить/выбрать | H: нанять слугу | Delete: удалить | Esc: выход",
 		CantBuildHere:         "Здесь нельзя строить",
 		NotEnoughGold:         "Не хватает золота",
 		SaveFailedPrefix:      "Не удалось сохранить: ",
@@ -147,5 +147,10 @@ func init() {
 		SlotOverwriteButton: "Перезаписать",
 		SlotCancelButton:    "Отмена",
 		SlotDefaultName:     "Слот",
+
+		NewGameButton:        "Новая игра",
+		NewGameConfirmPrompt: "Начать заново? Весь текущий прогресс будет потерян.",
+		NewGameConfirmButton: "Начать заново",
+		NewGameStarted:       "Новая игра начата.",
 	})
 }

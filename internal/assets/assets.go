@@ -32,6 +32,10 @@ var (
 	Stone   = mustLoadGround("generated/terrain_stone.png")
 	// StoneDeposit is the mineable boulder cluster placed on top of stone terrain.
 	StoneDeposit = mustLoad("generated/terrain_stone_deposit.png")
+	// Ore deposits are distinct transparent clusters layered over the ground.
+	CoalDeposit    = mustLoad("generated/terrain_coal_deposit.png")
+	GoldOreDeposit = mustLoad("generated/terrain_gold_ore_deposit.png")
+	IronOreDeposit = mustLoad("generated/terrain_iron_ore_deposit.png")
 	// The water export has the same bright top-edge fringe as several ground
 	// tiles. Load it through the one-time repair pass so zoomed ponds stay
 	// seamless instead of gaining horizontal white stripes.
@@ -58,13 +62,8 @@ var (
 	MeatWorkshop      = mustLoad("generated/building_meat_workshop.png")
 	CarpentryWorkshop = mustLoad("generated/building_carpentry_workshop.png")
 	QuarryHut         = mustLoad("generated/building_quarry_hut.png")
-	// MinerHut has no dedicated art yet -- it reuses the Quarry Hut sprite,
-	// since both are simple open-pit worker huts with no processing inside.
-	MinerHut = QuarryHut
-	// Smeltery has no dedicated art yet -- it reuses the Carpentry Workshop
-	// sprite as a stand-in generic "workshop" building until a furnace
-	// sprite is commissioned.
-	Smeltery = CarpentryWorkshop
+	MinerHut          = mustLoad("generated/building_miner_hut.png")
+	Smeltery          = mustLoad("generated/building_smeltery.png")
 	// Construction art is deliberately generic: the same site can scale from
 	// a one-tile road to a 3×3 farm without previewing the finished building.
 	ConstructionFoundation  = mustLoad("generated/construction_foundation.png")
@@ -154,9 +153,16 @@ var (
 		mustLoad("generated/unit_builder.png"),
 		mustLoad("generated/unit_builder.png"),
 	}
-	// Miner has no dedicated art yet -- it reuses the Quarryman sprite,
-	// since both dig open-pit deposits the same way.
-	Miner       = Quarryman
+	Miner = [3]*ebiten.Image{
+		mustLoad("generated/unit_miner.png"),
+		mustLoad("generated/unit_miner.png"),
+		mustLoad("generated/unit_miner.png"),
+	}
+	Smelter = [3]*ebiten.Image{
+		mustLoad("generated/unit_smelter.png"),
+		mustLoad("generated/unit_smelter.png"),
+		mustLoad("generated/unit_smelter.png"),
+	}
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 

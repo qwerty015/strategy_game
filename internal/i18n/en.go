@@ -129,7 +129,7 @@ func init() {
 		CannotDeleteStoneDeposit:    "A deposit cannot be removed manually",
 		CatchableLabel:              "Catchable by fisherman",
 
-		Help:                  "Arrows/Middle drag: pan | Wheel +/-: zoom | 1-0/Q: select | Click: place/select | H: hire serf | Delete: remove | S/L: save/load | Esc: quit",
+		Help:                  "Arrows/Middle drag: pan | Wheel +/-: zoom | Click: place/select | H: hire serf | Delete: remove | Esc: quit",
 		CantBuildHere:         "Can't build there",
 		NotEnoughGold:         "Not enough gold",
 		SaveFailedPrefix:      "Save failed: ",
@@ -147,5 +147,10 @@ func init() {
 		SlotOverwriteButton: "Overwrite",
 		SlotCancelButton:    "Cancel",
 		SlotDefaultName:     "Slot",
+
+		NewGameButton:        "New Game",
+		NewGameConfirmPrompt: "Start over? All current progress will be lost.",
+		NewGameConfirmButton: "Start over",
+		NewGameStarted:       "New game started.",
 	})
 }
