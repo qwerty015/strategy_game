@@ -10,9 +10,10 @@ import (
 	"strategy_game/internal/building"
 )
 
-// drawCropGrowth adds a few deliberately chunky crop marks on top of the
-// fertile texture. Growth follows the Farm production cycle: early stages
-// show sprouts, while mature wheat gets golden stalks that sway by one pixel.
+// drawCropGrowth turns the eight Farm plots from a quiet texture cue into a
+// readable crop. Young plots retain sparse green sprouts; the final third
+// becomes a dense set of tall, two-tone golden ears that can be recognized at
+// ordinary zoom as well as when the player zooms in.
 func drawCropGrowth(screen *ebiten.Image, sx, sy float64, growth float32, tileX, tileY int, tilePixels float64) {
 	if growth < 0.12 {
 		return
@@ -21,84 +22,103 @@ func drawCropGrowth(screen *ebiten.Image, sx, sy float64, growth float32, tileX,
 	seed := tileX*11 + tileY*17
 	scale := tilePixels / TileSize
 	phase := (animFrame/8 + seed) & 1
-	count := 1
+	count := 2
 	if growth >= 0.38 {
-		count = 2
+		count = 4
 	}
 	if growth >= 0.7 {
-		count = 4
+		count = 7
 	}
 
 	for i := 0; i < count; i++ {
-		px := sx + float64(5+(seed+i*7)%13)*scale
-		baseY := sy + float64(20-(seed+i*3)%4)*scale
-		height := float64(3+int(growth*5)) * scale
+		px := sx + float64(3+(seed+i*7)%17)*scale
+		baseY := sy + float64(21-(seed+i*3)%5)*scale
+		height := float64(3+int(growth*7)) * scale
 		sway := float64(0)
 		if growth >= 0.7 {
-			sway = float64(phase)
+			sway = float64((phase+i)&1) * scale
 		}
 
-		stalk := color.RGBA{R: 73, G: 139, B: 49, A: 210}
+		stalk := color.RGBA{R: 73, G: 139, B: 49, A: 220}
 		if growth >= 0.7 {
-			stalk = color.RGBA{R: 227, G: 182, B: 54, A: 235}
+			stalk = color.RGBA{R: 195, G: 139, B: 40, A: 255}
 		}
 		stalkWidth := math.Max(1, scale)
-		vector.FillRect(screen, float32(px), float32(baseY-height), float32(stalkWidth), float32(height), stalk, false)
-		if growth >= 0.45 {
-			vector.FillRect(screen, float32(px+sway*scale), float32(baseY-height), float32(2*scale), float32(scale), stalk, false)
+		vector.FillRect(screen, float32(px+sway), float32(baseY-height), float32(stalkWidth), float32(height), stalk, false)
+		if growth >= 0.42 {
+			leafColor := color.RGBA{R: 88, G: 156, B: 51, A: 220}
+			if growth >= 0.7 {
+				leafColor = color.RGBA{R: 222, G: 171, B: 51, A: 255}
+			}
+			vector.FillRect(screen, float32(px+sway-2*scale), float32(baseY-height/2), float32(3*scale), float32(maxPixel(scale)), leafColor, false)
+		}
+		if growth >= 0.7 {
+			// The ear is deliberately wider and brighter than the stalk: the
+			// field reads as harvest-ready instead of merely yellow grass.
+			earX := px + sway - scale
+			earY := baseY - height - scale
+			vector.FillRect(screen, float32(earX), float32(earY), float32(3*scale), float32(3*scale), color.RGBA{R: 239, G: 190, B: 57, A: 255}, false)
+			vector.FillRect(screen, float32(earX+scale), float32(earY), float32(maxPixel(scale)), float32(3*scale), color.RGBA{R: 255, G: 227, B: 107, A: 255}, false)
 		}
 	}
 
-	// A barely visible highlight travels across mature crops, giving the
-	// whole field a living shimmer without changing the underlying texture.
 	if growth >= 0.7 {
-		wave := math.Mod(float64(animFrame)/18+float64(seed), 18) * scale
-		vector.FillRect(screen, float32(sx+wave), float32(sy+4*scale), float32(scale), float32(scale), color.RGBA{R: 255, G: 231, B: 112, A: 130}, false)
+		wave := math.Mod(float64(animFrame)/16+float64(seed), 16) * scale
+		vector.FillRect(screen, float32(sx+3*scale+wave), float32(sy+5*scale), float32(2*scale), float32(maxPixel(scale)), color.RGBA{R: 255, G: 237, B: 137, A: 175}, false)
 	}
 }
 
 // drawVineyardGrowth renders one of the eight permanent grape plots. The
-// vines exist immediately after construction; the growth value only changes
-// their height, leaf density and purple fruit. The last stage gently shimmers
-// so a ripe vineyard does not look like a static checkerboard.
+// trellis stays visible from the start, but mature plots become dense with
+// leafy canopies and layered purple bunches rather than tiny isolated dots.
 func drawVineyardGrowth(screen *ebiten.Image, sx, sy float64, growth float32, tileX, tileY int, tilePixels float64) {
-	if growth < 0 {
-		growth = 0
-	}
-	if growth > 1 {
-		growth = 1
-	}
+	growth = min(max(growth, 0), 1)
 	scale := tilePixels / TileSize
 	seed := tileX*13 + tileY*19
-	rowY := sy + 43*scale
 	postColor := color.RGBA{R: 91, G: 63, B: 33, A: 255}
-	vineColor := color.RGBA{R: 49, G: 112, B: 49, A: 235}
-	leafColor := color.RGBA{R: 75, G: 143, B: 57, A: 245}
-	fruitColor := color.RGBA{R: 111, G: 47, B: 101, A: 250}
+	vineColor := color.RGBA{R: 43, G: 105, B: 45, A: 255}
+	leafDark := color.RGBA{R: 42, G: 102, B: 43, A: 245}
+	leafLight := color.RGBA{R: 90, G: 157, B: 59, A: 255}
+	grapeDark := color.RGBA{R: 71, G: 30, B: 74, A: 255}
+	grapeLight := color.RGBA{R: 148, G: 63, B: 137, A: 255}
 
-	// Three low trellis rows make the crop readable even when zoomed out.
-	for row := 0; row < 3; row++ {
-		y := rowY - float64(row*11)*scale
-		vector.FillRect(screen, float32(sx+5*scale), float32(y), float32(18*scale), float32(maxPixel(scale)), postColor, false)
-		if growth < 0.08 {
-			continue
-		}
-		vineHeight := float64(2+int(growth*8)) * scale
+	// Every plot has two complete trellis rows inside its own tile. Keeping
+	// them inside the cell avoids the faint grid-like pattern made by the old
+	// rows spilling into neighbouring plots.
+	for row := 0; row < 2; row++ {
+		y := sy + float64(9+row*11)*scale
+		vector.FillRect(screen, float32(sx+3*scale), float32(y), float32(18*scale), float32(maxPixel(scale)), postColor, false)
 		for col := 0; col < 3; col++ {
-			x := sx + float64(7+col*6+(seed+row+col)%2)*scale
+			x := sx + float64(5+col*7+(seed+row+col)%2)*scale
+			vector.FillRect(screen, float32(x), float32(y-5*scale), float32(maxPixel(scale)), float32(6*scale), postColor, false)
+			if growth < 0.08 {
+				continue
+			}
+
+			vineHeight := float64(2+int(growth*5)) * scale
 			vector.FillRect(screen, float32(x), float32(y-vineHeight), float32(maxPixel(scale)), float32(vineHeight), vineColor, false)
-			if growth >= 0.32 {
-				vector.FillRect(screen, float32(x-1*scale), float32(y-vineHeight+2*scale), float32(3*scale), float32(maxPixel(scale)), leafColor, false)
+			if growth >= 0.28 {
+				leafW := float64(3) * scale
+				leafH := float64(2) * scale
+				vector.FillRect(screen, float32(x-leafW/2), float32(y-vineHeight+scale), float32(leafW), float32(leafH), leafDark, false)
+				vector.FillRect(screen, float32(x+scale/2), float32(y-vineHeight+2*scale), float32(leafW), float32(leafH), leafLight, false)
 			}
 			if growth >= 0.68 && (row+col+seed)%2 == 0 {
-				vector.FillCircle(screen, float32(x+2*scale), float32(y-vineHeight+4*scale), float32(maxPixel(scale)), fruitColor, false)
+				// Three overlapping berries make a recognisable bunch even at
+				// normal zoom, with a lighter berry as a tiny highlight.
+				bunchX := x + 2*scale
+				bunchY := y - vineHeight + 4*scale
+				radius := float32(math.Max(1, scale))
+				vector.FillCircle(screen, float32(bunchX), float32(bunchY), radius, grapeDark, false)
+				vector.FillCircle(screen, float32(bunchX+2*scale), float32(bunchY), radius, grapeDark, false)
+				vector.FillCircle(screen, float32(bunchX+scale), float32(bunchY+2*scale), radius, grapeLight, false)
 			}
 		}
 	}
 
 	if growth >= 0.68 {
-		wave := float64((animFrame/16+seed)%16) * scale
-		vector.FillRect(screen, float32(sx+4*scale+wave), float32(sy+7*scale), float32(maxPixel(scale)), float32(maxPixel(scale)), color.RGBA{R: 167, G: 207, B: 106, A: 120}, false)
+		wave := float64((animFrame/14+seed)%14) * scale
+		vector.FillRect(screen, float32(sx+3*scale+wave), float32(sy+4*scale), float32(2*scale), float32(maxPixel(scale)), color.RGBA{R: 186, G: 223, B: 114, A: 150}, false)
 	}
 }
 

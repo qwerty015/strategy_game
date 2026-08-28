@@ -121,7 +121,9 @@ func init() {
 		UnitBuilder:                 "Строитель",
 		UnitMiner:                   "Рудокоп",
 		UnitSmelter:                 "Плавильщик",
-		HireSerf:                    "Нанять слугу [H]",
+		HireSerf:                    "Нанять слугу",
+		RemoveSelected:              "Удалить",
+		DismissSerf:                 "Уволить слугу",
 		Deleted:                     "Удалено.",
 		SerfDismissRequested:        "Слуга завершит рейс и уйдёт.",
 		CannotDeleteWarehouse:       "Нельзя удалить последний склад",
@@ -130,7 +132,6 @@ func init() {
 		CannotDeleteStoneDeposit:    "Месторождение нельзя убрать вручную",
 		CatchableLabel:              "Доступна рыбаку",
 
-		Help:                  "Стрелки/СКМ: камера | Колесо +/-: масштаб | Клик: построить/выбрать | H: нанять слугу | Delete: удалить | Esc: выход",
 		CantBuildHere:         "Здесь нельзя строить",
 		NotEnoughGold:         "Не хватает золота",
 		SaveFailedPrefix:      "Не удалось сохранить: ",

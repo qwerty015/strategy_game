@@ -118,5 +118,5 @@ func fillIconRect(screen *ebiten.Image, x, y, width, height int, c color.Color) 
 
 func drawWarehouseResourceRow(screen *ebiten.Image, x, y int, kind resource.Type, amount int) {
 	drawResourceIcon(screen, kind, x, y+1)
-	DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().ResourceName[kind], amount), float64(x+resourceIconSize+6), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().ResourceName[kind], amount), float64(x+resourceIconSize+6), float64(y))
 }

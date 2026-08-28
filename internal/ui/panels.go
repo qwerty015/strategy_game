@@ -33,7 +33,7 @@ var (
 func drawPanel(screen *ebiten.Image, r imageRect, title string) {
 	vector.FillRect(screen, float32(r.x), float32(r.y), float32(r.w), float32(r.h), panelColor, false)
 	vector.FillRect(screen, float32(r.x+5), float32(r.y+5), float32(r.w-10), 34, panelInnerColor, false)
-	DrawText(screen, title, float64(r.x+14), float64(r.y+13))
+	DrawMenuText(screen, title, float64(r.x+14), float64(r.y+13))
 }
 
 // imageRect is a tiny local rectangle type to keep panel drawing independent
@@ -67,9 +67,13 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		vector.FillRect(screen, float32(x), float32(y), float32(w), float32(h), fill, false)
 		vector.FillRect(screen, float32(x), float32(y+h-3), float32(w), 3, panelEdgeColor, false)
 
-		drawBuildingIcon(screen, kind, x+8, y+6, 28)
-		DrawText(screen, i18n.T().BuildingName[kind], float64(x+44), float64(y+5))
-		DrawText(screen, fmt.Sprintf("%d×%d", building.Types[kind].Footprint, building.Types[kind].Footprint), float64(x+50), float64(y+27))
+		// The former footprint line made the construction list visually noisy.
+		// A single centered label leaves room for a more readable icon and type.
+		iconSize := min(34, cardH-6)
+		iconX := x + 8
+		iconY := y + (cardH-iconSize)/2
+		drawBuildingIcon(screen, kind, iconX, iconY, iconSize)
+		DrawMenuText(screen, i18n.T().BuildingName[kind], float64(iconX+iconSize+10), float64(y+(cardH-12)/2))
 	}
 }
 
@@ -82,7 +86,7 @@ func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
 			fill = selectedColor
 		}
 		vector.FillRect(screen, float32(x), leftTabY, float32(w), leftTabHeight, fill, false)
-		DrawText(screen, label, float64(x+4), float64(leftTabY+7))
+		DrawMenuText(screen, label, float64(x+4), float64(leftTabY+9))
 	}
 }
 
@@ -107,7 +111,7 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 			fill = selectedColor
 		}
 		vector.FillRect(screen, float32(bx), float32(settingsLangRowY), float32(langSegW-2), float32(settingsLangRowH), fill, false)
-		DrawText(screen, entry.label, float64(bx+6), float64(settingsLangRowY+5))
+		DrawMenuText(screen, entry.label, float64(bx+6), float64(settingsLangRowY+5))
 	}
 
 	speedLabels := []string{t.SpeedPaused, t.SpeedHalf, t.SpeedNormal, t.SpeedDouble, t.SpeedQuadruple, t.SpeedOctuple}
@@ -119,18 +123,18 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 			fill = selectedColor
 		}
 		vector.FillRect(screen, float32(bx), float32(settingsSpeedRowY), float32(speedSegW-2), float32(settingsSpeedRowH), fill, false)
-		DrawText(screen, label, float64(bx+4), float64(settingsSpeedRowY+8))
+		DrawCompactMenuText(screen, label, float64(bx+4), float64(settingsSpeedRowY+8))
 	}
 
 	vector.FillRect(screen, float32(x), float32(settingsNewGameRowY), float32(w), float32(settingsNewGameRowH), panelInnerColor, false)
-	DrawText(screen, t.NewGameButton, float64(x+8), float64(settingsNewGameRowY+6))
+	DrawMenuText(screen, t.NewGameButton, float64(x+8), float64(settingsNewGameRowY+6))
 
 	if dialog != DialogNone {
 		drawSettingsDialog(screen, layout, dialog, dialogSlot, dialogText)
 		return
 	}
 
-	DrawText(screen, t.SaveSlotsLabel, float64(x), float64(settingsSlotsLabelY))
+	DrawMenuText(screen, t.SaveSlotsLabel, float64(x), float64(settingsSlotsLabelY))
 	for i := 0; i < len(slots) && i < settingsSlotCount; i++ {
 		slot := slots[i]
 		rowY := settingsSlotsStartY + i*settingsSlotStride
@@ -138,19 +142,19 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 		if !slot.Occupied {
 			name = t.SlotEmptyLabel
 		}
-		DrawText(screen, fmt.Sprintf("%d. %s", i+1, name), float64(x), float64(rowY))
+		DrawMenuText(screen, fmt.Sprintf("%d. %s", i+1, name), float64(x), float64(rowY))
 
 		btnY := rowY + settingsSlotNameH
 		halfW := w / 2
 		vector.FillRect(screen, float32(x), float32(btnY), float32(halfW-2), float32(settingsSlotButtonH), panelInnerColor, false)
-		DrawText(screen, t.SlotSaveButton, float64(x+4), float64(btnY+5))
+		DrawMenuText(screen, t.SlotSaveButton, float64(x+4), float64(btnY+5))
 
 		loadFill := panelInnerColor
 		if !slot.Occupied {
 			loadFill = color.RGBA{R: 69, G: 50, B: 48, A: 245}
 		}
 		vector.FillRect(screen, float32(x+halfW), float32(btnY), float32(halfW-2), float32(settingsSlotButtonH), loadFill, false)
-		DrawText(screen, t.SlotLoadButton, float64(x+halfW+4), float64(btnY+5))
+		DrawMenuText(screen, t.SlotLoadButton, float64(x+halfW+4), float64(btnY+5))
 	}
 }
 
@@ -164,29 +168,29 @@ func drawSettingsDialog(screen *ebiten.Image, layout Layout, dialog DialogKind, 
 	w := layout.LeftWidth - 24
 
 	if dialog == DialogConfirmOverwrite {
-		DrawText(screen, fmt.Sprintf(t.SlotOverwritePrompt, slot, text), float64(x), float64(settingsSlotsLabelY))
+		DrawMenuText(screen, fmt.Sprintf(t.SlotOverwritePrompt, slot, text), float64(x), float64(settingsSlotsLabelY))
 		drawDialogButtons(screen, x, w, t.SlotOverwriteButton, t.SlotCancelButton)
 		return
 	}
 
 	if dialog == DialogConfirmNewGame {
-		DrawText(screen, t.NewGameConfirmPrompt, float64(x), float64(settingsSlotsLabelY))
+		DrawMenuText(screen, t.NewGameConfirmPrompt, float64(x), float64(settingsSlotsLabelY))
 		drawDialogButtons(screen, x, w, t.NewGameConfirmButton, t.SlotCancelButton)
 		return
 	}
 
-	DrawText(screen, fmt.Sprintf(t.SlotNamePrompt, slot), float64(x), float64(settingsSlotsLabelY))
+	DrawMenuText(screen, fmt.Sprintf(t.SlotNamePrompt, slot), float64(x), float64(settingsSlotsLabelY))
 	vector.FillRect(screen, float32(x), float32(settingsDialogFieldY), float32(w), float32(settingsDialogFieldH), panelInnerColor, false)
-	DrawText(screen, text+"_", float64(x+6), float64(settingsDialogFieldY+7))
+	DrawMenuText(screen, text+"_", float64(x+6), float64(settingsDialogFieldY+7))
 	drawDialogButtons(screen, x, w, t.SlotSaveButton, t.SlotCancelButton)
 }
 
 func drawDialogButtons(screen *ebiten.Image, x, w int, leftLabel, rightLabel string) {
 	halfW := w / 2
 	vector.FillRect(screen, float32(x), float32(settingsDialogButtonY), float32(halfW-2), float32(settingsDialogButtonH), selectedColor, false)
-	DrawText(screen, leftLabel, float64(x+8), float64(settingsDialogButtonY+7))
+	DrawMenuText(screen, leftLabel, float64(x+8), float64(settingsDialogButtonY+7))
 	vector.FillRect(screen, float32(x+halfW), float32(settingsDialogButtonY), float32(halfW-2), float32(settingsDialogButtonH), panelInnerColor, false)
-	DrawText(screen, rightLabel, float64(x+halfW+8), float64(settingsDialogButtonY+7))
+	DrawMenuText(screen, rightLabel, float64(x+halfW+8), float64(settingsDialogButtonY+7))
 }
 
 func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {
@@ -201,13 +205,16 @@ func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {
 		vector.FillRect(screen, float32(x), float32(y), float32(w), float32(h), fill, false)
 		vector.FillRect(screen, float32(x), float32(y+h-3), float32(w), 3, panelEdgeColor, false)
 
-		drawHireIcon(screen, option.Kind, x+8, y+6, 28)
-		DrawText(screen, hireName(option.Kind), float64(x+44), float64(y+5))
+		iconSize := min(34, cardH-6)
+		iconX := x + 8
+		iconY := y + (cardH-iconSize)/2
+		drawHireIcon(screen, option.Kind, iconX, iconY, iconSize)
+		DrawMenuText(screen, hireName(option.Kind), float64(iconX+iconSize+10), float64(y+4))
 		count := fmt.Sprintf("%d", option.Current)
 		if option.Limit > 0 {
 			count = fmt.Sprintf("%d/%d", option.Current, option.Limit)
 		}
-		DrawText(screen, count, float64(x+44), float64(y+21))
+		DrawMenuText(screen, count, float64(iconX+iconSize+10), float64(y+21))
 	}
 }
 
@@ -330,47 +337,75 @@ func hireKindForProfession(profession villagers.Profession) HireKind {
 	}
 }
 
+const (
+	inspectorIconSize = 52
+	inspectorBodyY    = 122
+)
+
 // DrawInspectorPanel renders the currently selected object. It reads only
 // public accessors from the logic packages, keeping display formatting out of
-// the simulation. With no selection it becomes the compact town summary.
+// the simulation. A large centered portrait separates the selected object
+// from its data, while no selection becomes the compact town summary.
 func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, occupants int, showPriority bool, priorityLevel int) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
 		x := float64(r.Min.X + 18)
-		DrawText(screen, i18n.T().InspectorHint, x, 62)
+		DrawInspectorText(screen, i18n.T().InspectorHint, x, 62)
 		if pop != nil {
-			DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().Population, pop.Count), x, 92)
-			DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().DeathsLabel, pop.Deaths), x, 110)
-			DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().RemovedLabel, pop.Removed), x, 128)
+			DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().Population, pop.Count), x, 92)
+			DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().DeathsLabel, pop.Deaths), x, 112)
+			DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().RemovedLabel, pop.Removed), x, 132)
 		}
 		return
 	}
 
-	// A 28-pixel thumbnail preserves the full text layout while identifying
-	// every selected building, natural object and unit at a glance.
-	drawSelectionIcon(screen, selection, r.Max.X-46, 48, 28)
+	// The icon is a real visual header now, rather than a small badge in the
+	// corner: it makes a worker and his workplace recognisable before reading.
+	iconX := r.Min.X + (r.Dx()-inspectorIconSize)/2
+	drawSelectionIcon(screen, selection, iconX, 48, inspectorIconSize)
+	vector.FillRect(screen, float32(r.Min.X+18), 112, float32(r.Dx()-36), 2, panelEdgeColor, false)
+
 	switch selection.Kind {
 	case SelectionBuilding:
-		drawBuildingInspector(screen, r.Min.X+18, 62, selection.Building, connected, stock, occupants)
+		drawBuildingInspector(screen, r.Min.X+18, inspectorBodyY, selection.Building, connected, stock, occupants)
 	case SelectionSerf:
-		drawSerfInspector(screen, r.Min.X+18, 62, selection.Serf)
+		drawSerfInspector(screen, r.Min.X+18, inspectorBodyY, selection.Serf)
 	case SelectionVillager:
-		drawVillagerInspector(screen, r.Min.X+18, 62, selection.Villager)
+		drawVillagerInspector(screen, r.Min.X+18, inspectorBodyY, selection.Villager)
 	case SelectionLumberjack:
-		drawLumberjackInspector(screen, r.Min.X+18, 62, selection.Lumberjack)
+		drawLumberjackInspector(screen, r.Min.X+18, inspectorBodyY, selection.Lumberjack)
 	case SelectionFisherman:
-		drawFishermanInspector(screen, r.Min.X+18, 62, selection.Fisherman)
+		drawFishermanInspector(screen, r.Min.X+18, inspectorBodyY, selection.Fisherman)
 	case SelectionQuarryman:
-		drawQuarrymanInspector(screen, r.Min.X+18, 62, selection.Quarryman)
+		drawQuarrymanInspector(screen, r.Min.X+18, inspectorBodyY, selection.Quarryman)
 	case SelectionBuilder:
-		drawBuilderInspector(screen, r.Min.X+18, 62, selection.Builder)
+		drawBuilderInspector(screen, r.Min.X+18, inspectorBodyY, selection.Builder)
 	case SelectionMiner:
-		drawMinerInspector(screen, r.Min.X+18, 62, selection.Miner)
+		drawMinerInspector(screen, r.Min.X+18, inspectorBodyY, selection.Miner)
+	}
+	if CanRemoveSelection(selection) {
+		drawRemoveButton(screen, layout, selection, showPriority)
 	}
 	if showPriority {
 		drawPriorityControl(screen, layout, priorityLevel)
 	}
+}
+
+// drawRemoveButton renders the selected object's removal action in the
+// inspector. Serfs are dismissed safely after their current delivery; the
+// actual behavior is implemented by cmd/game's removeSelected method.
+func drawRemoveButton(screen *ebiten.Image, layout Layout, selection Selection, showPriority bool) {
+	r := layout.InspectorRemoveRect(showPriority)
+	fill := color.RGBA{R: 126, G: 53, B: 45, A: 255}
+	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), fill, false)
+	vector.FillRect(screen, float32(r.Min.X), float32(r.Max.Y-3), float32(r.Dx()), 3, panelEdgeColor, false)
+
+	label := i18n.T().RemoveSelected
+	if selection.Kind == SelectionSerf {
+		label = i18n.T().DismissSerf
+	}
+	DrawInspectorText(screen, label, float64(r.Min.X+8), float64(r.Min.Y+8))
 }
 
 // drawPriorityControl draws the five-segment supply-priority slider docked
@@ -387,7 +422,7 @@ func drawPriorityControl(screen *ebiten.Image, layout Layout, current int) {
 	segW := (r.Dx() - 2*priorityMargin) / 5
 
 	t := i18n.T()
-	DrawText(screen, t.PriorityLabel, float64(r.Min.X+priorityMargin), float64(rowY-18))
+	DrawInspectorText(screen, t.PriorityLabel, float64(r.Min.X+priorityMargin), float64(rowY-18))
 
 	labels := [5]string{"--", "-", "•", "+", "++"}
 	for i, label := range labels {
@@ -398,7 +433,7 @@ func drawPriorityControl(screen *ebiten.Image, layout Layout, current int) {
 			fill = selectedColor
 		}
 		vector.FillRect(screen, float32(x), float32(rowY), float32(segW-2), float32(priorityRowHeight), fill, false)
-		DrawText(screen, label, float64(x+segW/2-6), float64(rowY+7))
+		DrawInspectorText(screen, label, float64(x+segW/2-6), float64(rowY+7))
 	}
 }
 
@@ -415,49 +450,49 @@ func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Build
 	case building.ConstructionFinishing:
 		stage = t.ConstructionFinishingLabel
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, stage), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.StateLabel, stage), float64(x), float64(y))
 	y += 20
-	DrawText(screen, fmt.Sprintf("%s: %d%%", t.ConstructionProgressLabel, int(b.ConstructionProgress()*100)), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.ConstructionProgressLabel, int(b.ConstructionProgress()*100)), float64(x), float64(y))
 	y += 20
 	if bt.PlankCost > 0 {
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Plank], b.InputBuffer[resource.Plank], bt.PlankCost), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Plank], b.InputBuffer[resource.Plank], bt.PlankCost), float64(x), float64(y))
 		y += 18
 	}
 	if bt.StoneCost > 0 {
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.InputBuffer[resource.StoneBlock], bt.StoneCost), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.InputBuffer[resource.StoneBlock], bt.StoneCost), float64(x), float64(y))
 	}
 }
 
 func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool, stock *resource.Stockpile, occupants int) {
 	t := i18n.T()
 	bt := building.Types[b.Kind]
-	DrawText(screen, t.BuildingName[b.Kind], float64(x), float64(y))
+	DrawInspectorText(screen, t.BuildingName[b.Kind], float64(x), float64(y))
 	y += 24
 	if b.ConstructionStage != building.ConstructionNone {
 		drawConstructionInspector(screen, x, y, b, bt)
 		return
 	}
 	if b.Kind == building.Tree {
-		DrawText(screen, fmt.Sprintf("%s: %d%%", t.GrowthLabel, int(b.GrowthProgress()*100)), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.GrowthLabel, int(b.GrowthProgress()*100)), float64(x), float64(y))
 		y += 20
-		DrawText(screen, t.HarvestableLabel, float64(x), float64(y))
+		DrawInspectorText(screen, t.HarvestableLabel, float64(x), float64(y))
 		return
 	}
 	if b.Kind == building.Fish {
-		DrawText(screen, fmt.Sprintf("%s: %d%%", t.GrowthLabel, int(b.GrowthProgress()*100)), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.GrowthLabel, int(b.GrowthProgress()*100)), float64(x), float64(y))
 		y += 20
 		if b.GrowthStage() >= 2 {
-			DrawText(screen, t.CatchableLabel, float64(x), float64(y))
+			DrawInspectorText(screen, t.CatchableLabel, float64(x), float64(y))
 		}
 		return
 	}
 	if b.Kind == building.StoneDeposit {
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.StoneReserveLabel, b.Reserve, building.StoneDepositReserve), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.StoneReserveLabel, b.Reserve, building.StoneDepositReserve), float64(x), float64(y))
 		return
 	}
 	switch b.Kind {
 	case building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.DepositReserveLabel, b.Reserve, building.OreDepositReserve), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.DepositReserveLabel, b.Reserve, building.OreDepositReserve), float64(x), float64(y))
 		return
 	}
 	// Every real building, from here on: how many units currently stand
@@ -465,56 +500,56 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	// off or a hungry unit eating at the Tavern counts too, so it works
 	// the same way on buildings that never have a dedicated resident
 	// (Tavern, Warehouse) as it does on a workplace (Farm, Bakery, ...).
-	DrawText(screen, fmt.Sprintf("%s: %d", t.PeopleInsideLabel, occupants), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d", t.PeopleInsideLabel, occupants), float64(x), float64(y))
 	y += 20
 	if b.Kind == building.LumberjackHut {
-		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Log], b.OutputBuffer[resource.Log], building.BufferCapacity), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Log], b.OutputBuffer[resource.Log], building.BufferCapacity), float64(x), float64(y))
 		y += 20
 		routeState := t.Disconnected
 		if connected {
 			routeState = t.Connected
 		}
-		DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
 		return
 	}
 	if b.Kind == building.FisherHut {
-		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Fish], b.OutputBuffer[resource.Fish], building.BufferCapacity), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Fish], b.OutputBuffer[resource.Fish], building.BufferCapacity), float64(x), float64(y))
 		y += 20
 		routeState := t.Disconnected
 		if connected {
 			routeState = t.Connected
 		}
-		DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
 		return
 	}
 	if b.Kind == building.QuarryHut {
-		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.OutputBuffer[resource.StoneBlock], building.BufferCapacity), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.OutputBuffer[resource.StoneBlock], building.BufferCapacity), float64(x), float64(y))
 		y += 20
 		routeState := t.Disconnected
 		if connected {
 			routeState = t.Connected
 		}
-		DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
 		return
 	}
 	if b.Kind == building.MinerHut {
-		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
 		for _, rt := range []resource.Type{resource.Coal, resource.GoldOre, resource.IronOre} {
-			DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], building.BufferCapacity), float64(x), float64(y))
+			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], building.BufferCapacity), float64(x), float64(y))
 			y += 18
 		}
 		routeState := t.Disconnected
 		if connected {
 			routeState = t.Connected
 		}
-		DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
 		return
 	}
 	if b.Kind == building.Smeltery {
@@ -524,30 +559,30 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 			if active < 0 || active >= len(recipes) {
 				active = 0
 			}
-			DrawText(screen, fmt.Sprintf("%s: %d/%d", t.StateLabel, b.ProgressTicks, recipes[active].TicksToProduce), float64(x), float64(y))
+			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.StateLabel, b.ProgressTicks, recipes[active].TicksToProduce), float64(x), float64(y))
 			y += 20
 		}
-		DrawText(screen, t.InputLabel+":", float64(x), float64(y))
+		DrawInspectorText(screen, t.InputLabel+":", float64(x), float64(y))
 		y += 18
 		for _, rt := range []resource.Type{resource.GoldOre, resource.IronOre, resource.Coal} {
-			DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity), float64(x+8), float64(y))
+			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity), float64(x+8), float64(y))
 			y += 18
 		}
-		DrawText(screen, t.OutputLabel+":", float64(x), float64(y))
+		DrawInspectorText(screen, t.OutputLabel+":", float64(x), float64(y))
 		y += 18
 		for _, rt := range []resource.Type{resource.Gold, resource.Iron} {
-			DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], b.OutputLimit()), float64(x+8), float64(y))
+			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], b.OutputLimit()), float64(x+8), float64(y))
 			y += 18
 		}
 		roadState := t.Disconnected
 		if connected {
 			roadState = t.Connected
 		}
-		DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, roadState), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, roadState), float64(x), float64(y))
 		return
 	}
 	if b.Kind == building.Warehouse && stock != nil {
-		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
+		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
 		for _, rt := range resource.AllTypes() {
 			drawWarehouseResourceRow(screen, x, y, rt, stock.Amount(rt))
@@ -555,7 +590,7 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		}
 	}
 	if bt.Recipe.TicksToProduce > 0 {
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.StateLabel, b.ProgressTicks, bt.Recipe.TicksToProduce), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.StateLabel, b.ProgressTicks, bt.Recipe.TicksToProduce), float64(x), float64(y))
 		y += 20
 	}
 	inputTypes := recipeInputTypes(bt)
@@ -563,24 +598,24 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		inputTypes = bt.AcceptedResources
 	}
 	if len(inputTypes) > 0 {
-		DrawText(screen, t.InputLabel+":", float64(x), float64(y))
+		DrawInspectorText(screen, t.InputLabel+":", float64(x), float64(y))
 		y += 18
 		for _, rt := range inputTypes {
-			DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity), float64(x+8), float64(y))
+			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity), float64(x+8), float64(y))
 			y += 18
 		}
 	}
 	if bt.Recipe.TicksToProduce > 0 {
-		DrawText(screen, t.OutputLabel+":", float64(x), float64(y))
+		DrawInspectorText(screen, t.OutputLabel+":", float64(x), float64(y))
 		y += 18
-		DrawText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[bt.Recipe.Output], b.OutputBuffer[bt.Recipe.Output], b.OutputLimit()), float64(x+8), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[bt.Recipe.Output], b.OutputBuffer[bt.Recipe.Output], b.OutputLimit()), float64(x+8), float64(y))
 		y += 18
 	}
 	roadState := t.Disconnected
 	if connected || b.Kind == building.Warehouse || b.Kind == building.Road {
 		roadState = t.Connected
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, roadState), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, roadState), float64(x), float64(y))
 }
 
 func recipeInputTypes(bt building.Type) []resource.Type {
@@ -598,7 +633,7 @@ func recipeInputTypes(bt building.Type) []resource.Type {
 
 func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
 	t := i18n.T()
-	DrawText(screen, t.UnitSerf, float64(x), float64(y))
+	DrawInspectorText(screen, t.UnitSerf, float64(x), float64(y))
 	y += 24
 	state := t.StateIdle
 	if s.Dismissing() {
@@ -616,7 +651,7 @@ func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
 	if s.Starving {
 		state += " (" + t.StateStarving + ")"
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
 	y += 20
 
 	rt, amount := s.Cargo()
@@ -624,7 +659,7 @@ func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
 	if amount > 0 {
 		cargo = fmt.Sprintf("%s × %d", t.ResourceName[rt], amount)
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
 	y += 20
 
 	from, to := s.PickupBuilding(), s.DropoffBuilding()
@@ -636,10 +671,10 @@ func drawSerfInspector(screen *ebiten.Image, x, y int, s *logistics.Serf) {
 		if to != nil {
 			toName = t.BuildingName[to.Kind]
 		}
-		DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, fromName, toName), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, fromName, toName), float64(x), float64(y))
 		y += 20
 	}
-	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, s.SatietyPercent()), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, s.SatietyPercent()), float64(x), float64(y))
 }
 
 func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager) {
@@ -657,7 +692,7 @@ func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager
 	case villagers.Carpenter:
 		profession = t.UnitCarpenter
 	}
-	DrawText(screen, profession, float64(x), float64(y))
+	DrawInspectorText(screen, profession, float64(x), float64(y))
 	y += 24
 
 	state := t.StateWorking
@@ -668,18 +703,18 @@ func drawVillagerInspector(screen *ebiten.Image, x, y int, v *villagers.Villager
 	if v.Starving {
 		state += " (" + t.StateStarving + ")"
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
 	y += 20
 	if v.HomeBuilding() != nil {
-		DrawText(screen, fmt.Sprintf("%s: %s", t.HomeLabel, t.BuildingName[v.HomeBuilding().Kind]), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.HomeLabel, t.BuildingName[v.HomeBuilding().Kind]), float64(x), float64(y))
 		y += 20
 	}
-	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, v.SatietyPercent()), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, v.SatietyPercent()), float64(x), float64(y))
 }
 
 func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumberjack) {
 	t := i18n.T()
-	DrawText(screen, t.UnitLumberjack, float64(x), float64(y))
+	DrawInspectorText(screen, t.UnitLumberjack, float64(x), float64(y))
 	y += 24
 
 	state := t.StateIdle
@@ -698,7 +733,7 @@ func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumbe
 	if j.Starving {
 		state += " (" + t.StateStarving + ")"
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
 	y += 20
 
 	_, amount := j.Cargo()
@@ -706,21 +741,21 @@ func drawLumberjackInspector(screen *ebiten.Image, x, y int, j *lumberjack.Lumbe
 	if amount > 0 {
 		cargo = fmt.Sprintf("%s × %d", t.ResourceName[resource.Log], amount)
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
 	y += 20
 
 	target := t.NoRoute
 	if j.TargetTree() != nil {
 		target = t.BuildingName[building.Tree]
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.LumberjackHut]), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.LumberjackHut]), float64(x), float64(y))
 	y += 20
-	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(j.HungerTicks(), lumberjack.HungerInterval), lumberjack.HungerInterval), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(j.HungerTicks(), lumberjack.HungerInterval), lumberjack.HungerInterval), float64(x), float64(y))
 }
 
 func drawQuarrymanInspector(screen *ebiten.Image, x, y int, q *quarry.Quarryman) {
 	t := i18n.T()
-	DrawText(screen, t.UnitQuarryman, float64(x), float64(y))
+	DrawInspectorText(screen, t.UnitQuarryman, float64(x), float64(y))
 	y += 24
 
 	state := t.StateIdle
@@ -739,7 +774,7 @@ func drawQuarrymanInspector(screen *ebiten.Image, x, y int, q *quarry.Quarryman)
 	if q.Starving {
 		state += " (" + t.StateStarving + ")"
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
 	y += 20
 
 	rt, amount := q.Cargo()
@@ -747,21 +782,21 @@ func drawQuarrymanInspector(screen *ebiten.Image, x, y int, q *quarry.Quarryman)
 	if amount > 0 {
 		cargo = fmt.Sprintf("%s × %d", t.ResourceName[rt], amount)
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
 	y += 20
 
 	target := t.NoRoute
 	if q.TargetDeposit() != nil {
 		target = t.BuildingName[building.StoneDeposit]
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.QuarryHut]), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.QuarryHut]), float64(x), float64(y))
 	y += 20
-	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, q.SatietyPercent()), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, q.SatietyPercent()), float64(x), float64(y))
 }
 
 func drawBuilderInspector(screen *ebiten.Image, x, y int, bld *builder.Builder) {
 	t := i18n.T()
-	DrawText(screen, t.UnitBuilder, float64(x), float64(y))
+	DrawInspectorText(screen, t.UnitBuilder, float64(x), float64(y))
 	y += 24
 
 	state := t.StateIdle
@@ -778,21 +813,21 @@ func drawBuilderInspector(screen *ebiten.Image, x, y int, bld *builder.Builder) 
 	if bld.Starving {
 		state += " (" + t.StateStarving + ")"
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
 	y += 20
 
 	target := t.NoRoute
 	if site := bld.TargetSite(); site != nil {
 		target = t.BuildingName[site.Kind]
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.RouteLabel, target), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RouteLabel, target), float64(x), float64(y))
 	y += 20
-	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, bld.SatietyPercent()), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, bld.SatietyPercent()), float64(x), float64(y))
 }
 
 func drawMinerInspector(screen *ebiten.Image, x, y int, m *miner.Miner) {
 	t := i18n.T()
-	DrawText(screen, t.UnitMiner, float64(x), float64(y))
+	DrawInspectorText(screen, t.UnitMiner, float64(x), float64(y))
 	y += 24
 
 	state := t.StateIdle
@@ -811,7 +846,7 @@ func drawMinerInspector(screen *ebiten.Image, x, y int, m *miner.Miner) {
 	if m.Starving {
 		state += " (" + t.StateStarving + ")"
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
 	y += 20
 
 	rt, amount := m.Cargo()
@@ -819,28 +854,28 @@ func drawMinerInspector(screen *ebiten.Image, x, y int, m *miner.Miner) {
 	if amount > 0 {
 		cargo = fmt.Sprintf("%s × %d", t.ResourceName[rt], amount)
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
 	y += 20
 
 	target := t.NoRoute
 	if deposit := m.TargetDeposit(); deposit != nil {
 		target = t.BuildingName[deposit.Kind]
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.MinerHut]), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.MinerHut]), float64(x), float64(y))
 	y += 20
 
 	quotaIndex, quotaProgress := m.QuotaProgress()
 	if quotaIndex >= 0 && quotaIndex < len(miner.DefaultQuota) {
 		entry := miner.DefaultQuota[quotaIndex]
-		DrawText(screen, fmt.Sprintf("%s: %s (%d/%d)", t.QuotaLabel, t.ResourceName[entry.Resource], quotaProgress, entry.Amount), float64(x), float64(y))
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s (%d/%d)", t.QuotaLabel, t.ResourceName[entry.Resource], quotaProgress, entry.Amount), float64(x), float64(y))
 		y += 20
 	}
-	DrawText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, m.SatietyPercent()), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, m.SatietyPercent()), float64(x), float64(y))
 }
 
 func drawFishermanInspector(screen *ebiten.Image, x, y int, f *fishing.Fisherman) {
 	t := i18n.T()
-	DrawText(screen, t.UnitFisherman, float64(x), float64(y))
+	DrawInspectorText(screen, t.UnitFisherman, float64(x), float64(y))
 	y += 24
 
 	state := t.StateIdle
@@ -855,7 +890,7 @@ func drawFishermanInspector(screen *ebiten.Image, x, y int, f *fishing.Fisherman
 	if f.Starving {
 		state += " (" + t.StateStarving + ")"
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.StateLabel, state), float64(x), float64(y))
 	y += 20
 
 	_, amount := f.Cargo()
@@ -863,16 +898,16 @@ func drawFishermanInspector(screen *ebiten.Image, x, y int, f *fishing.Fisherman
 	if amount > 0 {
 		cargo = fmt.Sprintf("%s × %d", t.ResourceName[resource.Fish], amount)
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.CargoLabel, cargo), float64(x), float64(y))
 	y += 20
 
 	target := t.NoRoute
 	if f.TargetFish() != nil {
 		target = t.BuildingName[building.Fish]
 	}
-	DrawText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.FisherHut]), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %s → %s", t.RouteLabel, target, t.BuildingName[building.FisherHut]), float64(x), float64(y))
 	y += 20
-	DrawText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(f.HungerTicks(), fishing.HungerInterval), fishing.HungerInterval), float64(x), float64(y))
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(f.HungerTicks(), fishing.HungerInterval), fishing.HungerInterval), float64(x), float64(y))
 }
 
 // DrawSelectionMarker draws a warm outline under the selected object so the
@@ -948,7 +983,7 @@ func drawAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y int, marker
 }
 
 // DrawBottomPanel renders the utility strip. Simulation speed intentionally
-// lives only in the Options tab, leaving this strip for unit controls and help.
+// lives only in the Options tab, leaving this strip for the unit control.
 func DrawBottomPanel(screen *ebiten.Image, layout Layout) {
 	r := layout.BottomPanel()
 	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), panelColor, false)

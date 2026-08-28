@@ -99,6 +99,8 @@ type Catalog struct {
 	UnitMiner                   string
 	UnitSmelter                 string
 	HireSerf                    string
+	RemoveSelected              string
+	DismissSerf                 string
 	Deleted                     string
 	SerfDismissRequested        string
 	CannotDeleteWarehouse       string
@@ -107,7 +109,6 @@ type Catalog struct {
 	CannotDeleteStoneDeposit    string
 	CatchableLabel              string
 
-	Help                  string
 	CantBuildHere         string
 	NotEnoughGold         string
 	SaveFailedPrefix      string

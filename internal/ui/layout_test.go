@@ -3,6 +3,7 @@ package ui
 import (
 	"testing"
 
+	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/i18n"
 )
@@ -44,6 +45,41 @@ func TestBuildPaletteKeepsEveryCardClickable(t *testing.T) {
 // TestPriorityLevelAtCoversAllFiveSegments checks the five-segment supply
 // priority control (see DrawInspectorPanel's priority row) maps clicks to
 // levels -2..2 left to right, with no gaps and nothing outside the row.
+// TestPalettePlacesTheWholeFoodChainFirst keeps the construction menu ordered
+// around how a settlement is built: food sources and processing lead to the
+// Tavern, while roads, storage and extraction follow afterwards.
+func TestPalettePlacesTheWholeFoodChainFirst(t *testing.T) {
+	want := []building.Kind{
+		building.Farm,
+		building.Mill,
+		building.Bakery,
+		building.Winery,
+		building.FisherHut,
+		building.PigFarm,
+		building.MeatWorkshop,
+		building.Tavern,
+		building.Road,
+		building.Warehouse,
+		building.LumberjackHut,
+		building.CarpentryWorkshop,
+		building.QuarryHut,
+		building.MinerHut,
+		building.Smeltery,
+	}
+	got := NewPalette().Kinds
+	if len(got) != len(want) {
+		t.Fatalf("palette length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("palette item %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestPriorityLevelAtCoversAllFiveSegments checks the five-segment supply
+// priority control (see DrawInspectorPanel's priority row) maps clicks to
+// levels -2..2 left to right, with no gaps and nothing outside the row.
 func TestPriorityLevelAtCoversAllFiveSegments(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	r := layout.RightPanel()
@@ -74,6 +110,28 @@ func TestPriorityLevelAtCoversAllFiveSegments(t *testing.T) {
 // TestMenuTabAtCoversAllThreeTabs checks the tab bar resolves a click in the
 // middle of each of the three tab buttons (Build, Hire, Settings) to that
 // tab, with no gaps between them wide enough to swallow a click.
+// TestInspectorRemoveButtonMovesAbovePriority keeps the selected object's
+// removal action clickable without covering the priority label or segments.
+func TestInspectorRemoveButtonMovesAbovePriority(t *testing.T) {
+	layout := NewLayout(1024, 768)
+	plain := layout.InspectorRemoveRect(false)
+	if !layout.InspectorRemoveAt(plain.Min.X+plain.Dx()/2, plain.Min.Y+plain.Dy()/2, false) {
+		t.Fatal("plain inspector removal button is not clickable at its center")
+	}
+
+	withPriority := layout.InspectorRemoveRect(true)
+	if !layout.InspectorRemoveAt(withPriority.Min.X+withPriority.Dx()/2, withPriority.Min.Y+withPriority.Dy()/2, true) {
+		t.Fatal("priority inspector removal button is not clickable at its center")
+	}
+	rowY := layout.RightPanel().Max.Y - priorityRowHeight - priorityBottomGap
+	if withPriority.Max.Y > rowY-18 {
+		t.Fatalf("removal button ends at y=%d, overlaps priority label beginning at y=%d", withPriority.Max.Y, rowY-18)
+	}
+	if withPriority.Min.Y >= plain.Min.Y {
+		t.Fatalf("priority removal button y=%d, want above plain y=%d", withPriority.Min.Y, plain.Min.Y)
+	}
+}
+
 func TestMenuTabAtCoversAllThreeTabs(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	for i := 0; i < tabCount; i++ {

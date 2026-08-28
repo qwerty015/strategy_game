@@ -307,7 +307,7 @@ func (g *Game) Update() error {
 
 	// While the settings tab's save/load modal is open, it owns every key
 	// and click: typing a name must not also select a build-palette item
-	// (digit keys), hire a serf (H), or delete the current selection.
+	// (digit keys) or hire a serf (H).
 	if g.dialog != ui.DialogNone {
 		g.handleDialogInput()
 	} else {
@@ -805,7 +805,12 @@ func (g *Game) handleMouse() {
 		g.hireSerf()
 		return
 	}
-	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil && priorityEligible(g.selection.Building.Kind) {
+	showPriority := g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil && priorityEligible(g.selection.Building.Kind)
+	if ui.CanRemoveSelection(g.selection) && g.layout.InspectorRemoveAt(mx, my, showPriority) {
+		g.removeSelected()
+		return
+	}
+	if showPriority {
 		if level, ok := g.layout.PriorityLevelAt(mx, my); ok {
 			g.logi.SetPriority(g.selection.Building.Kind, level)
 			return
@@ -867,15 +872,6 @@ func (g *Game) handleUnitActions() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyH) {
 		g.hireSerf()
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyDelete) {
-		if g.selection.Kind == ui.SelectionSerf && g.selection.Serf != nil {
-			if g.logi.RequestDismissal(g.selection.Serf) {
-				g.statusMsg = i18n.T().SerfDismissRequested
-			}
-			return
-		}
-		g.deleteSelectedBuilding()
-	}
 }
 
 // canAffordHire reports whether the stockpile can currently cover one more
@@ -904,6 +900,20 @@ func (g *Game) hireSerf() {
 	g.logi.Hire()
 	g.refreshPopulation()
 	g.statusMsg = ""
+}
+
+// removeSelected performs the inspector's removal action. A serf finishes an
+// already assigned delivery before leaving; buildings use the established
+// removal flow with its warehouse and natural-resource safeguards.
+func (g *Game) removeSelected() {
+	switch g.selection.Kind {
+	case ui.SelectionSerf:
+		if g.selection.Serf != nil && g.logi.RequestDismissal(g.selection.Serf) {
+			g.statusMsg = i18n.T().SerfDismissRequested
+		}
+	case ui.SelectionBuilding:
+		g.deleteSelectedBuilding()
+	}
 }
 
 // deleteSelectedBuilding removes the selected building and invalidates all
@@ -3012,7 +3022,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	ui.DrawBottomPanel(screen, g.layout)
 	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
 
-	ui.DrawText(screen, i18n.T().Help, float64(g.layout.LeftWidth+16), float64(g.layout.Height-20))
 	if g.statusMsg != "" {
 		ui.DrawText(screen, g.statusMsg, 8, float64(g.layout.Height-36))
 	}

@@ -9,7 +9,7 @@ const TileSize = 24 // pixels per tile side, at default zoom
 
 const (
 	minZoom = 0.60
-	maxZoom = 2.00
+	maxZoom = 2.50
 )
 
 // Camera tracks which part of the world (in pixels) is visible at the

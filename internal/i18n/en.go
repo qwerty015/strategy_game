@@ -121,7 +121,9 @@ func init() {
 		UnitBuilder:                 "Builder",
 		UnitMiner:                   "Miner",
 		UnitSmelter:                 "Smelter",
-		HireSerf:                    "Hire serf [H]",
+		HireSerf:                    "Hire serf",
+		RemoveSelected:              "Remove",
+		DismissSerf:                 "Dismiss serf",
 		Deleted:                     "Deleted.",
 		SerfDismissRequested:        "The serf will leave after this delivery.",
 		CannotDeleteWarehouse:       "The last warehouse cannot be deleted",
@@ -130,7 +132,6 @@ func init() {
 		CannotDeleteStoneDeposit:    "A deposit cannot be removed manually",
 		CatchableLabel:              "Catchable by fisherman",
 
-		Help:                  "Arrows/Middle drag: pan | Wheel +/-: zoom | Click: place/select | H: hire serf | Delete: remove | Esc: quit",
 		CantBuildHere:         "Can't build there",
 		NotEnoughGold:         "Not enough gold",
 		SaveFailedPrefix:      "Save failed: ",

@@ -17,7 +17,26 @@ type Palette struct {
 // number keys) in the HUD. The first warehouse is provided at game start;
 // additional warehouses can be built later.
 func NewPalette() *Palette {
-	return &Palette{Kinds: []building.Kind{building.Farm, building.Mill, building.Bakery, building.Winery, building.Tavern, building.Road, building.Warehouse, building.LumberjackHut, building.FisherHut, building.PigFarm, building.MeatWorkshop, building.CarpentryWorkshop, building.QuarryHut, building.MinerHut, building.Smeltery}}
+	// Food is grouped as one readable chain: fields and animal/water producers,
+	// their processing workshops, then the Tavern where every food ends up.
+	// Civic, construction and extraction buildings follow after that group.
+	return &Palette{Kinds: []building.Kind{
+		building.Farm,
+		building.Mill,
+		building.Bakery,
+		building.Winery,
+		building.FisherHut,
+		building.PigFarm,
+		building.MeatWorkshop,
+		building.Tavern,
+		building.Road,
+		building.Warehouse,
+		building.LumberjackHut,
+		building.CarpentryWorkshop,
+		building.QuarryHut,
+		building.MinerHut,
+		building.Smeltery,
+	}}
 }
 
 // SelectedKind returns the building kind currently chosen for placement.

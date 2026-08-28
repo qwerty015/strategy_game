@@ -46,3 +46,25 @@ type Selection struct {
 func (s *Selection) Clear() {
 	*s = Selection{}
 }
+
+// CanRemoveSelection reports whether the selected object can be removed by
+// the inspector action. Trees, fish and mineral deposits are map resources,
+// not player-owned buildings, so the action is deliberately hidden for them.
+// A serf is dismissed only after completing any delivery already in progress.
+func CanRemoveSelection(selection Selection) bool {
+	switch selection.Kind {
+	case SelectionSerf:
+		return selection.Serf != nil
+	case SelectionBuilding:
+		if selection.Building == nil {
+			return false
+		}
+		switch selection.Building.Kind {
+		case building.Tree, building.Fish, building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+}

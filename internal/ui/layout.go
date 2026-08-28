@@ -188,7 +188,31 @@ const (
 	priorityRowHeight = 30
 	priorityMargin    = 18
 	priorityBottomGap = 12
+
+	inspectorRemoveHeight      = 30
+	inspectorRemoveMargin      = 18
+	inspectorRemoveBottomGap   = 12
+	inspectorRemovePriorityGap = 26
 )
+
+// InspectorRemoveRect returns the removal button bounds in the inspector.
+// When the selected building exposes its supply-priority control, the button
+// moves above that control and its label; otherwise it stays docked at the
+// panel's bottom. Drawing and hit-testing use this one rectangle.
+func (l Layout) InspectorRemoveRect(showPriority bool) image.Rectangle {
+	r := l.RightPanel()
+	y := r.Max.Y - inspectorRemoveBottomGap - inspectorRemoveHeight
+	if showPriority {
+		y -= priorityRowHeight + priorityBottomGap + inspectorRemovePriorityGap
+	}
+	return image.Rect(r.Min.X+inspectorRemoveMargin, y, r.Max.X-inspectorRemoveMargin, y+inspectorRemoveHeight)
+}
+
+// InspectorRemoveAt reports whether the cursor is over the selected object's
+// removal button. Callers must first check CanRemoveSelection.
+func (l Layout) InspectorRemoveAt(x, y int, showPriority bool) bool {
+	return image.Pt(x, y).In(l.InspectorRemoveRect(showPriority))
+}
 
 // PriorityLevelAt returns the supply-priority segment under the cursor,
 // from the fixed five-segment control docked at the bottom of the
