@@ -237,6 +237,123 @@ func TestEnsureOreDepositsSeedsAnUnmigratedSave(t *testing.T) {
 	}
 }
 
+// TestGenerateGridCarvesASeaTouchingAnEdgeWithinTargetPercent covers "карта
+// генерируется случайно" plus the roadmap's "водоёмы генерируются у края
+// карты": the sea's cell count must land in the designed 8-14% of the
+// map's area, and -- since it always grows inward from an edge -- at least
+// one edge cell must be water.
+func TestGenerateGridCarvesASeaTouchingAnEdgeWithinTargetPercent(t *testing.T) {
+	grid := generateGrid(60, 45, 0x1b873593)
+	area := grid.Width * grid.Height
+
+	water := 0
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			if grid.At(x, y).Terrain == world.Water {
+				water++
+			}
+		}
+	}
+	minCells, maxCells := area*seaMinPercent/100, area*seaMaxPercent/100
+	if water < minCells || water > maxCells {
+		t.Fatalf("sea has %d water cells, want between %d and %d (%d-%d%% of %d)", water, minCells, maxCells, seaMinPercent, seaMaxPercent, area)
+	}
+
+	touchesEdge := false
+	for x := 0; x < grid.Width && !touchesEdge; x++ {
+		if grid.At(x, 0).Terrain == world.Water || grid.At(x, grid.Height-1).Terrain == world.Water {
+			touchesEdge = true
+		}
+	}
+	for y := 0; y < grid.Height && !touchesEdge; y++ {
+		if grid.At(0, y).Terrain == world.Water || grid.At(grid.Width-1, y).Terrain == world.Water {
+			touchesEdge = true
+		}
+	}
+	if !touchesEdge {
+		t.Fatal("sea does not touch any map edge, want it to grow inward from one")
+	}
+}
+
+// TestGenerateGridFertilePatchesWithinTargetPercent covers the cosmetic
+// fertile-patch generation: cell count must land in the designed 6-10% of
+// the map's area, and every fertile cell must actually be on what was
+// plain grass (never overwriting the sea).
+func TestGenerateGridFertilePatchesWithinTargetPercent(t *testing.T) {
+	grid := generateGrid(60, 45, 0x1b873593)
+	area := grid.Width * grid.Height
+
+	fertile := 0
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			if grid.At(x, y).Terrain == world.Fertile {
+				fertile++
+			}
+		}
+	}
+	minCells, maxCells := area*fertileMinPercent/100, area*fertileMaxPercent/100
+	if fertile < minCells || fertile > maxCells {
+		t.Fatalf("fertile land has %d cells, want between %d and %d (%d-%d%% of %d)", fertile, minCells, maxCells, fertileMinPercent, fertileMaxPercent, area)
+	}
+}
+
+// TestGenerateGridProducesDifferentMapsForDifferentSeeds is the closest
+// stand-in for "карта генерируется случайно" a deterministic test can make:
+// two distinct seeds must not produce an identical tile layout.
+func TestGenerateGridProducesDifferentMapsForDifferentSeeds(t *testing.T) {
+	a := generateGrid(60, 45, 0x1b873593)
+	b := generateGrid(60, 45, 0x9e3779b9)
+
+	identical := true
+	for y := 0; y < a.Height && identical; y++ {
+		for x := 0; x < a.Width; x++ {
+			if a.At(x, y).Terrain != b.At(x, y).Terrain {
+				identical = false
+				break
+			}
+		}
+	}
+	if identical {
+		t.Fatal("two different seeds produced an identical map, want the layout to vary")
+	}
+}
+
+// TestFindWarehouseSpotIsBuildableWithRoomForTheStartingRoad checks the
+// procedural replacement for the old fixed warehouseX/Y constants: the
+// chosen spot must be plain grass with a buildable tile directly south for
+// the starting Road.
+func TestFindWarehouseSpotIsBuildableWithRoomForTheStartingRoad(t *testing.T) {
+	grid := generateGrid(60, 45, 0x1b873593)
+	spot, ok := findWarehouseSpot(grid)
+	if !ok {
+		t.Fatal("findWarehouseSpot found no spot on a freshly generated map")
+	}
+	if grid.At(spot.x, spot.y).Terrain != world.Grass {
+		t.Fatalf("warehouse spot (%d,%d) is not plain grass", spot.x, spot.y)
+	}
+	if !grid.At(spot.x, spot.y+1).Buildable() {
+		t.Fatalf("tile south of the warehouse spot (%d,%d) is not buildable, no room for the starting road", spot.x, spot.y)
+	}
+}
+
+// TestSeedThicketsAddsTreesBeyondTheUniformScatter covers the roadmap's
+// "чащи": thickets must add MORE trees on top of seedTrees' map-wide ~1%
+// scatter, not replace or cap it.
+func TestSeedThicketsAddsTreesBeyondTheUniformScatter(t *testing.T) {
+	grid := generateGrid(60, 45, 0x1b873593)
+
+	var uniformOnly []*building.Building
+	uniformOnly = seedTrees(grid, uniformOnly)
+
+	var withThickets []*building.Building
+	withThickets = seedTrees(grid, withThickets)
+	withThickets = seedThickets(grid, withThickets, 0x27d4eb2f)
+
+	if len(withThickets) <= len(uniformOnly) {
+		t.Fatalf("tree count with thickets = %d, want more than the uniform-only count %d", len(withThickets), len(uniformOnly))
+	}
+}
+
 func TestFishRegrowthRespectsBodyCap(t *testing.T) {
 	grid := world.NewGrid(3, 1)
 	for x := 0; x < grid.Width; x++ {

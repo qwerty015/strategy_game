@@ -7,6 +7,7 @@ import (
 	"image"
 	"log"
 	"sort"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -42,12 +43,13 @@ const (
 	stockpileCapacity = 0
 	startingSerfs     = 3
 
-	// Fixed spot for the town's primary Warehouse, chosen to sit on plain
-	// grass in world.NewTestGrid (away from the fertile/forest/water/
-	// stone patches). A single Road tile just south of it gives the
-	// player something to extend from immediately; more warehouses can be
-	// placed later and share the same stockpile.
-	warehouseX, warehouseY = 18, 10
+	// mapWidth/mapHeight is the fixed size of every procedurally generated
+	// map (see generateGrid) -- bigger than the original 40x30 hand-built
+	// test map, per the roadmap's "карта большего размера". Only the
+	// terrain layout within this fixed size is randomized per game, not
+	// the dimensions themselves.
+	mapWidth  = 100
+	mapHeight = 75
 
 	// Named save-panel slots (side panel, settings tab) live in their own
 	// files. Saving/loading is mouse-only through the Settings tab -- there
@@ -87,6 +89,35 @@ const (
 	coalMinPercent, coalMaxPercent       = 4, 8
 	ironOreMinPercent, ironOreMaxPercent = 2, 4
 	goldOreMinPercent, goldOreMaxPercent = 1, 2
+
+	// seaMinPercent/seaMaxPercent bound the one sea's share of the map's
+	// area. Per the roadmap ("водоёмы генерируются у края карты, а не где
+	// придётся") the sea always grows inward from a random map edge rather
+	// than sitting anywhere, so reaching the coast is always a deliberate
+	// road, never something the town happens to already border. The user
+	// asked to specifically think through its size: big enough to read as
+	// a real coastline and comfortably support several Fisher Huts along
+	// it (at 8-14% of a 7500-cell map that's 600-1050 water cells, the
+	// same order of magnitude as the stone/ore abundance ranges below),
+	// small enough that most of the map stays dry, buildable land.
+	seaMinPercent, seaMaxPercent = 8, 14
+
+	// fertileMinPercent/fertileMaxPercent size the map's cosmetic tilled-soil
+	// patches. Purely visual -- building.Types[Farm].AllowedTerrain is empty,
+	// so a Farm can be placed on any dry tile regardless of terrain -- kept
+	// only so a procedural map still has the "here's good farmland" visual
+	// cue the original hand-built map had.
+	fertileMinPercent, fertileMaxPercent = 6, 10
+	fertileRegionCount                   = 2
+
+	// Thickets ("чащи" in the roadmap) are a handful of deliberately dense
+	// tree zones, layered on top of -- not instead of -- seedTrees' existing
+	// map-wide ~1% uniform scatter. thicketDensityPercent is the chance any
+	// one cell inside a zone actually gets a tree, so a thicket reads as a
+	// dense grove rather than an unbroken wall of trunks.
+	thicketZoneCount                             = 3
+	thicketZoneMinPercent, thicketZoneMaxPercent = 3, 5
+	thicketDensityPercent                        = 45
 
 	// minDepositDistanceFromWarehouse keeps every finite deposit kind --
 	// stone, coal, gold ore, iron ore -- away from the town's starting
@@ -183,15 +214,24 @@ type Game struct {
 }
 
 func NewGame() *Game {
-	grid := world.NewTestGrid()
-	warehouse := &building.Building{Kind: building.Warehouse, X: warehouseX, Y: warehouseY}
-	initialRoad := &building.Building{Kind: building.Road, X: warehouseX, Y: warehouseY + 1}
+	mapSeed := newMapSeed()
+	grid := generateGrid(mapWidth, mapHeight, mapSeed)
+
+	warehousePoint, ok := findWarehouseSpot(grid)
+	if !ok {
+		// Should be unreachable given seaMaxPercent+fertileMaxPercent leaves
+		// most of the map as plain grass -- but a game must still start
+		// rather than panic if generation ever produces a map this crowded.
+		warehousePoint = gridPoint{grid.Width / 2, grid.Height / 2}
+	}
+	warehouse := &building.Building{Kind: building.Warehouse, X: warehousePoint.x, Y: warehousePoint.y}
+	initialRoad := &building.Building{Kind: building.Road, X: warehousePoint.x, Y: warehousePoint.y + 1}
 
 	buildings := []*building.Building{warehouse, initialRoad}
-	warehousePoint := gridPoint{warehouseX, warehouseY}
 	// Trees are sparse persistent world objects, scattered across all free
 	// dry cells rather than confined to a special forest area.
 	buildings = seedTrees(grid, buildings)
+	buildings = seedThickets(grid, buildings, mapSeed^0x27d4eb2f)
 	buildings = seedFish(grid, buildings)
 	buildings = seedStoneDeposits(grid, buildings, defaultStoneSeed, warehousePoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed, warehousePoint, minDepositDistanceFromWarehouse)
@@ -1781,6 +1821,284 @@ func referenceBuildings(in []building.Building) []*building.Building {
 		out[i] = &in[i]
 	}
 	return out
+}
+
+// newMapSeed returns a fresh, non-persisted seed for one game's procedural
+// terrain -- per the user's explicit request ("карта генерируется случайно
+// при 'Новой игре'"), unlike every other *Seed constant in this file (the
+// tree/fish regrowth seeds, and the stone/ore region seeds), the map layout
+// itself is meant to be different every time NewGame runs, not a fixed
+// default. Nothing about this seed is ever saved: the terrain doesn't need
+// re-seeding the way regrowth does, since the whole tile grid is saved and
+// loaded verbatim (save.GameState.Tiles).
+func newMapSeed() uint32 {
+	return uint32(time.Now().UnixNano())
+}
+
+// generateGrid builds one fresh procedural map: a sea hugging a random edge
+// (see seaMinPercent), a couple of cosmetic fertile patches, and otherwise
+// plain grass for seedTrees/seedThickets/seedStoneDeposits/seedOreDeposits
+// to scatter their objects across afterward.
+func generateGrid(width, height int, seed uint32) *world.Grid {
+	g := world.NewGrid(width, height)
+	growSeaRegion(g, seed^0x9e3779b9)
+	growFertileRegions(g, seed^0x85ebca6b)
+	return g
+}
+
+// growSeaRegion carves one sea out of the map, starting from a randomly
+// chosen point on a randomly chosen edge and growing inward the same
+// blob-region way seedStoneDeposits does -- see seaMinPercent's doc comment
+// for why it starts on the edge rather than anywhere.
+func growSeaRegion(g *world.Grid, seed uint32) {
+	area := g.Width * g.Height
+	span := seaMaxPercent - seaMinPercent + 1
+	percent := seaMinPercent + int(seed%uint32(span))
+	target := area * percent / 100
+	if target <= 0 {
+		return
+	}
+
+	start := seaEdgeStart(g, seed)
+	claimed := map[gridPoint]bool{start: true}
+	frontier := []gridPoint{start}
+	placed := 0
+	for len(frontier) > 0 && placed < target {
+		bestIdx := 0
+		bestScore := seaScatterScore(frontier[0].x, frontier[0].y) ^ seed
+		for i := 1; i < len(frontier); i++ {
+			score := seaScatterScore(frontier[i].x, frontier[i].y) ^ seed
+			if score < bestScore {
+				bestScore, bestIdx = score, i
+			}
+		}
+		p := frontier[bestIdx]
+		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
+
+		g.Set(p.x, p.y, world.Tile{Terrain: world.Water})
+		placed++
+
+		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			n := gridPoint{p.x + d.x, p.y + d.y}
+			if claimed[n] || !g.InBounds(n.x, n.y) {
+				continue
+			}
+			claimed[n] = true
+			frontier = append(frontier, n)
+		}
+	}
+}
+
+// seaEdgeStart picks a random point on a randomly chosen map edge as the
+// sea's growth origin.
+func seaEdgeStart(g *world.Grid, seed uint32) gridPoint {
+	switch (seed >> 16) % 4 {
+	case 0: // top
+		return gridPoint{int(seed % uint32(g.Width)), 0}
+	case 1: // right
+		return gridPoint{g.Width - 1, int(seed % uint32(g.Height))}
+	case 2: // bottom
+		return gridPoint{int(seed % uint32(g.Width)), g.Height - 1}
+	default: // left
+		return gridPoint{0, int(seed % uint32(g.Height))}
+	}
+}
+
+func seaScatterScore(x, y int) uint32 {
+	return uint32(x)*668265263 ^ uint32(y)*374761393 ^ 0x6a09e667
+}
+
+// growFertileRegions splits a random 6-10% of the map's area across a
+// couple of separate patches, mirroring seedStoneDeposits' region-count
+// approach. Purely cosmetic -- see fertileMinPercent's doc comment.
+func growFertileRegions(g *world.Grid, seed uint32) {
+	area := g.Width * g.Height
+	span := fertileMaxPercent - fertileMinPercent + 1
+	percent := fertileMinPercent + int(seed%uint32(span))
+	total := area * percent / 100
+	if total <= 0 {
+		return
+	}
+	base := total / fertileRegionCount
+	for i := 0; i < fertileRegionCount; i++ {
+		regionSeed := seed ^ uint32(i)*0x9e3779b9
+		growFertileRegion(g, base, regionSeed)
+	}
+}
+
+// growFertileRegion places one blob of Fertile tiles, the same way
+// growStoneRegion places a stone-deposit blob, but painting terrain
+// directly instead of adding a Building. Growth halts wherever it meets
+// non-grass ground (water, an earlier patch) instead of growing through it,
+// same as a deposit region halts at an unplaceable cell.
+func growFertileRegion(g *world.Grid, target int, seed uint32) {
+	if target <= 0 {
+		return
+	}
+	start, ok := findFertileStart(g, seed)
+	if !ok {
+		return
+	}
+
+	claimed := map[gridPoint]bool{start: true}
+	frontier := []gridPoint{start}
+	placed := 0
+	for len(frontier) > 0 && placed < target {
+		bestIdx := 0
+		bestScore := fertileScatterScore(frontier[0].x, frontier[0].y) ^ seed
+		for i := 1; i < len(frontier); i++ {
+			score := fertileScatterScore(frontier[i].x, frontier[i].y) ^ seed
+			if score < bestScore {
+				bestScore, bestIdx = score, i
+			}
+		}
+		p := frontier[bestIdx]
+		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
+
+		if g.At(p.x, p.y).Terrain != world.Grass {
+			continue
+		}
+		g.Set(p.x, p.y, world.Tile{Terrain: world.Fertile})
+		placed++
+
+		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			n := gridPoint{p.x + d.x, p.y + d.y}
+			if claimed[n] || !g.InBounds(n.x, n.y) {
+				continue
+			}
+			claimed[n] = true
+			frontier = append(frontier, n)
+		}
+	}
+}
+
+func findFertileStart(g *world.Grid, seed uint32) (gridPoint, bool) {
+	bestScore := ^uint32(0)
+	var best gridPoint
+	found := false
+	for y := 0; y < g.Height; y++ {
+		for x := 0; x < g.Width; x++ {
+			if g.At(x, y).Terrain != world.Grass {
+				continue
+			}
+			score := fertileScatterScore(x, y) ^ seed
+			if !found || score < bestScore {
+				bestScore, best, found = score, gridPoint{x, y}, true
+			}
+		}
+	}
+	return best, found
+}
+
+func fertileScatterScore(x, y int) uint32 {
+	return uint32(x)*3266489917 ^ uint32(y)*2246822519 ^ 0x1b873593
+}
+
+// findWarehouseSpot picks the plain-grass tile closest to the map's center
+// that also has a buildable tile directly south for the starting Road --
+// the procedural-generation replacement for the old fixed warehouseX/Y
+// constants. Centering it keeps the starting position roughly equidistant
+// from whatever the sea/deposit generation ends up placing around the
+// edges, on a map whose layout is different every game.
+func findWarehouseSpot(g *world.Grid) (gridPoint, bool) {
+	cx, cy := g.Width/2, g.Height/2
+	bestDist := 0
+	var best gridPoint
+	found := false
+	for y := 0; y < g.Height; y++ {
+		for x := 0; x < g.Width; x++ {
+			if g.At(x, y).Terrain != world.Grass || !g.InBounds(x, y+1) || !g.At(x, y+1).Buildable() {
+				continue
+			}
+			dx, dy := x-cx, y-cy
+			dist := dx*dx + dy*dy
+			if !found || dist < bestDist {
+				bestDist, best, found = dist, gridPoint{x, y}, true
+			}
+		}
+	}
+	return best, found
+}
+
+// seedThickets plants extra trees inside a handful of deliberately dense
+// zones, on top of (not instead of) seedTrees' map-wide uniform ~1%
+// scatter -- the roadmap's "чащи". Each zone is grown the same blob-region
+// way as a stone/ore deposit; a visited cell gets a tree only
+// thicketDensityPercent of the time, so a thicket reads as a dense grove
+// rather than an unbroken wall of trunks.
+func seedThickets(grid *world.Grid, buildings []*building.Building, seed uint32) []*building.Building {
+	area := grid.Width * grid.Height
+	span := thicketZoneMaxPercent - thicketZoneMinPercent + 1
+	for i := 0; i < thicketZoneCount; i++ {
+		zoneSeed := seed ^ uint32(i)*0x85ebca6b
+		percent := thicketZoneMinPercent + int(zoneSeed%uint32(span))
+		target := area * percent / 100
+		buildings = growThicketZone(grid, buildings, target, zoneSeed)
+	}
+	return buildings
+}
+
+func growThicketZone(grid *world.Grid, buildings []*building.Building, target int, seed uint32) []*building.Building {
+	if target <= 0 {
+		return buildings
+	}
+	start, ok := findThicketStart(grid, buildings, seed)
+	if !ok {
+		return buildings
+	}
+
+	claimed := map[gridPoint]bool{start: true}
+	frontier := []gridPoint{start}
+	visited := 0
+	for len(frontier) > 0 && visited < target {
+		bestIdx := 0
+		bestScore := thicketScatterScore(frontier[0].x, frontier[0].y) ^ seed
+		for i := 1; i < len(frontier); i++ {
+			score := thicketScatterScore(frontier[i].x, frontier[i].y) ^ seed
+			if score < bestScore {
+				bestScore, bestIdx = score, i
+			}
+		}
+		p := frontier[bestIdx]
+		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
+		visited++
+
+		if (thicketScatterScore(p.x, p.y)^seed)%100 < thicketDensityPercent && building.CanPlace(grid, buildings, building.Tree, p.x, p.y) {
+			buildings = append(buildings, building.NewTree(p.x, p.y))
+		}
+
+		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			n := gridPoint{p.x + d.x, p.y + d.y}
+			if claimed[n] || !grid.InBounds(n.x, n.y) || !grid.At(n.x, n.y).Buildable() {
+				continue
+			}
+			claimed[n] = true
+			frontier = append(frontier, n)
+		}
+	}
+	return buildings
+}
+
+func findThicketStart(grid *world.Grid, buildings []*building.Building, seed uint32) (gridPoint, bool) {
+	bestScore := ^uint32(0)
+	var best gridPoint
+	found := false
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			if !building.CanPlace(grid, buildings, building.Tree, x, y) {
+				continue
+			}
+			score := thicketScatterScore(x, y) ^ seed
+			if !found || score < bestScore {
+				bestScore, best, found = score, gridPoint{x, y}, true
+			}
+		}
+	}
+	return best, found
+}
+
+func thicketScatterScore(x, y int) uint32 {
+	return uint32(x)*374761393 ^ uint32(y)*668265263 ^ 0x27d4eb2f
 }
 
 // seedTrees adds no more than one percent of the map area in trees. Candidate
