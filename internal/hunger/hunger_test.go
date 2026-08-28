@@ -9,8 +9,8 @@ func TestPercent(t *testing.T) {
 	}{
 		{elapsed: -5, want: 100}, // never fed yet clamps up, not down
 		{elapsed: 0, want: 100},
-		{elapsed: 10, want: 99},
-		{elapsed: MealThresholdTicks, want: 20}, // 800 ticks elapsed -> 20% satiety
+		{elapsed: 13, want: 99},                 // one percent's worth of ticks at the current MaxTicks
+		{elapsed: MealThresholdTicks, want: 20}, // MealThresholdTicks is always 80% of MaxTicks -> 20% satiety
 		{elapsed: MaxTicks, want: 0},
 		{elapsed: MaxTicks + 500, want: 0}, // clamps at 0, never negative
 	}

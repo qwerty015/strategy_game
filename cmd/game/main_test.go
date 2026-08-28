@@ -320,6 +320,36 @@ func TestFindWarehouseSpotIsBuildableWithRoomForTheStartingRoad(t *testing.T) {
 	}
 }
 
+// TestFindWarehouseSpotIsWithinMaxDistanceOfWater covers the user's
+// explicit request ("склад спавнился недалеко от воды, максимум 20
+// клеток"): the chosen spot must have a Water tile within
+// maxWarehouseDistanceFromWater straight-line tiles.
+func TestFindWarehouseSpotIsWithinMaxDistanceOfWater(t *testing.T) {
+	grid := generateGrid(60, 45, 0x1b873593)
+	spot, ok := findWarehouseSpot(grid, 0xabcdef01)
+	if !ok {
+		t.Fatal("findWarehouseSpot found no spot on a freshly generated map")
+	}
+
+	limitSq := float64(maxWarehouseDistanceFromWater * maxWarehouseDistanceFromWater)
+	within := false
+	for y := 0; y < grid.Height && !within; y++ {
+		for x := 0; x < grid.Width; x++ {
+			if grid.At(x, y).Terrain != world.Water {
+				continue
+			}
+			dx, dy := float64(spot.x-x), float64(spot.y-y)
+			if dx*dx+dy*dy <= limitSq {
+				within = true
+				break
+			}
+		}
+	}
+	if !within {
+		t.Fatalf("warehouse spot (%d,%d) has no water within %d tiles", spot.x, spot.y, maxWarehouseDistanceFromWater)
+	}
+}
+
 // TestFindWarehouseSpotVariesWithSeed covers the user's explicit request
 // ("перегенерируем расположение респауна... в случайном порядке"): unlike
 // the old fixed warehouseX/Y constants, two different seeds on the same map

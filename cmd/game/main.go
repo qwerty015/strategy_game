@@ -1960,28 +1960,84 @@ func growSeaRegion(g *world.Grid, seed uint32) {
 // findWarehouseSpot) lands.
 const warehouseEdgeMargin = 6
 
+// maxWarehouseDistanceFromWater keeps the starting Warehouse close enough
+// to the sea that a Fisher Hut is a realistic early build, per the user's
+// explicit request ("склад спавнился недалеко от воды, максимум 20
+// клеток"). Straight-line distance, the same convention
+// minDepositDistanceFromWarehouse/tooCloseToPoint already use elsewhere in
+// this file, not a walked path -- the Warehouse doesn't need a road to the
+// coast, just to not have generated impractically far from it.
+const maxWarehouseDistanceFromWater = 20
+
 // findWarehouseSpot picks a plain-grass tile with a buildable tile
-// directly south for the starting Road (and at least warehouseEdgeMargin
-// from every map edge), chosen at random among every valid candidate --
-// per the user's explicit request, replaying "New Game" moves the town
-// around the map, not just the terrain around a fixed spot. Falls back to
-// searching without the edge margin if nothing qualifies (should be
-// unreachable given seaMaxPercent, but the game must still start rather
-// than fail on an extreme map).
+// directly south for the starting Road, at least warehouseEdgeMargin from
+// every map edge and within maxWarehouseDistanceFromWater of the sea,
+// chosen at random among every valid candidate -- per the user's explicit
+// request, replaying "New Game" moves the town around the map, not just
+// the terrain around a fixed spot. Falls back to relaxing the edge margin,
+// then the water distance, if nothing qualifies (should be unreachable
+// given the sea always spans a whole map edge -- see growSeaRegion -- but
+// the game must still start rather than fail on an extreme map).
 func findWarehouseSpot(g *world.Grid, seed uint32) (gridPoint, bool) {
-	if p, ok := pickWarehouseCandidate(g, seed, warehouseEdgeMargin); ok {
+	near := nearWaterCells(g)
+	if p, ok := pickWarehouseCandidate(g, near, seed, warehouseEdgeMargin); ok {
 		return p, ok
 	}
-	return pickWarehouseCandidate(g, seed, 0)
+	if p, ok := pickWarehouseCandidate(g, near, seed, 0); ok {
+		return p, ok
+	}
+	return pickWarehouseCandidate(g, nil, seed, 0)
 }
 
-func pickWarehouseCandidate(g *world.Grid, seed uint32, margin int) (gridPoint, bool) {
+// nearWaterCells returns the set of land tiles within
+// maxWarehouseDistanceFromWater of at least one Water tile. Built once by
+// scanning a bounded box around every Water tile, rather than a
+// nearest-water search per candidate: unlike the sparse deposit-avoidance
+// check (tooCloseToPoint tests one candidate against one fixed point --
+// the Warehouse), a coastline can be hundreds of tiles long, so inverting
+// the loop keeps this to O(water tiles * box area) instead of O(candidates
+// * water tiles).
+func nearWaterCells(g *world.Grid) map[gridPoint]bool {
+	near := make(map[gridPoint]bool)
+	limitSq := float64(maxWarehouseDistanceFromWater * maxWarehouseDistanceFromWater)
+	for wy := 0; wy < g.Height; wy++ {
+		for wx := 0; wx < g.Width; wx++ {
+			if g.At(wx, wy).Terrain != world.Water {
+				continue
+			}
+			for y := wy - maxWarehouseDistanceFromWater; y <= wy+maxWarehouseDistanceFromWater; y++ {
+				if y < 0 || y >= g.Height {
+					continue
+				}
+				for x := wx - maxWarehouseDistanceFromWater; x <= wx+maxWarehouseDistanceFromWater; x++ {
+					if x < 0 || x >= g.Width {
+						continue
+					}
+					dx, dy := float64(x-wx), float64(y-wy)
+					if dx*dx+dy*dy <= limitSq {
+						near[gridPoint{x, y}] = true
+					}
+				}
+			}
+		}
+	}
+	return near
+}
+
+// pickWarehouseCandidate is findWarehouseSpot's inner search over one
+// (margin, water-constraint) combination. near is the set built by
+// nearWaterCells; pass nil to skip the water-distance check entirely (the
+// last-resort fallback).
+func pickWarehouseCandidate(g *world.Grid, near map[gridPoint]bool, seed uint32, margin int) (gridPoint, bool) {
 	bestScore := ^uint32(0)
 	var best gridPoint
 	found := false
 	for y := margin; y < g.Height-margin; y++ {
 		for x := margin; x < g.Width-margin; x++ {
 			if g.At(x, y).Terrain != world.Grass || !g.InBounds(x, y+1) || !g.At(x, y+1).Buildable() {
+				continue
+			}
+			if near != nil && !near[gridPoint{x, y}] {
 				continue
 			}
 			score := warehouseScatterScore(x, y) ^ seed
