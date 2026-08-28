@@ -25,6 +25,21 @@ func drawStandingAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesT
 	drawStandingScaled(screen, img, sx, sy, tilesTall, tilePixels, color.White)
 }
 
+// drawFootprintAtScale fills a square footprint starting exactly at its
+// upper-left map cell. It is intentionally separate from drawStanding:
+// construction-site frames are ground objects spanning several cells, not
+// tall sprites anchored to the first cell. Using drawStanding for a 3×3
+// frame would centre it on that first cell and shift it one tile up-left.
+func drawFootprintAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, footprint, tilePixels float64) {
+	b := img.Bounds()
+	size := footprint * tilePixels
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(size/float64(b.Dx()), size/float64(b.Dy()))
+	op.GeoM.Translate(sx, sy)
+	op.Blend = ebiten.BlendSourceOver
+	screen.DrawImage(img, op)
+}
+
 // unitBob returns a four-step one-pixel gait offset. It is intentionally
 // subtle: at 24 pixels per tile, a small vertical weight shift reads better
 // than large sprite jumps until directional walk frames are available.

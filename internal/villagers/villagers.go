@@ -1,5 +1,5 @@
-// Package villagers simulates Farmer, Baker, Winemaker, Swineherd, Butcher
-// and Carpenter units. Unlike serfs
+// Package villagers simulates Farmer, Baker, Winemaker, Swineherd, Butcher,
+// Carpenter and Smelter units. Unlike serfs
 // (package logistics) they don't haul goods -- they stand and work at
 // one building (Home) -- but per the user's request they get the same
 // treatment as every other unit "as in the reference game": they get
@@ -27,6 +27,7 @@ const (
 	Swineherd
 	Butcher
 	Carpenter
+	Smelter
 )
 
 const (

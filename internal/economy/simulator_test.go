@@ -190,3 +190,57 @@ func TestTickWithConnectivity_SkipsDisconnectedProduction(t *testing.T) {
 		t.Fatalf("reconnected farm output = %d, want %d", got, building.Types[building.Farm].Recipe.OutputAmount)
 	}
 }
+
+// TestTickWithConnectivity_SmelteryWaitsWithNoOreOnHand covers the one
+// behavior that deliberately differs from a single-recipe building: with
+// neither GoldOre nor IronOre present, a Smeltery must not tick blindly the
+// way a Mill ticks even without wheat -- there's no recipe to be blind
+// about yet.
+func TestTickWithConnectivity_SmelteryWaitsWithNoOreOnHand(t *testing.T) {
+	smeltery := &building.Building{Kind: building.Smeltery}
+	smeltery.AddInput(resource.Coal, 6) // plenty of coal, but no ore of either kind
+
+	for range 100 {
+		TickWithConnectivity([]*building.Building{smeltery}, nil, nil)
+	}
+
+	if smeltery.ProgressTicks != 0 {
+		t.Fatalf("ProgressTicks with no ore on hand = %d, want 0 (nothing to be mid-cycle on)", smeltery.ProgressTicks)
+	}
+}
+
+// TestTickWithConnectivity_SmelteryAlternatesGoldAndIron covers the
+// round-robin fairness pickRecipe exists for: with both Gold ore and Iron
+// ore continuously available, the Smeltery must not let Gold (recipe index
+// 0) win every single cycle just because it comes first.
+func TestTickWithConnectivity_SmelteryAlternatesGoldAndIron(t *testing.T) {
+	smeltery := &building.Building{Kind: building.Smeltery}
+	recipes := building.Types[building.Smeltery].AllRecipes()
+	if len(recipes) != 2 {
+		t.Fatalf("Smeltery recipe count = %d, want 2 (gold, iron)", len(recipes))
+	}
+	ticksPerCycle := recipes[0].TicksToProduce
+
+	// Keep both ores and coal topped up every tick, as if serfs were
+	// perfectly keeping pace -- isolates the recipe-choice fairness from
+	// delivery timing.
+	refill := func() {
+		smeltery.AddInput(resource.GoldOre, 1)
+		smeltery.AddInput(resource.IronOre, 1)
+		smeltery.AddInput(resource.Coal, 2)
+	}
+	refill()
+
+	for cycle := 0; cycle < 4; cycle++ {
+		for range ticksPerCycle + 1 {
+			TickWithConnectivity([]*building.Building{smeltery}, nil, nil)
+			refill()
+		}
+	}
+
+	gold := smeltery.OutputBuffer[resource.Gold]
+	iron := smeltery.OutputBuffer[resource.Iron]
+	if gold == 0 || iron == 0 {
+		t.Fatalf("after 4 cycles with both ores always available: Gold=%d Iron=%d, want both > 0 (alternation, not one recipe starving the other)", gold, iron)
+	}
+}

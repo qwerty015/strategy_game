@@ -75,6 +75,13 @@ type GameState struct {
 	// is exactly when a fresh region should be generated.
 	StoneSeeded bool
 
+	// OreSeeded is StoneSeeded's counterpart for the Coal/GoldOre/IronOre
+	// regions -- one flag for all three, since they're always generated
+	// together in the same NewGame call. Same reasoning: there's no
+	// regrowth queue to infer "never had this feature" from, so a
+	// legitimately fully-mined set of ore regions must not be reseeded.
+	OreSeeded bool
+
 	// Meal seeds preserve the pseudo-random choice among foods actually
 	// available in a Tavern. Every controller has an independent stream so
 	// loading does not silently reintroduce a fixed food preference.
@@ -84,6 +91,7 @@ type GameState struct {
 	FishermanMealSeed  uint32
 	QuarrymanMealSeed  uint32
 	BuilderMealSeed    uint32
+	MinerMealSeed      uint32
 
 	CameraX    float64
 	CameraY    float64
@@ -106,6 +114,8 @@ const (
 	UnitCarpenter  UnitKind = "carpenter"
 	UnitQuarryman  UnitKind = "quarryman"
 	UnitBuilder    UnitKind = "builder"
+	UnitMiner      UnitKind = "miner"
+	UnitSmelter    UnitKind = "smelter"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the
@@ -127,6 +137,14 @@ type UnitState struct {
 	Cargo       resource.Type
 	CargoAmount int
 	Meal        resource.Type
+
+	// QuotaIndex/QuotaProgress are meaningful only for UnitMiner: which
+	// entry of miner.DefaultQuota this worker is currently cycling
+	// through, and how many units into it. Zero (the default) is a
+	// perfectly valid state -- "just starting the cycle over" -- so a
+	// save from before this field existed loads with no special handling.
+	QuotaIndex    int
+	QuotaProgress int
 }
 
 // TreeRegrowthState is the persistent part of one delayed tree respawn.

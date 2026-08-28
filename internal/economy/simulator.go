@@ -116,37 +116,96 @@ func TickWithConnectivity(buildings []*building.Building, starving, disconnected
 		if b.ConstructionStage != building.ConstructionNone {
 			continue
 		}
-		recipe := building.Types[b.Kind].Recipe
-		if recipe.TicksToProduce <= 0 || starving[b] || disconnected[b] {
+		recipes := building.Types[b.Kind].AllRecipes()
+		if len(recipes) == 0 || starving[b] || disconnected[b] {
 			continue
 		}
+		if len(recipes) > 1 {
+			// The Smeltery, currently the only multi-recipe building --
+			// see pickRecipe's doc comment for why it can't just reuse the
+			// single-recipe path below unchanged.
+			tickMultiRecipe(b, recipes)
+			continue
+		}
+		recipe := recipes[0]
 		if recipe.ConsumeInputsAtStart {
 			tickPrepaidRecipe(b, recipe)
 			continue
 		}
-
-		if b.ProgressTicks < recipe.TicksToProduce {
-			b.ProgressTicks++
-		}
-		if b.ProgressTicks < recipe.TicksToProduce {
-			continue
-		}
-
-		// Production cycle complete; hold here (rather than restart the
-		// timer) until inputs are available and there's room for the
-		// output, so a building starved of raw materials or blocked by
-		// a full OutputBuffer produces the instant a serf clears things.
-		if !hasAllInputs(b, recipe.Inputs) {
-			continue
-		}
-		if !hasOutputRoom(b, recipe) {
-			continue
-		}
-
-		consumeInputs(b, recipe.Inputs)
-		b.AddOutput(recipe.Output, recipe.OutputAmount)
-		b.ProgressTicks = 0
+		tickRecipe(b, recipe)
 	}
+}
+
+// tickRecipe is the ordinary (not prepaid, single-recipe) production cycle:
+// count up to TicksToProduce, then hold there -- rather than restart the
+// timer -- until inputs are available and there's room for the output, so a
+// building starved of raw materials or blocked by a full OutputBuffer
+// produces the instant a serf clears things.
+func tickRecipe(b *building.Building, recipe building.Recipe) {
+	if b.ProgressTicks < recipe.TicksToProduce {
+		b.ProgressTicks++
+	}
+	if b.ProgressTicks < recipe.TicksToProduce {
+		return
+	}
+	if !hasAllInputs(b, recipe.Inputs) {
+		return
+	}
+	if !hasOutputRoom(b, recipe) {
+		return
+	}
+	consumeInputs(b, recipe.Inputs)
+	b.AddOutput(recipe.Output, recipe.OutputAmount)
+	b.ProgressTicks = 0
+}
+
+// tickMultiRecipe is tickRecipe generalized to more than one possible
+// recipe (the Smeltery: smelt gold ore or smelt iron ore, whichever is on
+// hand -- see Building.ActiveRecipe and Type.AltRecipes). Unlike a
+// single-recipe building, progress only starts once a specific recipe's
+// inputs are already satisfied: there's no sensible "spin blindly" default,
+// the way an ordinary Mill ticks even without wheat, when it isn't yet
+// known which recipe will even run this cycle.
+func tickMultiRecipe(b *building.Building, recipes []building.Recipe) {
+	if b.ProgressTicks == 0 {
+		idx := pickRecipe(b, recipes)
+		if idx < 0 {
+			return
+		}
+		b.ActiveRecipe = idx
+	}
+	if b.ActiveRecipe < 0 || b.ActiveRecipe >= len(recipes) {
+		b.ActiveRecipe = 0
+	}
+	recipe := recipes[b.ActiveRecipe]
+	if b.ProgressTicks < recipe.TicksToProduce {
+		b.ProgressTicks++
+	}
+	if b.ProgressTicks < recipe.TicksToProduce {
+		return
+	}
+	if !hasAllInputs(b, recipe.Inputs) || !hasOutputRoom(b, recipe) {
+		return
+	}
+	consumeInputs(b, recipe.Inputs)
+	b.AddOutput(recipe.Output, recipe.OutputAmount)
+	b.ProgressTicks = 0
+}
+
+// pickRecipe returns the index of the next recipe -- starting just after
+// b.ActiveRecipe and wrapping around -- that currently has all its inputs
+// available, or -1 if none do. Starting after the last one used, rather
+// than always index 0, is what keeps a Smeltery from starving Iron every
+// single cycle Gold ore also happens to be on hand: the two recipes take
+// turns instead of Gold (recipe index 0) always winning ties.
+func pickRecipe(b *building.Building, recipes []building.Recipe) int {
+	for i := 1; i <= len(recipes); i++ {
+		idx := (b.ActiveRecipe + i) % len(recipes)
+		if hasAllInputs(b, recipes[idx].Inputs) {
+			return idx
+		}
+	}
+	return -1
 }
 
 // tickPrepaidRecipe advances a recipe whose inputs must be spent before its

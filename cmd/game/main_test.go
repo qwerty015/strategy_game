@@ -9,6 +9,7 @@ import (
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
+	"strategy_game/internal/miner"
 	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
@@ -131,6 +132,78 @@ func TestEnsureStoneDepositsSeedsAnUnmigratedSave(t *testing.T) {
 	}
 }
 
+// TestSeedOreDepositsRespectsDesignedAbundance covers "угля должно быть
+// больше чем золотой и железной руды": each ore kind's seeded cell count
+// must land within its own designed percentage range of the map's area,
+// and Coal's range sits strictly above Iron's and Gold's.
+func TestSeedOreDepositsRespectsDesignedAbundance(t *testing.T) {
+	grid := world.NewGrid(40, 30)
+	area := grid.Width * grid.Height
+
+	cases := []struct {
+		name                   string
+		kind                   building.Kind
+		minPercent, maxPercent int
+		seed                   uint32
+	}{
+		{"coal", building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed},
+		{"iron ore", building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed},
+		{"gold ore", building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed},
+	}
+	for _, c := range cases {
+		buildings := seedOreDeposits(grid, nil, c.kind, c.minPercent, c.maxPercent, c.seed)
+		minCells, maxCells := area*c.minPercent/100, area*c.maxPercent/100
+		if len(buildings) < minCells || len(buildings) > maxCells {
+			t.Fatalf("%s: placed %d cells, want between %d and %d (%d-%d%% of %d)", c.name, len(buildings), minCells, maxCells, c.minPercent, c.maxPercent, area)
+		}
+		for _, b := range buildings {
+			if b.Kind != c.kind || b.Reserve != building.OreDepositReserve {
+				t.Fatalf("%s: deposit at (%d,%d) has Kind=%v Reserve=%d, want %v at full reserve", c.name, b.X, b.Y, b.Kind, b.Reserve, c.kind)
+			}
+		}
+	}
+	if coalMaxPercent <= ironOreMaxPercent || ironOreMaxPercent <= goldOreMaxPercent {
+		t.Fatalf("designed abundance ordering broken: coal(%d-%d) should exceed iron(%d-%d) should exceed gold(%d-%d)",
+			coalMinPercent, coalMaxPercent, ironOreMinPercent, ironOreMaxPercent, goldOreMinPercent, goldOreMaxPercent)
+	}
+}
+
+// TestEnsureOreDepositsDoesNotReseedAFullyMinedWorld mirrors
+// TestEnsureStoneDepositsDoesNotReseedAFullyMinedWorld for OreSeeded: a
+// modern save with every ore deposit mined dry must not have fresh regions
+// conjured back in on load.
+func TestEnsureOreDepositsDoesNotReseedAFullyMinedWorld(t *testing.T) {
+	grid := world.NewGrid(40, 30)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	buildings := []*building.Building{warehouse}
+
+	got := ensureOreDeposits(grid, buildings, true, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed)
+
+	if len(got) != 1 {
+		t.Fatalf("ensureOreDeposits on an already-seeded, fully-mined world returned %d buildings, want 1 (no reseeding)", len(got))
+	}
+}
+
+// TestEnsureOreDepositsSeedsAnUnmigratedSave mirrors
+// TestEnsureStoneDepositsSeedsAnUnmigratedSave for all three ore kinds.
+func TestEnsureOreDepositsSeedsAnUnmigratedSave(t *testing.T) {
+	grid := world.NewGrid(40, 30)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	buildings := []*building.Building{warehouse}
+
+	got := ensureOreDeposits(grid, buildings, false, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed)
+
+	found := map[building.Kind]bool{}
+	for _, b := range got {
+		found[b.Kind] = true
+	}
+	for _, kind := range []building.Kind{building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit} {
+		if !found[kind] {
+			t.Fatalf("ensureOreDeposits did not seed any %v for an unmigrated save", kind)
+		}
+	}
+}
+
 func TestFishRegrowthRespectsBodyCap(t *testing.T) {
 	grid := world.NewGrid(3, 1)
 	for x := 0; x < grid.Width; x++ {
@@ -176,6 +249,7 @@ func TestSelectionAt_BuildingWinsOverInvisibleResident(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Baker, bakery)
@@ -205,6 +279,7 @@ func TestSelectionAt_VisibleFarmerStillSelectable(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Farmer, farm)
@@ -238,6 +313,7 @@ func TestUnitsAt_CountsAnyoneOnTheFootprintEvenWithoutADedicatedResident(t *test
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 	}
 	game.logi.Hire()
 	game.logi.Hire()
@@ -274,6 +350,7 @@ func TestSerializeAndRestorePigChainWorkers(t *testing.T) {
 			fishers:   fishing.NewController(),
 			quarry:    quarry.NewController(),
 			builders:  builder.NewController(),
+			miners:    miner.NewController(),
 		}
 	}
 	source := makeGame()
@@ -310,6 +387,7 @@ func TestSerializeAndRestoreCarpenter(t *testing.T) {
 			fishers:   fishing.NewController(),
 			quarry:    quarry.NewController(),
 			builders:  builder.NewController(),
+			miners:    miner.NewController(),
 		}
 	}
 	source := makeGame()
@@ -338,6 +416,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 	}
 	if !source.logi.RequestDismissal(source.logi.Serfs[0]) {
 		t.Fatal("RequestDismissal = false")
@@ -352,6 +431,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 	}
 	restored.restoreUnits(source.serializeUnits(), buildings)
 	if got := len(restored.logi.Serfs); got != 1 {
@@ -374,6 +454,7 @@ func TestDeleteWarehousePromotesRemainingWarehouse(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: first},
 	}
 	game.logi.AddWarehouse(second)
@@ -408,6 +489,7 @@ func TestDeleteLastWarehouseIsRejected(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: warehouse},
 	}
 
@@ -440,6 +522,7 @@ func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 	}
 	game.stock.Add(resource.Gold, 10) // enough to hire a couple of units
 
@@ -489,6 +572,7 @@ func TestHireSerfSpendsGoldAndFailsWhenBroke(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 	}
 	game.stock.Add(resource.Gold, 1)
 
@@ -526,6 +610,7 @@ func TestFinishConstructionDoesNotAutoSpawnAWorker(t *testing.T) {
 		fishers:   fishing.NewController(),
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
+		miners:    miner.NewController(),
 	}
 
 	game.finishConstruction(hut)

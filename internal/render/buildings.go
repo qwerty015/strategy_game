@@ -36,6 +36,13 @@ var (
 	stoneFullColor = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
 	stoneWornColor = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
 
+	coalFullColor    = color.RGBA{R: 45, G: 45, B: 45, A: 255}    // freshly placed coal seam
+	coalWornColor    = color.RGBA{R: 150, G: 150, B: 150, A: 255} // nearly spent, ashen
+	goldOreFullColor = color.RGBA{R: 212, G: 175, B: 55, A: 255}  // freshly placed gold ore
+	goldOreWornColor = color.RGBA{R: 210, G: 200, B: 150, A: 255} // nearly spent, pale
+	ironOreFullColor = color.RGBA{R: 165, G: 96, B: 62, A: 255}   // freshly placed iron ore, rust-red
+	ironOreWornColor = color.RGBA{R: 200, G: 180, B: 160, A: 255} // nearly spent, pale rust
+
 	constructionGroundColor = color.RGBA{R: 109, G: 79, B: 45, A: 180}  // exposed earth beneath a site
 	constructionWaitColor   = color.RGBA{R: 214, G: 63, B: 55, A: 100}  // stalled, waiting on delivery
 	constructionBarColor    = color.RGBA{R: 255, G: 205, B: 61, A: 235} // construction progress
@@ -86,11 +93,14 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			drawStandingAtScale(screen, assets.Road, sx, sy, 1, tilePixels)
 		case b.Kind == building.StoneDeposit:
 			drawStoneDeposit(screen, sx, sy, tilePixels, b.Reserve)
+		case b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit:
+			drawOreDeposit(screen, sx, sy, tilePixels, b.Kind, b.Reserve)
 		}
 	}
 
 	for _, b := range buildings {
-		if b.Kind == building.Road || b.Kind == building.StoneDeposit {
+		if b.Kind == building.Road || b.Kind == building.StoneDeposit ||
+			b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit {
 			continue
 		}
 		bt := building.Types[b.Kind]
@@ -174,6 +184,13 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		case building.QuarryHut:
 			drawStandingAtScale(screen, assets.QuarryHut, sx, sy, buildingHeight, tilePixels)
 
+		case building.MinerHut:
+			drawStandingAtScale(screen, assets.MinerHut, sx, sy, buildingHeight, tilePixels)
+
+		case building.Smeltery:
+			drawStandingAtScale(screen, assets.Smeltery, sx, sy, buildingHeight, tilePixels)
+			drawFire(screen, sx+17*tilePixels/TileSize, sy+4*tilePixels/TileSize, tilePixels)
+
 		case building.FisherHut:
 			frame := 0 // source sprite's pier points south
 			if water, ok := building.WaterAccessPoint(grid, b); ok {
@@ -235,7 +252,7 @@ func drawConstructionSite(screen *ebiten.Image, b *building.Building, footprint 
 	if b.ConstructionStage == building.ConstructionFinishing {
 		siteArt = assets.ConstructionScaffolding
 	}
-	drawStandingAtScale(screen, siteArt, sx, sy, float64(footprint), tilePixels)
+	drawFootprintAtScale(screen, siteArt, sx, sy, float64(footprint), tilePixels)
 
 	if b.ConstructionStage == building.ConstructionWaitingMaterials {
 		vector.FillRect(screen, float32(sx), float32(sy), size, size, constructionWaitColor, false)
@@ -261,6 +278,32 @@ func drawStoneDeposit(screen *ebiten.Image, sx, sy, tilePixels float64, reserve 
 		fraction = 1
 	}
 	tint := lerpColor(stoneWornColor, stoneFullColor, fraction)
+	drawStandingTintedAtScale(screen, assets.StoneDeposit, sx, sy, 1, tilePixels, tint)
+}
+
+// drawOreDeposit is drawStoneDeposit generalized to the three ore-family
+// kinds. There is no dedicated ore-cluster art yet, so it reuses the stone
+// deposit's boulder sprite with a kind-specific tint (dark for coal, bright
+// gold for gold ore, rust for iron ore) -- enough to tell the three apart on
+// the map at a glance while depleting the same way stone does.
+func drawOreDeposit(screen *ebiten.Image, sx, sy, tilePixels float64, kind building.Kind, reserve int) {
+	fraction := float32(reserve) / float32(building.OreDepositReserve)
+	if fraction < 0 {
+		fraction = 0
+	}
+	if fraction > 1 {
+		fraction = 1
+	}
+	var full, worn color.RGBA
+	switch kind {
+	case building.GoldOreDeposit:
+		full, worn = goldOreFullColor, goldOreWornColor
+	case building.IronOreDeposit:
+		full, worn = ironOreFullColor, ironOreWornColor
+	default: // building.CoalDeposit
+		full, worn = coalFullColor, coalWornColor
+	}
+	tint := lerpColor(worn, full, fraction)
 	drawStandingTintedAtScale(screen, assets.StoneDeposit, sx, sy, 1, tilePixels, tint)
 }
 

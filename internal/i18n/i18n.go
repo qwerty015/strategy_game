@@ -59,6 +59,8 @@ type Catalog struct {
 	GrowthLabel                 string
 	HarvestableLabel            string
 	StoneReserveLabel           string
+	DepositReserveLabel         string
+	QuotaLabel                  string
 	ConstructionProgressLabel   string
 	ConstructionFoundationLabel string
 	ConstructionWaitingLabel    string
@@ -93,6 +95,8 @@ type Catalog struct {
 	UnitCarpenter               string
 	UnitQuarryman               string
 	UnitBuilder                 string
+	UnitMiner                   string
+	UnitSmelter                 string
 	HireSerf                    string
 	Deleted                     string
 	SerfDismissRequested        string

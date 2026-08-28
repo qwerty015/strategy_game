@@ -275,4 +275,69 @@ var Types = map[Kind]Type{
 		ConstructionFoundationTicks: standardFoundationTicks,
 		ConstructionBuildTicks:      standardBuildTicks,
 	},
+	CoalDeposit: {
+		Kind:      CoalDeposit,
+		Name:      "Coal Deposit",
+		Footprint: 1,
+		// Placed by map generation as several regions, not player-built.
+		// Deliberately the most abundant of the three ore-family deposits
+		// -- see cmd/game's seedDepositRegions calls.
+	},
+	GoldOreDeposit: {
+		Kind:      GoldOreDeposit,
+		Name:      "Gold Ore Deposit",
+		Footprint: 1,
+		// Deliberately the rarest of the three -- gold ore smelts directly
+		// into the game's hiring currency.
+	},
+	IronOreDeposit: {
+		Kind:      IronOreDeposit,
+		Name:      "Iron Ore Deposit",
+		Footprint: 1,
+	},
+	MinerHut: {
+		Kind:           MinerHut,
+		Name:           "Miner Hut",
+		Footprint:      1,
+		RequiresWorker: true,
+		// No recipe: the miner physically walks to whichever deposit the
+		// quota currently points at (see package miner) and deposits the
+		// raw ore/coal into OutputBuffer -- unlike the Quarryman, nothing
+		// is processed here; that's the Smeltery's job for the two ores
+		// (Coal itself needs no further processing).
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
+	},
+	Smeltery: {
+		Kind:           Smeltery,
+		Name:           "Smeltery",
+		Footprint:      1,
+		RequiresWorker: true,
+		Recipe: Recipe{
+			// One recipe smelts gold, the other iron -- see Type.AltRecipes
+			// and economy.pickRecipe for how the building chooses between
+			// them each cycle. Coal is common to both, so it's the one
+			// input that can make either recipe wait even when its own ore
+			// is on hand -- exactly the kind of contention the existing
+			// supply-priority slider already handles.
+			Inputs:         map[resource.Type]int{resource.GoldOre: 1, resource.Coal: 1},
+			Output:         resource.Gold,
+			OutputAmount:   1,
+			TicksToProduce: 60,
+		},
+		AltRecipes: []Recipe{
+			{
+				Inputs:         map[resource.Type]int{resource.IronOre: 1, resource.Coal: 1},
+				Output:         resource.Iron,
+				OutputAmount:   1,
+				TicksToProduce: 60,
+			},
+		},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
+	},
 }

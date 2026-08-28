@@ -28,8 +28,9 @@ func TestLayoutKeepsPanelsAtWindowEdges(t *testing.T) {
 func TestBuildPaletteKeepsEveryCardClickable(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	palette := NewPalette()
+	stride, _ := layout.cardGeometry(len(palette.Kinds))
 	for i := range palette.Kinds {
-		x, y := 20, leftCardsStartY+4+i*leftCardStride
+		x, y := 20, leftCardsStartY+4+i*stride
 		got, ok := layout.BuildIndexAt(x, y, len(palette.Kinds))
 		if !ok || got != i {
 			t.Fatalf("card %d at (%d,%d) resolved to %d, %v", i, x, y, got, ok)

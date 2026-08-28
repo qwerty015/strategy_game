@@ -58,6 +58,13 @@ var (
 	MeatWorkshop      = mustLoad("generated/building_meat_workshop.png")
 	CarpentryWorkshop = mustLoad("generated/building_carpentry_workshop.png")
 	QuarryHut         = mustLoad("generated/building_quarry_hut.png")
+	// MinerHut has no dedicated art yet -- it reuses the Quarry Hut sprite,
+	// since both are simple open-pit worker huts with no processing inside.
+	MinerHut = QuarryHut
+	// Smeltery has no dedicated art yet -- it reuses the Carpentry Workshop
+	// sprite as a stand-in generic "workshop" building until a furnace
+	// sprite is commissioned.
+	Smeltery = CarpentryWorkshop
 	// Construction art is deliberately generic: the same site can scale from
 	// a one-tile road to a 3×3 farm without previewing the finished building.
 	ConstructionFoundation  = mustLoad("generated/construction_foundation.png")
@@ -147,6 +154,9 @@ var (
 		mustLoad("generated/unit_builder.png"),
 		mustLoad("generated/unit_builder.png"),
 	}
+	// Miner has no dedicated art yet -- it reuses the Quarryman sprite,
+	// since both dig open-pit deposits the same way.
+	Miner       = Quarryman
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 

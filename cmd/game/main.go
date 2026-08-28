@@ -18,6 +18,7 @@ import (
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
+	"strategy_game/internal/miner"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
@@ -73,6 +74,22 @@ const (
 	// that produced them no longer matters -- see save.GameState.StoneSeeded.
 	defaultStoneSeed uint32 = 0x1b873593
 
+	// defaultCoalSeed/defaultGoldOreSeed/defaultIronOreSeed are the
+	// one-time shapes of the three ore-family regions, for the same reason
+	// defaultStoneSeed is never advanced or persisted -- see
+	// save.GameState.OreSeeded.
+	defaultCoalSeed    uint32 = 0x9e3779b9
+	defaultGoldOreSeed uint32 = 0x85ebca6b
+	defaultIronOreSeed uint32 = 0xc2b2ae35
+
+	// Ore-family abundance ranges (percent of map area), per the game
+	// design: Coal is the most common -- both Smeltery recipes consume it
+	// -- Gold ore the rarest, since it smelts directly into the hiring
+	// currency.
+	coalMinPercent, coalMaxPercent       = 4, 8
+	ironOreMinPercent, ironOreMaxPercent = 2, 4
+	goldOreMinPercent, goldOreMaxPercent = 1, 2
+
 	// maxBuilders is a flat town-wide cap, unlike every other profession
 	// (which is capped by matching building count instead) -- a Builder has
 	// no dedicated hut to be limited by.
@@ -123,6 +140,7 @@ type Game struct {
 	fishers   *fishing.Controller
 	quarry    *quarry.Controller
 	builders  *builder.Controller
+	miners    *miner.Controller
 
 	treeRegrowth []treeRegrowth
 	treeSeed     uint32
@@ -132,6 +150,9 @@ type Game struct {
 	// has a stone-deposit region, so loading a save never regenerates one
 	// over a legitimately fully-mined town. Always true after NewGame.
 	stoneSeeded bool
+	// oreSeeded mirrors save.GameState.OreSeeded the same way, for the
+	// Coal/GoldOre/IronOre regions together.
+	oreSeeded bool
 
 	camera        *render.Camera
 	palette       *ui.Palette
@@ -168,6 +189,9 @@ func NewGame() *Game {
 	buildings = seedTrees(grid, buildings)
 	buildings = seedFish(grid, buildings)
 	buildings = seedStoneDeposits(grid, buildings, defaultStoneSeed)
+	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed)
+	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed)
+	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed)
 
 	stock := resource.NewStockpile(stockpileCapacity)
 	stock.Add(resource.Plank, startingPlanks)
@@ -198,9 +222,11 @@ func NewGame() *Game {
 		fishers:     fishing.NewController(),
 		quarry:      quarry.NewController(),
 		builders:    builder.NewController(),
+		miners:      miner.NewController(),
 		treeSeed:    defaultTreeSeed,
 		fishSeed:    defaultFishSeed,
 		stoneSeeded: true,
+		oreSeeded:   true,
 		camera:      camera,
 		palette:     ui.NewPalette(),
 		layout:      layout,
@@ -249,6 +275,7 @@ func (g *Game) Update() error {
 		g.fishers.Reserve(ledger)
 		g.quarry.Reserve(ledger)
 		g.builders.Reserve(ledger)
+		g.miners.Reserve(ledger)
 
 		// Whichever controller's Tick runs first this simulation tick
 		// effectively wins any contention over shared Tavern food: its
@@ -260,6 +287,7 @@ func (g *Game) Update() error {
 		var fishEvents []fishing.Event
 		var quarryEvents []quarry.Event
 		var builderEvents []builder.Event
+		var minerEvents []miner.Event
 		var serfResult logistics.TickResult
 		var villagerDeaths int
 		type unitStep struct {
@@ -273,6 +301,7 @@ func (g *Game) Update() error {
 			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, g.buildings, ledger) }},
 			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, g.buildings, ledger) }},
 			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, g.buildings, ledger) }},
+			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, g.buildings, ledger) }},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
 		for _, step := range steps {
@@ -305,7 +334,7 @@ func (g *Game) Update() error {
 		for _, event := range quarryEvents {
 			switch event.Kind {
 			case quarry.DepositExhausted:
-				g.removeStoneDeposit(event.Deposit)
+				g.removeDeposit(event.Deposit)
 			case quarry.WorkerDied:
 				g.pop.Deaths++
 				if event.Cargo > 0 {
@@ -322,6 +351,22 @@ func (g *Game) Update() error {
 				g.finishConstruction(event.Building)
 			case builder.WorkerDied:
 				g.pop.Deaths++
+			}
+		}
+		for _, event := range minerEvents {
+			switch event.Kind {
+			case miner.DepositExhausted:
+				g.removeDeposit(event.Deposit)
+			case miner.WorkerDied:
+				g.pop.Deaths++
+				if event.Cargo > 0 {
+					// A miner carries raw ore/coal as-is -- no conversion
+					// step like a quarryman's stone-to-blocks, and unlike
+					// every other gathering profession he can be carrying
+					// any of three different resources, so which one
+					// travels with the event (CargoResource).
+					g.stock.Add(event.CargoResource, event.Cargo)
+				}
 			}
 		}
 		g.clearMissingUnitSelection()
@@ -377,6 +422,11 @@ func (g *Game) inactiveWorkerBuildings() map[*building.Building]bool {
 			m[q.HomeBuilding()] = !q.AtPost()
 		}
 	}
+	for _, mn := range g.miners.Miners {
+		if mn.HomeBuilding() != nil {
+			m[mn.HomeBuilding()] = !mn.AtPost()
+		}
+	}
 	return m
 }
 
@@ -408,6 +458,11 @@ func (g *Game) unstaffedWorkerBuildings() map[*building.Building]bool {
 	for _, q := range g.quarry.Quarrymen {
 		if q.HomeBuilding() != nil {
 			m[q.HomeBuilding()] = false
+		}
+	}
+	for _, mn := range g.miners.Miners {
+		if mn.HomeBuilding() != nil {
+			m[mn.HomeBuilding()] = false
 		}
 	}
 	return m
@@ -458,6 +513,8 @@ func (g *Game) hireOptions() []ui.HireOption {
 		limited(ui.HireCarpenter, building.CarpentryWorkshop, countProfession(villagers.Carpenter)),
 		limited(ui.HireQuarryman, building.QuarryHut, len(g.quarry.Quarrymen)),
 		{Kind: ui.HireBuilder, Current: len(g.builders.Builders), Limit: maxBuilders, Available: len(g.builders.Builders) < maxBuilders && afford},
+		limited(ui.HireMiner, building.MinerHut, len(g.miners.Miners)),
+		limited(ui.HireSmelter, building.Smeltery, countProfession(villagers.Smelter)),
 	}
 }
 
@@ -482,6 +539,8 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 		g.hireVillagerInto(villagers.Butcher, building.MeatWorkshop)
 	case ui.HireCarpenter:
 		g.hireVillagerInto(villagers.Carpenter, building.CarpentryWorkshop)
+	case ui.HireSmelter:
+		g.hireVillagerInto(villagers.Smelter, building.Smeltery)
 	case ui.HireLumberjack:
 		for _, b := range g.buildings {
 			if b.Kind == building.LumberjackHut && b.ConstructionStage == building.ConstructionNone && !g.jacks.HasHome(b) {
@@ -526,6 +585,18 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 			g.builders.Hire(g.logi.Warehouse)
 			g.refreshPopulation()
 			g.statusMsg = ""
+		}
+	case ui.HireMiner:
+		for _, b := range g.buildings {
+			if b.Kind == building.MinerHut && b.ConstructionStage == building.ConstructionNone && !g.miners.HasHome(b) {
+				if !g.trySpendGold() {
+					return
+				}
+				g.miners.Spawn(b)
+				g.refreshPopulation()
+				g.statusMsg = ""
+				return
+			}
 		}
 	}
 }
@@ -807,14 +878,21 @@ func (g *Game) deleteSelectedBuilding() {
 		g.statusMsg = i18n.T().CannotDeleteFish
 		return
 	}
-	if b.Kind == building.StoneDeposit {
+	switch b.Kind {
+	case building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
 		g.statusMsg = i18n.T().CannotDeleteStoneDeposit
 		return
 	}
 
-	if b.Kind == building.Warehouse && !g.logi.RemoveWarehouse(b) {
-		g.statusMsg = i18n.T().CannotDeleteWarehouse
-		return
+	if b.Kind == building.Warehouse {
+		if !g.logi.RemoveWarehouse(b) {
+			g.statusMsg = i18n.T().CannotDeleteWarehouse
+			return
+		}
+		// Builders have no per-building Home the way every other worker
+		// does -- Warehouse is their only anchor -- so deleting one they're
+		// anchored to needs its own re-pointing, not RemoveHome.
+		g.builders.RemoveWarehouse(b, g.logi.Warehouse)
 	}
 	g.logi.CancelAllJobs(g.stock)
 	g.vills.RemoveHome(b)
@@ -824,7 +902,10 @@ func (g *Game) deleteSelectedBuilding() {
 	g.fishers.RemoveHome(b, g.stock)
 	g.fishers.CancelRouteTo(b) // same, for fishermen
 	g.quarry.RemoveHome(b, g.stock)
-	g.quarry.CancelRouteTo(b) // same, for quarrymen
+	g.quarry.CancelRouteTo(b)   // same, for quarrymen
+	g.builders.CancelRouteTo(b) // in case b is a Tavern a builder is mid-trip to eat at
+	g.miners.RemoveHome(b, g.stock)
+	g.miners.CancelRouteTo(b) // same, for miners
 	for i, candidate := range g.buildings {
 		if candidate != b {
 			continue
@@ -879,6 +960,12 @@ func (g *Game) clearMissingUnitSelection() {
 				return
 			}
 		}
+	case ui.SelectionMiner:
+		for _, m := range g.miners.Miners {
+			if m == g.selection.Miner {
+				return
+			}
+		}
 	default:
 		return
 	}
@@ -888,7 +975,7 @@ func (g *Game) clearMissingUnitSelection() {
 // refreshPopulation rebuilds the live headcount while retaining the
 // persistent death/removal history shown in the HUD.
 func (g *Game) refreshPopulation() {
-	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders)
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners)
 }
 
 // selectionAt resolves map coordinates to a live game object. Units have
@@ -937,6 +1024,12 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		bl := g.builders.Builders[i]
 		if bl.X == tx && bl.Y == ty {
 			return ui.Selection{Kind: ui.SelectionBuilder, Builder: bl}
+		}
+	}
+	for i := len(g.miners.Miners) - 1; i >= 0; i-- {
+		m := g.miners.Miners[i]
+		if m.X == tx && m.Y == ty && m.VisibleOnMap() {
+			return ui.Selection{Kind: ui.SelectionMiner, Miner: m}
 		}
 	}
 	for i := len(g.buildings) - 1; i >= 0; i-- {
@@ -994,6 +1087,11 @@ func (g *Game) unitsAt(b *building.Building) int {
 			count++
 		}
 	}
+	for _, m := range g.miners.Miners {
+		if within(m.X, m.Y) {
+			count++
+		}
+	}
 	return count
 }
 
@@ -1036,6 +1134,10 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 		g.fishers.Spawn(b)
 	case building.QuarryHut:
 		g.quarry.Spawn(b)
+	case building.MinerHut:
+		g.miners.Spawn(b)
+	case building.Smeltery:
+		g.vills.Spawn(villagers.Smelter, b)
 	}
 }
 
@@ -1228,12 +1330,14 @@ func (g *Game) buildSaveState(name string) save.GameState {
 		FishRegrowth:       g.serializeFishRegrowth(),
 		FishSeed:           g.fishSeed,
 		StoneSeeded:        g.stoneSeeded,
+		OreSeeded:          g.oreSeeded,
 		SerfMealSeed:       g.logi.MealSeed(),
 		VillagerMealSeed:   g.vills.MealSeed(),
 		LumberjackMealSeed: g.jacks.MealSeed(),
 		FishermanMealSeed:  g.fishers.MealSeed(),
 		QuarrymanMealSeed:  g.quarry.MealSeed(),
 		BuilderMealSeed:    g.builders.MealSeed(),
+		MinerMealSeed:      g.miners.MealSeed(),
 		CameraX:            g.camera.X,
 		CameraY:            g.camera.Y,
 		CameraZoom:         g.camera.Scale,
@@ -1260,6 +1364,7 @@ func (g *Game) loadGame(path string) error {
 	buildings, hadTrees := ensureTrees(grid, buildings, len(state.TreeRegrowth) > 0)
 	buildings, _ = ensureFish(grid, buildings, len(state.FishRegrowth) > 0)
 	buildings = ensureStoneDeposits(grid, buildings, state.StoneSeeded, defaultStoneSeed)
+	buildings = ensureOreDeposits(grid, buildings, state.OreSeeded, defaultCoalSeed, defaultGoldOreSeed, defaultIronOreSeed)
 	warehouse := findWarehouse(buildings)
 	if warehouse == nil {
 		return errNoWarehouseInSave
@@ -1284,10 +1389,11 @@ func (g *Game) loadGame(path string) error {
 	if g.fishSeed == 0 {
 		g.fishSeed = defaultFishSeed
 	}
-	// ensureStoneDeposits above guarantees a region exists one way or
-	// another (freshly generated, or already present in the save), so from
-	// here on this world always counts as seeded.
+	// ensureStoneDeposits/ensureOreDeposits above guarantee a region exists
+	// one way or another (freshly generated, or already present in the
+	// save), so from here on this world always counts as seeded.
 	g.stoneSeeded = true
+	g.oreSeeded = true
 	g.camera.X, g.camera.Y = state.CameraX, state.CameraY
 	if !hadTrees && g.camera.X == 0 {
 		// Old saves were usually made from the original left-aligned view;
@@ -1317,6 +1423,7 @@ func (g *Game) loadGame(path string) error {
 	g.fishers = fishing.NewController()
 	g.quarry = quarry.NewController()
 	g.builders = builder.NewController()
+	g.miners = miner.NewController()
 	if len(state.Units) == 0 {
 		// Saves from before unit persistence did not contain a roster.
 		// Keep those saves playable with the old sensible defaults.
@@ -1349,6 +1456,9 @@ func (g *Game) loadGame(path string) error {
 	}
 	if state.BuilderMealSeed != 0 {
 		g.builders.SetMealSeed(state.BuilderMealSeed)
+	}
+	if state.MinerMealSeed != 0 {
+		g.miners.SetMealSeed(state.MinerMealSeed)
 	}
 	for _, p := range state.BuildingPriority {
 		g.logi.SetPriority(p.Kind, p.Level)
@@ -1413,7 +1523,7 @@ func (g *Game) serializeBuildingPriorities() []save.BuildingPriorityState {
 }
 
 func (g *Game) serializeUnits() []save.UnitState {
-	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen)+len(g.quarry.Quarrymen)+len(g.builders.Builders))
+	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen)+len(g.quarry.Quarrymen)+len(g.builders.Builders)+len(g.miners.Miners))
 	for _, s := range g.logi.Serfs {
 		units = append(units, save.UnitState{
 			Kind:        save.UnitSerf,
@@ -1438,6 +1548,8 @@ func (g *Game) serializeUnits() []save.UnitState {
 			kind = save.UnitButcher
 		case villagers.Carpenter:
 			kind = save.UnitCarpenter
+		case villagers.Smelter:
+			kind = save.UnitSmelter
 		default:
 			kind = save.UnitFarmer
 		}
@@ -1520,6 +1632,27 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Meal:        bl.Meal(),
 		})
 	}
+	for _, mn := range g.miners.Miners {
+		cargoResource, cargoAmount := mn.Cargo()
+		targetIndex := indexOfBuilding(g.buildings, mn.TargetDeposit())
+		quotaIndex, quotaProgress := mn.QuotaProgress()
+		units = append(units, save.UnitState{
+			Kind:          save.UnitMiner,
+			X:             mn.X,
+			Y:             mn.Y,
+			HomeIndex:     indexOfBuilding(g.buildings, mn.HomeBuilding()),
+			HungerTicks:   mn.HungerTicks(),
+			Starving:      mn.Starving,
+			State:         int(mn.State()),
+			TargetIndex:   targetIndex,
+			WorkTicks:     mn.WorkTicks(),
+			Cargo:         cargoResource,
+			CargoAmount:   cargoAmount,
+			Meal:          mn.Meal(),
+			QuotaIndex:    quotaIndex,
+			QuotaProgress: quotaProgress,
+		})
+	}
 	return units
 }
 
@@ -1528,7 +1661,7 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 		switch state.Kind {
 		case save.UnitSerf:
 			g.logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving, state.Dismissing)
-		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher, save.UnitCarpenter:
+		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher, save.UnitCarpenter, save.UnitSmelter:
 			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) {
 				continue
 			}
@@ -1545,6 +1678,8 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				profession = villagers.Butcher
 			case save.UnitCarpenter:
 				profession = villagers.Carpenter
+			case save.UnitSmelter:
+				profession = villagers.Smelter
 			default:
 				profession = villagers.Farmer
 			}
@@ -1553,7 +1688,8 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				(profession == villagers.Winemaker && home.Kind != building.Winery) ||
 				(profession == villagers.Swineherd && home.Kind != building.PigFarm) ||
 				(profession == villagers.Butcher && home.Kind != building.MeatWorkshop) ||
-				(profession == villagers.Carpenter && home.Kind != building.CarpentryWorkshop) {
+				(profession == villagers.Carpenter && home.Kind != building.CarpentryWorkshop) ||
+				(profession == villagers.Smelter && home.Kind != building.Smeltery) {
 				continue
 			}
 			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings, state.Meal)
@@ -1593,6 +1729,18 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				target = buildings[state.TargetIndex]
 			}
 			g.builders.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, builder.State(state.State), target, state.WorkTicks, g.grid, buildings, state.Meal)
+		case save.UnitMiner:
+			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.MinerHut {
+				continue
+			}
+			var target *building.Building
+			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) {
+				switch buildings[state.TargetIndex].Kind {
+				case building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+					target = buildings[state.TargetIndex]
+				}
+			}
+			g.miners.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, miner.State(state.State), target, state.WorkTicks, state.CargoAmount, state.Cargo, state.QuotaIndex, state.QuotaProgress, g.grid, buildings, state.Meal)
 		}
 	}
 }
@@ -1771,12 +1919,17 @@ func ensureStoneDeposits(grid *world.Grid, buildings []*building.Building, alrea
 	return seedStoneDeposits(grid, buildings, seed)
 }
 
-// removeStoneDeposit deletes an exhausted deposit from the world once its
-// Reserve reaches zero. The tile underneath needs no separate change: it was
-// always ordinary buildable ground, the same way felling a tree reveals the
-// grass it always stood on.
-func (g *Game) removeStoneDeposit(deposit *building.Building) {
-	if deposit == nil || deposit.Kind != building.StoneDeposit {
+// removeDeposit deletes an exhausted deposit from the world once its
+// Reserve reaches zero -- stone or any of the three ore kinds. The tile
+// underneath needs no separate change: it was always ordinary buildable
+// ground, the same way felling a tree reveals the grass it always stood on.
+func (g *Game) removeDeposit(deposit *building.Building) {
+	if deposit == nil {
+		return
+	}
+	switch deposit.Kind {
+	case building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+	default:
 		return
 	}
 	for i, candidate := range g.buildings {
@@ -1786,6 +1939,120 @@ func (g *Game) removeStoneDeposit(deposit *building.Building) {
 		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
 		return
 	}
+}
+
+// seedOreDeposits is seedStoneDeposits generalized to any of the three
+// finite ore-family kinds (Coal, GoldOre, IronOre), each with its own
+// abundance range -- per the game design, Coal is deliberately the most
+// common (it's needed by both Smeltery recipes), Gold ore the rarest (it
+// smelts directly into the hiring currency).
+func seedOreDeposits(grid *world.Grid, buildings []*building.Building, kind building.Kind, minPercent, maxPercent int, seed uint32) []*building.Building {
+	area := grid.Width * grid.Height
+	span := maxPercent - minPercent + 1
+	percent := minPercent
+	if span > 0 {
+		percent += int(seed % uint32(span))
+	}
+	total := area * percent / 100
+	if total <= 0 {
+		return buildings
+	}
+
+	regionCount := 2 + int((seed>>8)%4) // 2..5 inclusive separate regions
+	base := total / regionCount
+	extra := total % regionCount
+	for i := 0; i < regionCount; i++ {
+		target := base
+		if i < extra {
+			target++
+		}
+		regionSeed := seed ^ uint32(i)*0x9e3779b9
+		buildings = growOreRegion(grid, buildings, kind, target, regionSeed)
+	}
+	return buildings
+}
+
+// growOreRegion is growStoneRegion generalized to kind.
+func growOreRegion(grid *world.Grid, buildings []*building.Building, kind building.Kind, target int, seed uint32) []*building.Building {
+	if target <= 0 {
+		return buildings
+	}
+	start, ok := findOreStart(grid, buildings, kind, seed)
+	if !ok {
+		return buildings
+	}
+
+	claimed := map[gridPoint]bool{start: true}
+	frontier := []gridPoint{start}
+	placed := 0
+	for len(frontier) > 0 && placed < target {
+		bestIdx := 0
+		bestScore := oreScatterScore(frontier[0].x, frontier[0].y, kind) ^ seed
+		for i := 1; i < len(frontier); i++ {
+			score := oreScatterScore(frontier[i].x, frontier[i].y, kind) ^ seed
+			if score < bestScore {
+				bestScore, bestIdx = score, i
+			}
+		}
+		p := frontier[bestIdx]
+		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
+
+		if !building.CanPlace(grid, buildings, kind, p.x, p.y) {
+			continue
+		}
+		buildings = append(buildings, building.NewOreDeposit(kind, p.x, p.y))
+		placed++
+
+		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			n := gridPoint{p.x + d.x, p.y + d.y}
+			if claimed[n] || !grid.InBounds(n.x, n.y) || !grid.At(n.x, n.y).Buildable() {
+				continue
+			}
+			claimed[n] = true
+			frontier = append(frontier, n)
+		}
+	}
+	return buildings
+}
+
+func findOreStart(grid *world.Grid, buildings []*building.Building, kind building.Kind, seed uint32) (gridPoint, bool) {
+	bestScore := ^uint32(0)
+	var best gridPoint
+	found := false
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			if !building.CanPlace(grid, buildings, kind, x, y) {
+				continue
+			}
+			score := oreScatterScore(x, y, kind) ^ seed
+			if !found || score < bestScore {
+				bestScore, best, found = score, gridPoint{x, y}, true
+			}
+		}
+	}
+	return best, found
+}
+
+// oreScatterScore folds kind into the hash (unlike stoneScatterScore) so
+// Coal/GoldOre/IronOre don't all pick the exact same starting cells and
+// region shapes when seeded with related seeds.
+func oreScatterScore(x, y int, kind building.Kind) uint32 {
+	return uint32(x)*2246822519 ^ uint32(y)*3266489917 ^ uint32(kind)*2654435761 ^ 0x27d4eb2f
+}
+
+// ensureOreDeposits is ensureStoneDeposits generalized to the ore-family
+// trio, seeded together and guarded by the same single flag
+// (save.GameState.OreSeeded) since they're always generated in the same
+// NewGame call -- there's no scenario where the game would want to seed
+// only one of the three without the others.
+func ensureOreDeposits(grid *world.Grid, buildings []*building.Building, alreadySeeded bool, coalSeed, goldOreSeed, ironOreSeed uint32) []*building.Building {
+	if alreadySeeded {
+		return buildings
+	}
+	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, coalSeed)
+	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, goldOreSeed)
+	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, ironOreSeed)
+	return buildings
 }
 
 // seedFish fills each connected water body to at most 40% of its cells. A
@@ -2160,6 +2427,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera)
 	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera)
 	render.DrawBuilders(screen, g.builders.Builders, g.camera)
+	render.DrawMiners(screen, g.miners.Miners, g.camera)
 
 	mx, my := ebiten.CursorPosition()
 	tx, ty := g.camera.ScreenToTile(mx, my)

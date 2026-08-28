@@ -19,11 +19,24 @@ const (
 	Plank
 	StoneBlock
 
-	// Gold is currency, not a hauled good: no building produces or accepts
-	// it, and no serf ever carries it. It only ever changes by a direct
-	// Stockpile.Remove/Add at the moment a unit is hired -- see
-	// cmd/game's trySpendGold.
+	// Gold doubles as the game's hiring currency (cmd/game's trySpendGold
+	// removes it directly from the Stockpile at the moment a unit is
+	// hired) and as an ordinary smelted good: the Smeltery turns GoldOre +
+	// Coal into Gold exactly like any other recipe, and serfs haul it like
+	// any other output. Nothing else spends it -- production is the only
+	// way to replenish it beyond the starting grant.
 	Gold
+
+	// Coal, GoldOre and IronOre are finite world resources mined by
+	// package miner, the same Reserve-per-cell pattern as StoneDeposit.
+	// The ores are raw and unusable on their own; the Smeltery turns
+	// GoldOre or IronOre, plus Coal, into Gold or Iron. Coal is also its
+	// own resource (not further processed) and, per the roadmap, is meant
+	// to have other uses later.
+	Coal
+	GoldOre
+	IronOre
+	Iron
 )
 
 var typeNames = map[Type]string{
@@ -38,6 +51,10 @@ var typeNames = map[Type]string{
 	Plank:      "plank",
 	StoneBlock: "stone_block",
 	Gold:       "gold",
+	Coal:       "coal",
+	GoldOre:    "gold_ore",
+	IronOre:    "iron_ore",
+	Iron:       "iron",
 }
 
 var namesToType = func() map[string]Type {
@@ -82,7 +99,7 @@ func (t *Type) UnmarshalText(data []byte) error {
 // are intentionally used for buffers, but UI and service logic must not
 // change order from one frame to the next.
 func AllTypes() []Type {
-	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log, Plank, StoneBlock, Gold}
+	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log, Plank, StoneBlock, Gold, Coal, GoldOre, IronOre, Iron}
 }
 
 // FoodTypes returns every resource that can feed a unit in a Tavern. The

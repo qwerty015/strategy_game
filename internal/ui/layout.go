@@ -24,7 +24,41 @@ const (
 	leftCardsStartY = 82
 	leftCardHeight  = 40
 	leftCardStride  = 44
+
+	// leftCardMinStride/leftCardMinHeight bound how far cardGeometry will
+	// shrink a long list. A list that would need to go below these is a
+	// sign the panel needs scrolling, not further compression.
+	leftCardMinStride = 32
+	leftCardMinHeight = 28
 )
+
+// cardGeometry returns the vertical stride and height to draw/hit-test count
+// cards in the left panel's card list (the Build palette or the Hire tab).
+// The list keeps its normal leftCardStride/leftCardHeight as long as it
+// fits above the bottom panel; a longer list -- the Build palette gains a
+// new card with almost every new building kind -- is compressed just
+// enough to keep every card clickable instead of running under the bottom
+// panel. Shared by drawing and hit-testing so the two never disagree about
+// where a card actually is.
+func (l Layout) cardGeometry(count int) (stride, height int) {
+	stride, height = leftCardStride, leftCardHeight
+	if count <= 0 {
+		return
+	}
+	available := l.Height - l.BottomHeight - leftCardsStartY
+	if available <= 0 || stride*count <= available {
+		return
+	}
+	stride = available / count
+	if stride < leftCardMinStride {
+		stride = leftCardMinStride
+	}
+	height = stride - 4
+	if height < leftCardMinHeight {
+		height = leftCardMinHeight
+	}
+	return
+}
 
 func NewLayout(width, height int) Layout {
 	left := width / 5
@@ -132,9 +166,10 @@ func (l Layout) HireIndexAt(x, y int, count int) (int, bool) {
 }
 
 func (l Layout) menuIndexAt(x, y int, count int) (int, bool) {
-	card := image.Rect(12, leftCardsStartY, l.LeftWidth-12, leftCardsStartY+leftCardHeight)
+	stride, height := l.cardGeometry(count)
+	card := image.Rect(12, leftCardsStartY, l.LeftWidth-12, leftCardsStartY+height)
 	for i := 0; i < count; i++ {
-		r := card.Add(image.Pt(0, i*leftCardStride))
+		r := card.Add(image.Pt(0, i*stride))
 		if image.Pt(x, y).In(r) {
 			return i, true
 		}

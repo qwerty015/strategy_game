@@ -83,6 +83,25 @@ const (
 	// QuarryHut is the workplace and temporary stone-block store for one
 	// quarryman (see package quarry). Appended last for the same reason.
 	QuarryHut
+
+	// CoalDeposit, GoldOreDeposit and IronOreDeposit are world objects like
+	// StoneDeposit: a finite Reserve, no regrowth, generated as regions by
+	// cmd/game. See resource.Coal/GoldOre/IronOre.
+	CoalDeposit
+	GoldOreDeposit
+	IronOreDeposit
+
+	// MinerHut is the workplace for one Miner (package miner), who cycles
+	// between Coal/GoldOre/IronOre deposits on a fixed quota so no single
+	// ore dominates just because it's closest -- see package miner's doc
+	// comment.
+	MinerHut
+
+	// Smeltery turns GoldOre or IronOre, plus Coal, into Gold or Iron. It's
+	// the first building with more than one Recipe (see Type.AltRecipes):
+	// which one runs is decided per production cycle, not fixed at
+	// placement, by whichever ore is actually on hand.
+	Smeltery
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -99,6 +118,9 @@ type Recipe struct {
 	// progress starts. It models a living animal: a PigFarm must receive all
 	// feed before a pig can begin its 600-tick growth cycle. Other recipes
 	// retain the normal completion-time consumption behaviour.
+	//
+	// Not supported in combination with Type.AltRecipes -- a multi-recipe
+	// building always consumes at completion (see Building.ActiveRecipe).
 	ConsumeInputsAtStart bool
 }
 
@@ -123,6 +145,13 @@ type Type struct {
 	AllowedTerrain []world.TerrainType
 
 	Recipe Recipe
+
+	// AltRecipes lists additional recipes this building can also run,
+	// beyond the primary Recipe -- currently only the Smeltery (smelt gold
+	// or smelt iron). Empty for every other building, which keeps their
+	// behavior through economy.TickWithConnectivity completely unchanged;
+	// see AllRecipes and Building.ActiveRecipe.
+	AltRecipes []Recipe
 
 	// RequiresWorker marks production or gathering buildings that pause
 	// without their single assigned resident. The simulation layer uses this
@@ -151,6 +180,24 @@ type Type struct {
 	// the build phase needs PlankCost/StoneCost already delivered.
 	ConstructionFoundationTicks int
 	ConstructionBuildTicks      int
+}
+
+// AllRecipes returns every recipe this building kind can run -- the
+// primary Recipe (if it has one) followed by AltRecipes, skipping any
+// zero-value entry (TicksToProduce <= 0). For every building except the
+// Smeltery this is exactly []Recipe{t.Recipe} or empty, so callers written
+// against a single recipe keep working unchanged.
+func (t Type) AllRecipes() []Recipe {
+	var out []Recipe
+	if t.Recipe.TicksToProduce > 0 {
+		out = append(out, t.Recipe)
+	}
+	for _, r := range t.AltRecipes {
+		if r.TicksToProduce > 0 {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // AccessPoint returns the world tile that serves as this building's door or
@@ -219,6 +266,14 @@ type Building struct {
 	// and InputBuffer holds Plank/StoneBlock delivered so far toward
 	// Type.PlankCost/StoneCost -- see AddConstructionMaterial.
 	ConstructionStage ConstructionStage
+
+	// ActiveRecipe indexes into Types[Kind].AllRecipes(): which recipe is
+	// running the current production cycle (meaningless, always 0, for a
+	// building with only one recipe). Also remembers which recipe ran last
+	// once a cycle completes, so the next cycle's search for a runnable
+	// recipe starts after it instead of always preferring index 0 -- see
+	// economy.pickRecipe's doc comment for why that fairness matters.
+	ActiveRecipe int
 }
 
 // ConstructionStage is where a placed-but-unfinished building or road
@@ -361,6 +416,25 @@ func NewStoneDeposit(x, y int) *Building {
 		X:       x,
 		Y:       y,
 		Reserve: StoneDepositReserve,
+	}
+}
+
+// OreDepositReserve is the fixed starting Reserve of a freshly placed
+// coal/gold ore/iron ore deposit cell -- the same 10000-per-cell convention
+// as stone, kept as its own constant so the two can be tuned independently
+// later without ambiguity about which deposits a change affects.
+const OreDepositReserve = 10000
+
+// NewOreDeposit creates a CoalDeposit/GoldOreDeposit/IronOreDeposit at full
+// reserve. kind must be one of those three; any other value still returns a
+// Building (so a caller mistake doesn't panic), just with a Kind nothing
+// else in the game recognizes as mineable.
+func NewOreDeposit(kind Kind, x, y int) *Building {
+	return &Building{
+		Kind:    kind,
+		X:       x,
+		Y:       y,
+		Reserve: OreDepositReserve,
 	}
 }
 

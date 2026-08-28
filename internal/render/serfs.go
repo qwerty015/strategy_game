@@ -71,6 +71,12 @@ func cargoColor(t resource.Type) color.RGBA {
 		return color.RGBA{R: 139, G: 89, B: 43, A: 255}
 	case resource.StoneBlock:
 		return color.RGBA{R: 150, G: 150, B: 150, A: 255}
+	case resource.Coal:
+		return color.RGBA{R: 45, G: 45, B: 45, A: 255}
+	case resource.GoldOre, resource.Gold:
+		return color.RGBA{R: 212, G: 175, B: 55, A: 255}
+	case resource.IronOre, resource.Iron:
+		return color.RGBA{R: 165, G: 124, B: 96, A: 255}
 	default:
 		return color.RGBA{R: 255, G: 255, B: 255, A: 255}
 	}
