@@ -237,12 +237,12 @@ func TestEnsureOreDepositsSeedsAnUnmigratedSave(t *testing.T) {
 	}
 }
 
-// TestGenerateGridCarvesASeaTouchingAnEdgeWithinTargetPercent covers "карта
-// генерируется случайно" plus the roadmap's "водоёмы генерируются у края
-// карты": the sea's cell count must land in the designed 8-14% of the
-// map's area, and -- since it always grows inward from an edge -- at least
-// one edge cell must be water.
-func TestGenerateGridCarvesASeaTouchingAnEdgeWithinTargetPercent(t *testing.T) {
+// TestGenerateGridCarvesASeaAlongTheWholeEdgeWithinTargetPercent covers
+// "вода должна быть скраю карты единая на границе с краем карты": the sea
+// must be one unified strip touching *every* position along whichever map
+// edge it grows from, not merely a blob that happens to touch the edge
+// somewhere -- plus the usual designed-abundance check (8-14% of the map).
+func TestGenerateGridCarvesASeaAlongTheWholeEdgeWithinTargetPercent(t *testing.T) {
 	grid := generateGrid(60, 45, 0x1b873593)
 	area := grid.Width * grid.Height
 
@@ -259,41 +259,21 @@ func TestGenerateGridCarvesASeaTouchingAnEdgeWithinTargetPercent(t *testing.T) {
 		t.Fatalf("sea has %d water cells, want between %d and %d (%d-%d%% of %d)", water, minCells, maxCells, seaMinPercent, seaMaxPercent, area)
 	}
 
-	touchesEdge := false
-	for x := 0; x < grid.Width && !touchesEdge; x++ {
-		if grid.At(x, 0).Terrain == world.Water || grid.At(x, grid.Height-1).Terrain == world.Water {
-			touchesEdge = true
-		}
-	}
-	for y := 0; y < grid.Height && !touchesEdge; y++ {
-		if grid.At(0, y).Terrain == world.Water || grid.At(grid.Width-1, y).Terrain == world.Water {
-			touchesEdge = true
-		}
-	}
-	if !touchesEdge {
-		t.Fatal("sea does not touch any map edge, want it to grow inward from one")
-	}
-}
-
-// TestGenerateGridFertilePatchesWithinTargetPercent covers the cosmetic
-// fertile-patch generation: cell count must land in the designed 6-10% of
-// the map's area, and every fertile cell must actually be on what was
-// plain grass (never overwriting the sea).
-func TestGenerateGridFertilePatchesWithinTargetPercent(t *testing.T) {
-	grid := generateGrid(60, 45, 0x1b873593)
-	area := grid.Width * grid.Height
-
-	fertile := 0
-	for y := 0; y < grid.Height; y++ {
-		for x := 0; x < grid.Width; x++ {
-			if grid.At(x, y).Terrain == world.Fertile {
-				fertile++
+	edgeWater := func(x, y int) bool { return grid.At(x, y).Terrain == world.Water }
+	fullyWater := func(get func(i int) bool, length int) bool {
+		for i := 0; i < length; i++ {
+			if !get(i) {
+				return false
 			}
 		}
+		return true
 	}
-	minCells, maxCells := area*fertileMinPercent/100, area*fertileMaxPercent/100
-	if fertile < minCells || fertile > maxCells {
-		t.Fatalf("fertile land has %d cells, want between %d and %d (%d-%d%% of %d)", fertile, minCells, maxCells, fertileMinPercent, fertileMaxPercent, area)
+	top := fullyWater(func(x int) bool { return edgeWater(x, 0) }, grid.Width)
+	bottom := fullyWater(func(x int) bool { return edgeWater(x, grid.Height-1) }, grid.Width)
+	left := fullyWater(func(y int) bool { return edgeWater(0, y) }, grid.Height)
+	right := fullyWater(func(y int) bool { return edgeWater(grid.Width-1, y) }, grid.Height)
+	if !top && !bottom && !left && !right {
+		t.Fatal("no map edge is entirely water, want the sea to form one unified strip along a whole edge")
 	}
 }
 
@@ -321,10 +301,10 @@ func TestGenerateGridProducesDifferentMapsForDifferentSeeds(t *testing.T) {
 // TestFindWarehouseSpotIsBuildableWithRoomForTheStartingRoad checks the
 // procedural replacement for the old fixed warehouseX/Y constants: the
 // chosen spot must be plain grass with a buildable tile directly south for
-// the starting Road.
+// the starting Road, at least warehouseEdgeMargin from every map edge.
 func TestFindWarehouseSpotIsBuildableWithRoomForTheStartingRoad(t *testing.T) {
 	grid := generateGrid(60, 45, 0x1b873593)
-	spot, ok := findWarehouseSpot(grid)
+	spot, ok := findWarehouseSpot(grid, 0xabcdef01)
 	if !ok {
 		t.Fatal("findWarehouseSpot found no spot on a freshly generated map")
 	}
@@ -333,6 +313,29 @@ func TestFindWarehouseSpotIsBuildableWithRoomForTheStartingRoad(t *testing.T) {
 	}
 	if !grid.At(spot.x, spot.y+1).Buildable() {
 		t.Fatalf("tile south of the warehouse spot (%d,%d) is not buildable, no room for the starting road", spot.x, spot.y)
+	}
+	if spot.x < warehouseEdgeMargin || spot.x >= grid.Width-warehouseEdgeMargin ||
+		spot.y < warehouseEdgeMargin || spot.y >= grid.Height-warehouseEdgeMargin {
+		t.Fatalf("warehouse spot (%d,%d) is within %d tiles of a map edge", spot.x, spot.y, warehouseEdgeMargin)
+	}
+}
+
+// TestFindWarehouseSpotVariesWithSeed covers the user's explicit request
+// ("перегенерируем расположение респауна... в случайном порядке"): unlike
+// the old fixed warehouseX/Y constants, two different seeds on the same map
+// must not always land on the same spot.
+func TestFindWarehouseSpotVariesWithSeed(t *testing.T) {
+	grid := generateGrid(60, 45, 0x1b873593)
+	a, ok := findWarehouseSpot(grid, 0xabcdef01)
+	if !ok {
+		t.Fatal("findWarehouseSpot found no spot for seed a")
+	}
+	b, ok := findWarehouseSpot(grid, 0x12345678)
+	if !ok {
+		t.Fatal("findWarehouseSpot found no spot for seed b")
+	}
+	if a == b {
+		t.Fatalf("two different seeds landed on the same warehouse spot (%d,%d), want the pick to vary", a.x, a.y)
 	}
 }
 

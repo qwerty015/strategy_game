@@ -102,13 +102,12 @@ const (
 	// small enough that most of the map stays dry, buildable land.
 	seaMinPercent, seaMaxPercent = 8, 14
 
-	// fertileMinPercent/fertileMaxPercent size the map's cosmetic tilled-soil
-	// patches. Purely visual -- building.Types[Farm].AllowedTerrain is empty,
-	// so a Farm can be placed on any dry tile regardless of terrain -- kept
-	// only so a procedural map still has the "here's good farmland" visual
-	// cue the original hand-built map had.
-	fertileMinPercent, fertileMaxPercent = 6, 10
-	fertileRegionCount                   = 2
+	// No cosmetic Fertile terrain is generated -- the user asked explicitly
+	// not to ("пахотные поля не генерируем вообще! коричневые области"). A
+	// Farm builds on any dry tile regardless of terrain
+	// (building.Types[Farm].AllowedTerrain is empty), so this loses no
+	// gameplay; world.Fertile itself stays defined for old saves that
+	// already have it painted from before this change.
 
 	// Thickets ("чащи" in the roadmap) are a handful of deliberately dense
 	// tree zones, layered on top of -- not instead of -- seedTrees' existing
@@ -217,11 +216,11 @@ func NewGame() *Game {
 	mapSeed := newMapSeed()
 	grid := generateGrid(mapWidth, mapHeight, mapSeed)
 
-	warehousePoint, ok := findWarehouseSpot(grid)
+	warehousePoint, ok := findWarehouseSpot(grid, mapSeed^0xc2b2ae35)
 	if !ok {
-		// Should be unreachable given seaMaxPercent+fertileMaxPercent leaves
-		// most of the map as plain grass -- but a game must still start
-		// rather than panic if generation ever produces a map this crowded.
+		// Should be unreachable given seaMaxPercent leaves most of the map
+		// as plain grass -- but a game must still start rather than panic
+		// if generation ever produces a map this crowded.
 		warehousePoint = gridPoint{grid.Width / 2, grid.Height / 2}
 	}
 	warehouse := &building.Building{Kind: building.Warehouse, X: warehousePoint.x, Y: warehousePoint.y}
@@ -1835,21 +1834,32 @@ func newMapSeed() uint32 {
 	return uint32(time.Now().UnixNano())
 }
 
-// generateGrid builds one fresh procedural map: a sea hugging a random edge
-// (see seaMinPercent), a couple of cosmetic fertile patches, and otherwise
-// plain grass for seedTrees/seedThickets/seedStoneDeposits/seedOreDeposits
-// to scatter their objects across afterward.
+// generateGrid builds one fresh procedural map: one sea forming a
+// continuous coastal strip along a random map edge (see seaMinPercent),
+// and otherwise plain grass for seedTrees/seedThickets/seedStoneDeposits/
+// seedOreDeposits to scatter their objects across afterward. There is no
+// separate fertile terrain painted -- the user asked explicitly not to
+// generate the cosmetic tilled-soil patches at all ("пахотные поля не
+// генерируем вообще"); a Farm builds on any dry tile regardless of terrain
+// (building.Types[Farm].AllowedTerrain is empty) so this loses no gameplay.
 func generateGrid(width, height int, seed uint32) *world.Grid {
 	g := world.NewGrid(width, height)
 	growSeaRegion(g, seed^0x9e3779b9)
-	growFertileRegions(g, seed^0x85ebca6b)
 	return g
 }
 
-// growSeaRegion carves one sea out of the map, starting from a randomly
-// chosen point on a randomly chosen edge and growing inward the same
-// blob-region way seedStoneDeposits does -- see seaMinPercent's doc comment
-// for why it starts on the edge rather than anywhere.
+// growSeaRegion paints one continuous sea along the full length of a
+// randomly chosen map edge. Per the user's explicit request ("вода должна
+// быть скраю карты единая на границе с краем карты") the water must be one
+// unified mass touching the *entire* edge, not a blob that merely happens
+// to touch it at one point -- so unlike every other region-growth function
+// in this file (stone/ore/fertile), this doesn't BFS-expand from a single
+// seed cell. Instead, every position along the edge gets its own inland
+// depth, and the depths form a smoothed, mean-reverting random walk (a
+// small xorshift32-driven step per position, pulled back toward the
+// average depth implied by seaMinPercent/seaMaxPercent) so the coastline
+// stays close to the target area while still having a natural, uneven
+// inner edge rather than a straight ruler-line.
 func growSeaRegion(g *world.Grid, seed uint32) {
 	area := g.Width * g.Height
 	span := seaMaxPercent - seaMinPercent + 1
@@ -1859,129 +1869,98 @@ func growSeaRegion(g *world.Grid, seed uint32) {
 		return
 	}
 
-	start := seaEdgeStart(g, seed)
-	claimed := map[gridPoint]bool{start: true}
-	frontier := []gridPoint{start}
-	placed := 0
-	for len(frontier) > 0 && placed < target {
-		bestIdx := 0
-		bestScore := seaScatterScore(frontier[0].x, frontier[0].y) ^ seed
-		for i := 1; i < len(frontier); i++ {
-			score := seaScatterScore(frontier[i].x, frontier[i].y) ^ seed
-			if score < bestScore {
-				bestScore, bestIdx = score, i
+	horizontal := (seed>>16)%2 == 0 // true: top/bottom edge, coastline runs along X
+	far := (seed>>17)%2 == 0        // which of the two edges on that axis
+
+	edgeLength, perpendicular := g.Height, g.Width
+	if horizontal {
+		edgeLength, perpendicular = g.Width, g.Height
+	}
+
+	avgDepth := target / edgeLength
+	if avgDepth < 2 {
+		avgDepth = 2
+	}
+	minDepth := avgDepth / 2
+	if minDepth < 1 {
+		minDepth = 1
+	}
+	maxDepth := avgDepth * 3 / 2
+	if maxDepth > perpendicular-2 {
+		maxDepth = perpendicular - 2
+	}
+	if maxDepth < minDepth {
+		maxDepth = minDepth
+	}
+
+	rng := seed ^ 0x2545f491
+	depth := avgDepth
+	for i := 0; i < edgeLength; i++ {
+		rng ^= rng << 13
+		rng ^= rng >> 17
+		rng ^= rng << 5
+		step := int(rng%3) - 1 // -1, 0, or +1
+		if depth > avgDepth {
+			step--
+		} else if depth < avgDepth {
+			step++
+		}
+		depth += step
+		if depth < minDepth {
+			depth = minDepth
+		}
+		if depth > maxDepth {
+			depth = maxDepth
+		}
+
+		for d := 0; d < depth; d++ {
+			x, y := i, d
+			if horizontal {
+				if far {
+					y = g.Height - 1 - d
+				}
+			} else {
+				x, y = d, i
+				if far {
+					x = g.Width - 1 - d
+				}
 			}
-		}
-		p := frontier[bestIdx]
-		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
-
-		g.Set(p.x, p.y, world.Tile{Terrain: world.Water})
-		placed++
-
-		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
-			n := gridPoint{p.x + d.x, p.y + d.y}
-			if claimed[n] || !g.InBounds(n.x, n.y) {
-				continue
-			}
-			claimed[n] = true
-			frontier = append(frontier, n)
+			g.Set(x, y, world.Tile{Terrain: world.Water})
 		}
 	}
 }
 
-// seaEdgeStart picks a random point on a randomly chosen map edge as the
-// sea's growth origin.
-func seaEdgeStart(g *world.Grid, seed uint32) gridPoint {
-	switch (seed >> 16) % 4 {
-	case 0: // top
-		return gridPoint{int(seed % uint32(g.Width)), 0}
-	case 1: // right
-		return gridPoint{g.Width - 1, int(seed % uint32(g.Height))}
-	case 2: // bottom
-		return gridPoint{int(seed % uint32(g.Width)), g.Height - 1}
-	default: // left
-		return gridPoint{0, int(seed % uint32(g.Height))}
+// warehouseEdgeMargin keeps the starting Warehouse away from the map's
+// outer boundary, so the player always has physical room to build around
+// their starting point regardless of where the random pick (see
+// findWarehouseSpot) lands.
+const warehouseEdgeMargin = 6
+
+// findWarehouseSpot picks a plain-grass tile with a buildable tile
+// directly south for the starting Road (and at least warehouseEdgeMargin
+// from every map edge), chosen at random among every valid candidate --
+// per the user's explicit request, replaying "New Game" moves the town
+// around the map, not just the terrain around a fixed spot. Falls back to
+// searching without the edge margin if nothing qualifies (should be
+// unreachable given seaMaxPercent, but the game must still start rather
+// than fail on an extreme map).
+func findWarehouseSpot(g *world.Grid, seed uint32) (gridPoint, bool) {
+	if p, ok := pickWarehouseCandidate(g, seed, warehouseEdgeMargin); ok {
+		return p, ok
 	}
+	return pickWarehouseCandidate(g, seed, 0)
 }
 
-func seaScatterScore(x, y int) uint32 {
-	return uint32(x)*668265263 ^ uint32(y)*374761393 ^ 0x6a09e667
-}
-
-// growFertileRegions splits a random 6-10% of the map's area across a
-// couple of separate patches, mirroring seedStoneDeposits' region-count
-// approach. Purely cosmetic -- see fertileMinPercent's doc comment.
-func growFertileRegions(g *world.Grid, seed uint32) {
-	area := g.Width * g.Height
-	span := fertileMaxPercent - fertileMinPercent + 1
-	percent := fertileMinPercent + int(seed%uint32(span))
-	total := area * percent / 100
-	if total <= 0 {
-		return
-	}
-	base := total / fertileRegionCount
-	for i := 0; i < fertileRegionCount; i++ {
-		regionSeed := seed ^ uint32(i)*0x9e3779b9
-		growFertileRegion(g, base, regionSeed)
-	}
-}
-
-// growFertileRegion places one blob of Fertile tiles, the same way
-// growStoneRegion places a stone-deposit blob, but painting terrain
-// directly instead of adding a Building. Growth halts wherever it meets
-// non-grass ground (water, an earlier patch) instead of growing through it,
-// same as a deposit region halts at an unplaceable cell.
-func growFertileRegion(g *world.Grid, target int, seed uint32) {
-	if target <= 0 {
-		return
-	}
-	start, ok := findFertileStart(g, seed)
-	if !ok {
-		return
-	}
-
-	claimed := map[gridPoint]bool{start: true}
-	frontier := []gridPoint{start}
-	placed := 0
-	for len(frontier) > 0 && placed < target {
-		bestIdx := 0
-		bestScore := fertileScatterScore(frontier[0].x, frontier[0].y) ^ seed
-		for i := 1; i < len(frontier); i++ {
-			score := fertileScatterScore(frontier[i].x, frontier[i].y) ^ seed
-			if score < bestScore {
-				bestScore, bestIdx = score, i
-			}
-		}
-		p := frontier[bestIdx]
-		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
-
-		if g.At(p.x, p.y).Terrain != world.Grass {
-			continue
-		}
-		g.Set(p.x, p.y, world.Tile{Terrain: world.Fertile})
-		placed++
-
-		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
-			n := gridPoint{p.x + d.x, p.y + d.y}
-			if claimed[n] || !g.InBounds(n.x, n.y) {
-				continue
-			}
-			claimed[n] = true
-			frontier = append(frontier, n)
-		}
-	}
-}
-
-func findFertileStart(g *world.Grid, seed uint32) (gridPoint, bool) {
+func pickWarehouseCandidate(g *world.Grid, seed uint32, margin int) (gridPoint, bool) {
 	bestScore := ^uint32(0)
 	var best gridPoint
 	found := false
-	for y := 0; y < g.Height; y++ {
-		for x := 0; x < g.Width; x++ {
-			if g.At(x, y).Terrain != world.Grass {
+	for y := margin; y < g.Height-margin; y++ {
+		for x := margin; x < g.Width-margin; x++ {
+			if g.At(x, y).Terrain != world.Grass || !g.InBounds(x, y+1) || !g.At(x, y+1).Buildable() {
 				continue
 			}
-			score := fertileScatterScore(x, y) ^ seed
+			score := warehouseScatterScore(x, y) ^ seed
 			if !found || score < bestScore {
 				bestScore, best, found = score, gridPoint{x, y}, true
 			}
@@ -1990,34 +1969,8 @@ func findFertileStart(g *world.Grid, seed uint32) (gridPoint, bool) {
 	return best, found
 }
 
-func fertileScatterScore(x, y int) uint32 {
-	return uint32(x)*3266489917 ^ uint32(y)*2246822519 ^ 0x1b873593
-}
-
-// findWarehouseSpot picks the plain-grass tile closest to the map's center
-// that also has a buildable tile directly south for the starting Road --
-// the procedural-generation replacement for the old fixed warehouseX/Y
-// constants. Centering it keeps the starting position roughly equidistant
-// from whatever the sea/deposit generation ends up placing around the
-// edges, on a map whose layout is different every game.
-func findWarehouseSpot(g *world.Grid) (gridPoint, bool) {
-	cx, cy := g.Width/2, g.Height/2
-	bestDist := 0
-	var best gridPoint
-	found := false
-	for y := 0; y < g.Height; y++ {
-		for x := 0; x < g.Width; x++ {
-			if g.At(x, y).Terrain != world.Grass || !g.InBounds(x, y+1) || !g.At(x, y+1).Buildable() {
-				continue
-			}
-			dx, dy := x-cx, y-cy
-			dist := dx*dx + dy*dy
-			if !found || dist < bestDist {
-				bestDist, best, found = dist, gridPoint{x, y}, true
-			}
-		}
-	}
-	return best, found
+func warehouseScatterScore(x, y int) uint32 {
+	return uint32(x)*2654435761 ^ uint32(y)*40503 ^ 0x9e3779b9
 }
 
 // seedThickets plants extra trees inside a handful of deliberately dense
