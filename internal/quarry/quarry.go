@@ -24,6 +24,13 @@ const (
 	// MineTicks is six seconds at normal speed (two simulation ticks/sec),
 	// the same pace as a lumberjack's ChopTicks.
 	MineTicks = 12
+
+	// MaxWorkRadius mirrors lumberjack.MaxWorkRadius -- see its doc
+	// comment for the full derivation from the hunger-budget math. Real
+	// bug this guards against: user report of quarrymen dying from
+	// distance, since hunger is never checked mid-walk to/from a
+	// deposit.
+	MaxWorkRadius = 45
 )
 
 // State is the visible activity state of a quarryman.
@@ -371,6 +378,16 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			if q.Home != nil && q.Home.AddOutput(resource.StoneBlock, blocks) == blocks {
 				q.cargo = 0
 				q.resetToIdle()
+				continue
+			}
+			// Real bug this fixes: if the hut's OutputBuffer is full (no
+			// serf has collected it yet), this wait has no upper bound --
+			// hunger was never checked here, only at StateIdle. cargo is
+			// untouched by tryStartMeal and survives resetToIdle, so after
+			// eating, StateIdle's own "cargo > 0 -> routeHome" branch
+			// naturally resumes trying to unload, with nothing lost.
+			if q.hungerTick >= HungerInterval && c.tryStartMeal(q, grid, buildings, ledger) {
+				continue
 			}
 		case StateToTavern:
 			if len(q.path) == 0 {
@@ -492,7 +509,7 @@ func (c *Controller) startDepositJob(q *Quarryman, grid *world.Grid, buildings [
 			continue
 		}
 		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
-		if !ok || len(path) >= bestLength {
+		if !ok || len(path) > MaxWorkRadius || len(path) >= bestLength {
 			continue
 		}
 		bestDeposit, bestPath, bestLength = candidate, path, len(path)

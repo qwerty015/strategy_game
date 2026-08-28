@@ -156,7 +156,15 @@ type BuildingPriorityState struct {
 	Level int
 }
 
+// OriginX/OriginY is where the cut tree that made room for this regrowth
+// actually stood, so the replacement respawns near there instead of
+// anywhere on the map -- see cmd/game's treeRegrowthRadius. Zero-value
+// (0,0) in a save from before this field existed is harmless: it's just
+// treated as any other origin point, retried later if nothing qualifies
+// nearby.
 type TreeRegrowthState struct {
+	OriginX     int
+	OriginY     int
 	Ticks       int
 	TargetTicks int
 	Seed        uint32

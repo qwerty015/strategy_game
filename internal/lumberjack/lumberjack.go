@@ -22,6 +22,20 @@ const (
 
 	// ChopTicks is six seconds at normal speed (two simulation ticks/sec).
 	ChopTicks = 12
+
+	// MaxWorkRadius bounds how far (path tiles, not straight-line) a
+	// lumberjack will travel to reach a tree. Real bug this guards
+	// against (user report: workers dying from distance -- hunger is only
+	// checked at StateIdle/StateUnloading, never mid-walk, so a trip long
+	// enough to outlast the remaining hunger budget could kill the worker
+	// partway there with no chance to react). Derived from the worst case
+	// a freshly-started job can face: hunger just under HungerInterval
+	// when the trip begins, so the round trip (roughly
+	// 4*MaxWorkRadius+ChopTicks at TicksPerTile=2) must fit inside
+	// hunger.MaxTicks-HungerInterval (~260 ticks) -- 45 leaves a
+	// comfortable margin under the ~62-tile theoretical limit, since path
+	// length can exceed straight-line distance around obstacles.
+	MaxWorkRadius = 45
 )
 
 // State is the visible activity state of a lumberjack.
@@ -367,6 +381,17 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			if j.Home != nil && j.Home.AddOutput(resource.Log, j.cargo) == j.cargo {
 				j.cargo = 0
 				j.resetToIdle()
+				continue
+			}
+			// Real bug this fixes: if the hut's OutputBuffer is full (no
+			// serf has collected it yet), this wait has no upper bound --
+			// hunger was never checked here, only at StateIdle. cargo is
+			// untouched by tryStartMeal and survives resetToIdle (see its
+			// field list), so after eating, StateIdle's own "cargo > 0 ->
+			// routeHome" branch naturally resumes trying to unload, with
+			// nothing lost.
+			if j.hungerTick >= HungerInterval && c.tryStartMeal(j, grid, buildings, ledger) {
+				continue
 			}
 		case StateToTavern:
 			if len(j.path) == 0 {
@@ -481,7 +506,7 @@ func (c *Controller) startTreeJob(j *Lumberjack, grid *world.Grid, buildings []*
 			continue
 		}
 		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
-		if !ok || len(path) >= bestLength {
+		if !ok || len(path) > MaxWorkRadius || len(path) >= bestLength {
 			continue
 		}
 		bestTree, bestPath, bestLength = candidate, path, len(path)

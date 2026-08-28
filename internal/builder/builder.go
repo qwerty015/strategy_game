@@ -305,12 +305,25 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 				b.resetToIdle()
 				continue
 			}
-			if !b.target.ConstructionMaterialsReady() {
+			if b.target.ConstructionMaterialsReady() {
+				b.target.ConstructionStage = building.ConstructionFinishing
+				b.state = StateFinishing
+				b.workTicks = 0
 				continue
 			}
-			b.target.ConstructionStage = building.ConstructionFinishing
-			b.state = StateFinishing
-			b.workTicks = 0
+			// Real bug this fixes: this wait has no upper bound (a serf
+			// might take a very long time to reach a distant site with
+			// scarce materials), but hunger was never checked here --
+			// only at StateIdle. hunger.Dead is checked unconditionally
+			// above regardless of state, so a builder stuck waiting simply
+			// starved with no chance to eat. b.target is untouched by the
+			// Tavern trip (tryStartMeal never clears it), and the
+			// StateToTavern arrival handler below resumes StateWaitingMaterials
+			// at this same site afterward instead of losing the already
+			// finished foundation phase through a fresh startSiteJob.
+			if b.hungerTick >= HungerInterval && c.tryStartMeal(b, grid, buildings, ledger) {
+				continue
+			}
 		case StateFinishing:
 			if !siteUsable(buildings, b.target) {
 				b.resetToIdle()
@@ -348,6 +361,19 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 				b.Starving = true
 			}
 			b.tavern = nil
+			// A meal interrupted from StateWaitingMaterials (see above)
+			// must resume waiting at the same site, not go idle -- idle
+			// would run startSiteJob fresh, which unconditionally starts a
+			// new site at StateToSite/StateFoundation and would either
+			// re-do already-finished foundation work on this exact site or
+			// abandon it to a different one entirely. A meal interrupted
+			// from ordinary StateIdle leaves b.target nil, so this check
+			// correctly falls through to the old behavior for that case.
+			if siteUsable(buildings, b.target) && b.target.ConstructionStage == building.ConstructionWaitingMaterials {
+				b.state = StateWaitingMaterials
+				b.path, b.pathIdx, b.tileTicks = nil, 0, 0
+				continue
+			}
 			// No hut to walk back to (see VisibleOnMap) -- go idle right
 			// here at the Tavern, exactly like a Serf does.
 			b.resetToIdle()
@@ -431,6 +457,19 @@ func (c *Controller) tryStartMeal(b *Builder, grid *world.Grid, buildings []*bui
 // several quarrymen welcome), exactly one builder per site makes sense --
 // a second pair of hands has nothing productive to do once the first is
 // already digging the same foundation.
+// startSiteJob deliberately has no lumberjack.MaxWorkRadius-style distance
+// cap, unlike the other three "roam free land" professions: a construction
+// site is a unique, player-placed target, not an interchangeable resource
+// node -- skipping a far one wouldn't send the builder to a nearer
+// equivalent, it would just leave that exact building permanently
+// unstarted. This is safe without a cap because StateIdle already never
+// starts a fresh walk while hungerTick >= HungerInterval (see the Tick
+// switch), so the worst case is a walk starting at just under that
+// threshold: roughly (hunger.MaxTicks-HungerInterval)/TicksPerTile ~= 130
+// tiles of headroom, comfortably more than this map's longest single-axis
+// distance -- and StateWaitingMaterials can no longer starve a builder in
+// place once there (see its own hunger check), so the site's distance
+// itself is the only remaining risk, not how long the wait there runs.
 func (c *Controller) startSiteJob(b *Builder, grid *world.Grid, buildings []*building.Building) {
 	start := pathfind.Point{X: b.X, Y: b.Y}
 	bestLength := int(^uint(0) >> 1)

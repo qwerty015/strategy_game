@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
@@ -49,6 +50,75 @@ func TestMiner_EatsAtNearestReachableTavern(t *testing.T) {
 	}
 	if got := tavernFar.InputBuffer[resource.Bread]; got != 3 {
 		t.Fatalf("farther tavern Bread = %d, want 3 (untouched)", got)
+	}
+}
+
+// TestMiner_EatsWhileStuckUnloadingInsteadOfStarving is a regression guard
+// for the same bug class as the builder's StateWaitingMaterials fix (see
+// that package): StateUnloading had no upper bound (the hut's OutputBuffer
+// can stay full indefinitely if no serf has collected it yet) and never
+// checked hunger -- only StateIdle did. Also covers the second, smaller bug
+// this fix required: unlike lumberjack/quarry, miner's StateIdle never had
+// a "cargo > 0 -> resume delivering" branch, since a miner was never
+// reachable at Idle with cargo before this fix existed -- without adding
+// that branch too, the leftover cargo would have been silently discarded
+// the next time startDepositJob overwrote it.
+func TestMiner_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	hut := &building.Building{Kind: building.MinerHut, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 3, Y: 0}
+	buildings := []*building.Building{hut, tavern}
+	hut.AddOutput(resource.Coal, building.BufferCapacity) // full: nowhere for the carried coal to go
+
+	controller := NewController()
+	m := controller.Spawn(hut)
+	if m == nil {
+		t.Fatal("Spawn() returned nil")
+	}
+	m.X, m.Y = hut.X, hut.Y
+	m.state = StateUnloading
+	m.cargo = 1
+	m.cargoResource = resource.Coal
+
+	meals := 0
+	lastHunger := 0
+	for range hunger.MaxTicks*2 + 100 {
+		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if len(controller.Miners) == 0 {
+			t.Fatalf("miner died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
+		}
+		if m.hungerTick == 0 && lastHunger > 0 {
+			meals++
+		}
+		lastHunger = m.hungerTick
+	}
+	if meals < 2 {
+		t.Fatalf("miner ate %d times over %d ticks, want at least 2 (should cycle to the Tavern repeatedly while stuck unloading)", meals, hunger.MaxTicks*2+100)
+	}
+	if m.cargo != 1 || m.cargoResource != resource.Coal {
+		t.Fatalf("cargo after surviving the long wait = %d of %v, want 1 of Coal (never lost, overwritten, or double-counted across the meal trips)", m.cargo, m.cargoResource)
+	}
+
+	// Free up room in the hut and confirm the coal finally gets delivered.
+	hut.OutputBuffer[resource.Coal] = 0
+	delivered := false
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if m.cargo == 0 {
+			delivered = true
+			break
+		}
+	}
+	if !delivered {
+		t.Fatal("miner never delivered the coal once room freed up")
+	}
+	if got := hut.OutputBuffer[resource.Coal]; got != 1 {
+		t.Fatalf("hut OutputBuffer[Coal] = %d, want 1", got)
 	}
 }
 
@@ -168,6 +238,50 @@ func TestMinerSkipsExhaustedResourceInQuota(t *testing.T) {
 
 	if !got {
 		t.Fatal("miner never mined iron ore even though gold ore (first in the quota) was permanently unavailable")
+	}
+}
+
+// TestMiner_SkipsDepositsBeyondMaxWorkRadius is a regression guard for the
+// user's distance-death report: a deposit farther than MaxWorkRadius path
+// tiles away must never be targeted at all (safety over exploiting every
+// last deposit, since hunger is never checked mid-walk) -- across every
+// quota entry, not just the current one -- while a nearer one within
+// radius is still mined normally once one appears.
+func TestMiner_SkipsDepositsBeyondMaxWorkRadius(t *testing.T) {
+	grid := world.NewGrid(60, 4)
+	hut := &building.Building{Kind: building.MinerHut, X: 0, Y: 0}
+	farDeposit := building.NewOreDeposit(building.CoalDeposit, MaxWorkRadius+10, 0)
+	buildings := []*building.Building{hut, farDeposit}
+	controller := NewController()
+	m := controller.Spawn(hut)
+	if m == nil {
+		t.Fatal("Spawn() returned nil")
+	}
+
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+	}
+	if m.state != StateIdle {
+		t.Fatalf("state with only an out-of-radius deposit available = %v, want StateIdle (must never target it)", m.state)
+	}
+
+	nearDeposit := building.NewOreDeposit(building.CoalDeposit, 10, 0)
+	buildings = append(buildings, nearDeposit)
+
+	mined := false
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if nearDeposit.Reserve < building.OreDepositReserve {
+			mined = true
+			break
+		}
+	}
+	if !mined {
+		t.Fatal("miner never mined the deposit within MaxWorkRadius once one appeared")
 	}
 }
 

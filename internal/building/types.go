@@ -5,17 +5,18 @@ import (
 	"strategy_game/internal/world"
 )
 
-// Standard construction cost/pace for an ordinary building: 10 planks + 4
-// stone, ~15s digging the foundation and ~30s finishing once materials
-// arrive (60 simulation ticks/2 = 30s at the normal 2 ticks/sec pace). See
-// AGENTS.md's construction section for the three exceptions (Winery,
-// PigFarm, FisherHut need extra planks for a fence/boat) and Road (cheaper
-// and much faster, since the player lays many of them).
+// Standard construction cost/pace for an ordinary building: a flat 5
+// planks + 5 stone, ~15s digging the foundation and ~30s finishing once
+// materials arrive (60 simulation ticks/2 = 30s at the normal 2 ticks/sec
+// pace). Per the user's explicit request ("снизим стоимость зданий, все
+// здания 5 доска, 5 каменный блок"), every building costs the same flat
+// amount now -- Winery/PigFarm/FisherHut no longer pay extra planks for
+// their fence/boat (see the removed fencedPlankCost). Road is deliberately
+// unchanged (kept at its original, already-minimal roadStoneCost) --
+// confirmed explicitly with the user, since the player lays many of them.
 const (
-	standardPlankCost = 10
-	standardStoneCost = 4
-
-	fencedPlankCost = 15 // Winery, PigFarm, FisherHut: fence and/or boat
+	standardPlankCost = 5
+	standardStoneCost = 5
 
 	standardFoundationTicks = 30
 	standardBuildTicks      = 60
@@ -166,10 +167,8 @@ var Types = map[Kind]Type{
 			OutputAmount:   8,
 			TicksToProduce: 240, // about two minutes at normal speed
 		},
-		OutputCapacity: 8,
-		// Extra planks: the vineyard's wooden fence around all eight crop
-		// cells.
-		PlankCost:                   fencedPlankCost,
+		OutputCapacity:              8,
+		PlankCost:                   standardPlankCost,
 		StoneCost:                   standardStoneCost,
 		ConstructionFoundationTicks: standardFoundationTicks,
 		ConstructionBuildTicks:      standardBuildTicks,
@@ -181,8 +180,7 @@ var Types = map[Kind]Type{
 		RequiresWorker: true,
 		// The fisherman places caught Fish in OutputBuffer; ordinary serfs
 		// collect it along the hut's normal road access point.
-		// Extra planks: the boat.
-		PlankCost:                   fencedPlankCost,
+		PlankCost:                   standardPlankCost,
 		StoneCost:                   standardStoneCost,
 		ConstructionFoundationTicks: standardFoundationTicks,
 		ConstructionBuildTicks:      standardBuildTicks,
@@ -208,8 +206,7 @@ var Types = map[Kind]Type{
 			TicksToProduce:       600,
 			ConsumeInputsAtStart: true,
 		},
-		// Extra planks: the pen fence.
-		PlankCost:                   fencedPlankCost,
+		PlankCost:                   standardPlankCost,
 		StoneCost:                   standardStoneCost,
 		ConstructionFoundationTicks: standardFoundationTicks,
 		ConstructionBuildTicks:      standardBuildTicks,

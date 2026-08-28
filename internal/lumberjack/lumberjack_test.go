@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
@@ -73,6 +74,74 @@ func TestLumberjack_EatsAtNearestReachableTavern(t *testing.T) {
 	}
 	if got := tavernFar.InputBuffer[resource.Bread]; got != 3 {
 		t.Fatalf("farther tavern Bread = %d, want 3 (untouched)", got)
+	}
+}
+
+// TestLumberjack_EatsWhileStuckUnloadingInsteadOfStarving is a regression
+// guard for the same bug class as the builder's StateWaitingMaterials fix:
+// StateUnloading also had no upper bound (the hut's OutputBuffer can stay
+// full indefinitely if no serf has collected it yet) and never checked
+// hunger -- only StateIdle did -- so a lumberjack stuck unloading simply
+// starved with zero chance to eat, no matter how close a stocked Tavern
+// was. Runs well past hunger.MaxTicks with the hut deliberately kept full
+// the whole time, and the lumberjack must still be alive, having eaten
+// more than once, with its carried log never lost or double-counted --
+// then, once room frees up, still deliver it normally.
+func TestLumberjack_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	hut := &building.Building{Kind: building.LumberjackHut, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 3, Y: 0}
+	buildings := []*building.Building{hut, tavern}
+	hut.AddOutput(resource.Log, building.BufferCapacity) // full: nowhere for the carried log to go
+
+	controller := NewController()
+	j := controller.Spawn(hut)
+	if j == nil {
+		t.Fatal("Spawn() returned nil")
+	}
+	j.X, j.Y = hut.X, hut.Y
+	j.state = StateUnloading
+	j.cargo = 1
+
+	meals := 0
+	lastHunger := 0
+	for range hunger.MaxTicks*2 + 100 {
+		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if len(controller.Lumberjacks) == 0 {
+			t.Fatalf("lumberjack died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
+		}
+		if j.hungerTick == 0 && lastHunger > 0 {
+			meals++
+		}
+		lastHunger = j.hungerTick
+	}
+	if meals < 2 {
+		t.Fatalf("lumberjack ate %d times over %d ticks, want at least 2 (should cycle to the Tavern repeatedly while stuck unloading)", meals, hunger.MaxTicks*2+100)
+	}
+	if j.cargo != 1 {
+		t.Fatalf("cargo after surviving the long wait = %d, want 1 (never lost or double-counted across the meal trips)", j.cargo)
+	}
+
+	// Free up room in the hut and confirm the log finally gets delivered.
+	hut.OutputBuffer[resource.Log] = 0
+	delivered := false
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if j.cargo == 0 {
+			delivered = true
+			break
+		}
+	}
+	if !delivered {
+		t.Fatal("lumberjack never delivered the log once room freed up")
+	}
+	if got := hut.OutputBuffer[resource.Log]; got != 1 {
+		t.Fatalf("hut OutputBuffer[Log] = %d, want 1", got)
 	}
 }
 
@@ -147,6 +216,54 @@ func TestLumberjackCutsNearestTreeAndStoresLogAtHut(t *testing.T) {
 	_, got := jack.Cargo()
 	if got != 0 {
 		t.Fatalf("lumberjack cargo after unloading = %d, want 0", got)
+	}
+}
+
+// TestLumberjack_SkipsTreesBeyondMaxWorkRadius is a regression guard for
+// the user's distance-death report: a tree farther than MaxWorkRadius path
+// tiles away must never be targeted at all (safety over exploiting every
+// last tree, since hunger is never checked mid-walk), while a nearer one
+// within radius is still harvested normally once one appears.
+func TestLumberjack_SkipsTreesBeyondMaxWorkRadius(t *testing.T) {
+	grid := world.NewGrid(60, 4)
+	hut := &building.Building{Kind: building.LumberjackHut, X: 0, Y: 0}
+	farTree := building.NewTree(MaxWorkRadius+10, 0)
+	farTree.GrowthTicks = farTree.GrowthTargetTicks
+	buildings := []*building.Building{hut, farTree}
+	controller := NewController()
+	jack := controller.Spawn(hut)
+	if jack == nil {
+		t.Fatal("Spawn() returned nil")
+	}
+
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+	}
+	if jack.state != StateIdle {
+		t.Fatalf("state with only an out-of-radius tree available = %v, want StateIdle (must never target it)", jack.state)
+	}
+
+	nearTree := building.NewTree(10, 0)
+	nearTree.GrowthTicks = nearTree.GrowthTargetTicks
+	buildings = append(buildings, nearTree)
+
+	var cut bool
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		for _, event := range controller.Tick(grid, buildings, ledger) {
+			if event.Tree == nearTree {
+				cut = true
+			}
+		}
+		if cut {
+			break
+		}
+	}
+	if !cut {
+		t.Fatal("lumberjack never harvested the tree within MaxWorkRadius once one appeared")
 	}
 }
 

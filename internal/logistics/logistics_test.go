@@ -888,3 +888,113 @@ func TestController_PriorityBreaksSupplyTie(t *testing.T) {
 		t.Fatalf("with Pig Farm prioritized, dropoff = %v, want pigFarm", got)
 	}
 }
+
+// TestArriveAtPickup_ConstructionDeliveryFailureSetsBackoff is a
+// regression guard for a real bug the user reported ("слуги ходили по
+// кругу с материалами... материалы на стройку не доставились"): a
+// construction site's delivery route can pass the pre-check
+// (nearestReachableWarehouseOverLand, at job-assignment time) but then
+// fail the re-check in arriveAtPickup -- something built in the way by
+// the time the serf actually arrives at the pickup with cargo in hand.
+// Without a backoff, the very next idle serf immediately re-discovers the
+// exact same doomed job and repeats the failure forever. This checks the
+// backoff is actually set when that re-check fails, and that the cargo is
+// returned to the Warehouse rather than lost.
+func TestArriveAtPickup_ConstructionDeliveryFailureSetsBackoff(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.LumberjackHut, 10, 0)
+	// A solid wall of ordinary (footprint-1) buildings across every row
+	// blocks every route from the warehouse to the site -- landWalkable
+	// treats only the start/goal tiles themselves as always walkable,
+	// everything else in between must be clear.
+	var wall []*building.Building
+	for x := 3; x < 8; x++ {
+		for y := 0; y < 4; y++ {
+			wall = append(wall, &building.Building{Kind: building.Mill, X: x, Y: y})
+		}
+	}
+	buildings := append([]*building.Building{warehouse, site}, wall...)
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+	stock.Add(resource.Plank, 10)
+
+	s := c.Serfs[0]
+	s.pickup, s.dropoff = warehouse, site
+	s.resource, s.amount = resource.Plank, 5
+	s.construction = true
+	s.X, s.Y = warehouse.X, warehouse.Y
+
+	c.arriveAtPickup(s, grid, buildings, stock)
+
+	if got := stock.Amount(resource.Plank); got != 10 {
+		t.Fatalf("warehouse Plank after a failed delivery = %d, want 10 (cargo returned, not lost)", got)
+	}
+	if got := c.constructionBackoff[site]; got != constructionBackoffTicks {
+		t.Fatalf("constructionBackoff[site] = %d, want %d (a failed delivery must back the site off)", got, constructionBackoffTicks)
+	}
+	if s.ph != idle {
+		t.Fatalf("serf phase after a failed delivery = %v, want idle", s.ph)
+	}
+}
+
+// TestFindConstructionSupplyJob_SkipsBlockedSite checks the other half of
+// the same fix: a site currently sitting out its backoff must not be
+// re-offered to another serf, even though it would otherwise qualify.
+func TestFindConstructionSupplyJob_SkipsBlockedSite(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.LumberjackHut, 5, 0)
+	buildings := []*building.Building{warehouse, site}
+	stock := resource.NewStockpile(100)
+	stock.Add(resource.Plank, 10)
+
+	if _, _, _, ok := findConstructionSupplyJob(buildings, stock, reservations.New(), nil); !ok {
+		t.Fatal("findConstructionSupplyJob with no blocked sites = not found, want found")
+	}
+
+	blocked := map[*building.Building]int{site: constructionBackoffTicks}
+	if _, _, _, ok := findConstructionSupplyJob(buildings, stock, reservations.New(), blocked); ok {
+		t.Fatal("findConstructionSupplyJob found a site that's currently backed off, want it skipped")
+	}
+}
+
+// TestFindConstructionDirectJob_SkipsBlockedSite mirrors the warehouse-
+// sourced test above for the direct-from-producer path.
+func TestFindConstructionDirectJob_SkipsBlockedSite(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	workshop := &building.Building{Kind: building.CarpentryWorkshop, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.LumberjackHut, 5, 0)
+	workshop.AddOutput(resource.Plank, 5)
+	buildings := []*building.Building{workshop, site}
+	from := pathfind.Point{X: 0, Y: 0}
+
+	if _, _, _, _, _, ok := findConstructionDirectJob(grid, buildings, reservations.New(), from, nil); !ok {
+		t.Fatal("findConstructionDirectJob with no blocked sites = not found, want found")
+	}
+
+	blocked := map[*building.Building]int{site: constructionBackoffTicks}
+	if _, _, _, _, _, ok := findConstructionDirectJob(grid, buildings, reservations.New(), from, blocked); ok {
+		t.Fatal("findConstructionDirectJob found a site that's currently backed off, want it skipped")
+	}
+}
+
+// TestTickConstructionBackoff_CountsDownAndExpires checks the countdown
+// itself: an entry decrements by one per call and disappears once it
+// reaches zero, making the site a normal candidate again.
+func TestTickConstructionBackoff_CountsDownAndExpires(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	c := NewController(warehouse, 0)
+	site := &building.Building{Kind: building.LumberjackHut, X: 5, Y: 0}
+	c.constructionBackoff[site] = 2
+
+	c.tickConstructionBackoff()
+	if got := c.constructionBackoff[site]; got != 1 {
+		t.Fatalf("backoff after one tick = %d, want 1", got)
+	}
+
+	c.tickConstructionBackoff()
+	if _, still := c.constructionBackoff[site]; still {
+		t.Fatal("backoff entry still present after it should have expired")
+	}
+}

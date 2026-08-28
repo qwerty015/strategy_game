@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
@@ -46,6 +47,91 @@ func TestBuilder_EatsAtNearestReachableTavern(t *testing.T) {
 	}
 	if got := tavernFar.InputBuffer[resource.Bread]; got != 3 {
 		t.Fatalf("farther tavern Bread = %d, want 3 (untouched)", got)
+	}
+}
+
+// TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving is a regression
+// guard for a real bug the user reported ("погибают строители ожидая
+// ресурсы"): StateWaitingMaterials had no upper bound (a serf can take a
+// very long time to reach a distant, scarce-material site) and never
+// checked hunger -- only StateIdle did -- so a builder stuck waiting simply
+// starved to death with zero chance to eat, no matter how close a stocked
+// Tavern was. Runs well past hunger.MaxTicks with materials deliberately
+// never delivered, and the builder must still be alive, having eaten more
+// than once, and must still complete the build once materials do arrive --
+// proving the wait was actually resumed at the same site (not lost to a
+// fresh, from-scratch startSiteJob that would redo the foundation).
+func TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 3, Y: 0}
+	site := building.NewConstructionSite(building.Mill, 8, 0)
+	buildings := []*building.Building{warehouse, tavern, site}
+	controller := NewController()
+	b := controller.Hire(warehouse)
+	if b == nil {
+		t.Fatal("Hire() returned nil")
+	}
+
+	meals := 0
+	lastHunger := 0
+	for range hunger.MaxTicks*2 + 100 {
+		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if len(controller.Builders) == 0 {
+			t.Fatalf("builder died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
+		}
+		if b.hungerTick == 0 && lastHunger > 0 {
+			meals++
+		}
+		lastHunger = b.hungerTick
+	}
+	if meals < 2 {
+		t.Fatalf("builder ate %d times over %d ticks, want at least 2 (should cycle to the Tavern repeatedly while stuck waiting)", meals, hunger.MaxTicks*2+100)
+	}
+	// The loop above may have ended mid-trip to/from the Tavern; give it a
+	// short, bounded window to settle back into StateWaitingMaterials
+	// before asserting on it.
+	settled := false
+	for range 100 {
+		tavern.AddInput(resource.Bread, 1)
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if b.State() == StateWaitingMaterials {
+			settled = true
+			break
+		}
+	}
+	if !settled {
+		t.Fatalf("builder never settled back into StateWaitingMaterials, last state = %v", b.State())
+	}
+
+	// Now actually deliver the materials and confirm construction still
+	// completes normally -- proving the site's foundation progress was
+	// never silently redone or lost across all those meal trips.
+	site.AddConstructionMaterial(resource.Plank, building.Types[building.Mill].PlankCost)
+	site.AddConstructionMaterial(resource.StoneBlock, building.Types[building.Mill].StoneCost)
+
+	var completed *Event
+	for range building.Types[building.Mill].ConstructionBuildTicks + 5 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		for _, event := range controller.Tick(grid, buildings, ledger) {
+			e := event
+			completed = &e
+		}
+		if completed != nil {
+			break
+		}
+	}
+	if completed == nil {
+		t.Fatal("builder never finished construction after materials arrived")
+	}
+	if completed.Kind != ConstructionComplete || completed.Building != site {
+		t.Fatalf("event = %#v, want ConstructionComplete for the site", completed)
 	}
 }
 

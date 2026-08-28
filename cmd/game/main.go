@@ -130,7 +130,7 @@ const (
 	maxBuilders = 3
 
 	// Starting stockpile: enough construction material for several ordinary
-	// buildings or one fenced one (see building.Type's PlankCost/StoneCost),
+	// buildings (see building.Type's PlankCost/StoneCost, a flat 5+5 each),
 	// plus a first batch of every food so an early Tavern isn't immediately
 	// empty while its own supply chains are still being built.
 	startingPlanks  = 200
@@ -150,8 +150,11 @@ const (
 )
 
 type treeRegrowth struct {
-	ticks, target int
-	seed          uint32
+	// originX/originY is where the tree that made room for this regrowth
+	// was actually cut -- see treeRegrowthRadius's doc comment.
+	originX, originY int
+	ticks, target    int
+	seed             uint32
 }
 
 type fishRegrowth struct {
@@ -2508,6 +2511,50 @@ func waterBodyCells(grid *world.Grid, start gridPoint) []gridPoint {
 	return queue
 }
 
+// fishRegrowthRadius bounds how far (BFS hops over water, not
+// straight-line) a fry can respawn from where the fish that made room for
+// it was actually caught. Per the user's explicit request ("рыба...
+// должна спавнится в тех областях где ее собрали, а то сейчас по краям
+// все" -- and its follow-up clarifying the real mechanism: a fisherman
+// only ever fishes near their hut, so with regrowth spread over the whole
+// connected sea, water near the hut slowly empties out while fish pile up
+// far away that nobody ever reaches), tickFishRegrowth uses
+// waterSectionCells instead of the whole-body waterBodyCells: both the
+// population cap (fishBodyLimit) and the candidate search are now scoped
+// to this local section, so a heavily-fished area refills locally instead
+// of competing with the entire sea's population for room. seedFish (the
+// one-time initial population at world generation) is deliberately left
+// alone -- populating the whole sea once at the start is correct, this is
+// only about where a fish respawns after being caught.
+const fishRegrowthRadius = 20
+
+// waterSectionCells is waterBodyCells bounded to a local section: the same
+// flood-fill, but limited to cells within radius BFS-hops of start, not
+// the whole connected water body. See fishRegrowthRadius's doc comment for
+// why this exists as a separate function from waterBodyCells.
+func waterSectionCells(grid *world.Grid, start gridPoint, radius int) []gridPoint {
+	if grid == nil || !grid.InBounds(start.x, start.y) || grid.At(start.x, start.y).Terrain != world.Water {
+		return nil
+	}
+	dist := map[gridPoint]int{start: 0}
+	queue := []gridPoint{start}
+	for i := 0; i < len(queue); i++ {
+		p := queue[i]
+		if dist[p] >= radius {
+			continue
+		}
+		for _, d := range [...]gridPoint{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			n := gridPoint{p.x + d.x, p.y + d.y}
+			if _, seen := dist[n]; seen || !grid.InBounds(n.x, n.y) || grid.At(n.x, n.y).Terrain != world.Water {
+				continue
+			}
+			dist[n] = dist[p] + 1
+			queue = append(queue, n)
+		}
+	}
+	return queue
+}
+
 func fishBodyLimit(cells []gridPoint) int {
 	if len(cells) == 0 {
 		return 0
@@ -2579,7 +2626,7 @@ func (g *Game) tickFishRegrowth() {
 			i++
 			continue
 		}
-		cells := waterBodyCells(g.grid, gridPoint{regrowth.waterX, regrowth.waterY})
+		cells := waterSectionCells(g.grid, gridPoint{regrowth.waterX, regrowth.waterY}, fishRegrowthRadius)
 		if len(cells) == 0 || countFishInCells(g.buildings, cells) >= fishBodyLimit(cells) {
 			regrowth.ticks = regrowth.target - fishRegrowthRetryTicks
 			if regrowth.ticks < 0 {
@@ -2691,15 +2738,15 @@ func (g *Game) cutTree(tree *building.Building) {
 			continue
 		}
 		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
-		g.scheduleTreeRegrowth()
+		g.scheduleTreeRegrowth(tree.X, tree.Y)
 		return
 	}
 }
 
-func (g *Game) scheduleTreeRegrowth() {
+func (g *Game) scheduleTreeRegrowth(originX, originY int) {
 	seed := g.nextTreeSeed()
 	target := treeRegrowthMinTicks + int(seed%uint32(treeRegrowthVariationTicks))
-	g.treeRegrowth = append(g.treeRegrowth, treeRegrowth{target: target, seed: seed})
+	g.treeRegrowth = append(g.treeRegrowth, treeRegrowth{originX: originX, originY: originY, target: target, seed: seed})
 }
 
 func (g *Game) nextTreeSeed() uint32 {
@@ -2713,12 +2760,24 @@ func (g *Game) nextTreeSeed() uint32 {
 	return g.treeSeed
 }
 
+// treeRegrowthRadius/treeRegrowthLocalCap implement per-section local
+// regrowth, per the user's explicit request ("нужно карту разделить на
+// секции... вырубаешь в одной части карты и не трогаешь в другой - рыба
+// и дерево появляется там где их собирают"): a cut tree respawns near
+// where it was cut, and how many trees can occupy that local area is
+// capped independently of the rest of the map. This *replaces* the old
+// map-wide 1% ceiling entirely (not layered on top of it): thickets
+// (seedThickets) alone can already push the global tree count above that
+// ceiling, which would otherwise permanently block ALL regrowth
+// everywhere, no matter how empty a heavily-logged area near a hut had
+// become -- exactly the "far trees pile up untouched, the hut's own
+// backyard stays bare forever" symptom the user reported.
+const (
+	treeRegrowthRadius   = 20
+	treeRegrowthLocalCap = 12
+)
+
 func (g *Game) tickTreeRegrowth() {
-	maxTrees := g.grid.Width * g.grid.Height / 100
-	if maxTrees <= 0 {
-		return
-	}
-	currentTrees := countTrees(g.buildings)
 	for i := 0; i < len(g.treeRegrowth); {
 		regrowth := &g.treeRegrowth[i]
 		if regrowth.target <= 0 {
@@ -2729,16 +2788,24 @@ func (g *Game) tickTreeRegrowth() {
 			i++
 			continue
 		}
-		if currentTrees >= maxTrees {
-			regrowth.ticks = regrowth.target
+		origin := gridPoint{regrowth.originX, regrowth.originY}
+		if countTreesNear(g.buildings, origin, treeRegrowthRadius) >= treeRegrowthLocalCap {
+			// This local section is already at its own cap -- retry later
+			// rather than discarding the delayed respawn or (the old bug)
+			// spawning it somewhere else on the map entirely.
+			regrowth.ticks = regrowth.target - treeRegrowthRetryTicks
+			if regrowth.ticks < 0 {
+				regrowth.ticks = 0
+			}
 			i++
 			continue
 		}
 
-		x, y, ok := g.findTreeSpawnCell(regrowth.seed)
+		x, y, ok := g.findTreeSpawnCell(regrowth.seed, origin, treeRegrowthRadius)
 		if !ok {
-			// The settlement may have filled the available land. Retry later
-			// without discarding the delayed respawn.
+			// No room within this local section right now. Retry later
+			// without discarding the delayed respawn or widening the
+			// search to some unrelated part of the map.
 			regrowth.ticks = regrowth.target - treeRegrowthRetryTicks
 			if regrowth.ticks < 0 {
 				regrowth.ticks = 0
@@ -2748,17 +2815,52 @@ func (g *Game) tickTreeRegrowth() {
 		}
 
 		g.buildings = append(g.buildings, building.NewTree(x, y))
-		currentTrees++
 		g.treeRegrowth = append(g.treeRegrowth[:i], g.treeRegrowth[i+1:]...)
 	}
 }
 
-func (g *Game) findTreeSpawnCell(seed uint32) (int, int, bool) {
+// countTreesNear counts live Tree buildings within radius (straight-line)
+// of origin.
+func countTreesNear(buildings []*building.Building, origin gridPoint, radius int) int {
+	radiusSq := float64(radius * radius)
+	count := 0
+	for _, b := range buildings {
+		if b == nil || b.Kind != building.Tree {
+			continue
+		}
+		dx, dy := float64(b.X-origin.x), float64(b.Y-origin.y)
+		if dx*dx+dy*dy <= radiusSq {
+			count++
+		}
+	}
+	return count
+}
+
+func (g *Game) findTreeSpawnCell(seed uint32, origin gridPoint, radius int) (int, int, bool) {
 	bestScore := ^uint32(0)
 	bestX, bestY := 0, 0
 	found := false
-	for y := 0; y < g.grid.Height; y++ {
-		for x := 0; x < g.grid.Width; x++ {
+	minX, maxX := origin.x-radius, origin.x+radius
+	minY, maxY := origin.y-radius, origin.y+radius
+	if minX < 0 {
+		minX = 0
+	}
+	if minY < 0 {
+		minY = 0
+	}
+	if maxX >= g.grid.Width {
+		maxX = g.grid.Width - 1
+	}
+	if maxY >= g.grid.Height {
+		maxY = g.grid.Height - 1
+	}
+	radiusSq := float64(radius * radius)
+	for y := minY; y <= maxY; y++ {
+		for x := minX; x <= maxX; x++ {
+			dx, dy := float64(x-origin.x), float64(y-origin.y)
+			if dx*dx+dy*dy > radiusSq {
+				continue
+			}
 			if !g.grid.At(x, y).Buildable() || !building.CanPlace(g.grid, g.buildings, building.Tree, x, y) {
 				continue
 			}
@@ -2803,20 +2905,10 @@ func showsAccessMarker(kind building.Kind) bool {
 	}
 }
 
-func countTrees(buildings []*building.Building) int {
-	count := 0
-	for _, b := range buildings {
-		if b != nil && b.Kind == building.Tree {
-			count++
-		}
-	}
-	return count
-}
-
 func (g *Game) serializeTreeRegrowth() []save.TreeRegrowthState {
 	regrowth := make([]save.TreeRegrowthState, 0, len(g.treeRegrowth))
 	for _, r := range g.treeRegrowth {
-		regrowth = append(regrowth, save.TreeRegrowthState{Ticks: r.ticks, TargetTicks: r.target, Seed: r.seed})
+		regrowth = append(regrowth, save.TreeRegrowthState{OriginX: r.originX, OriginY: r.originY, Ticks: r.ticks, TargetTicks: r.target, Seed: r.seed})
 	}
 	return regrowth
 }
@@ -2831,7 +2923,11 @@ func restoreTreeRegrowth(states []save.TreeRegrowthState) []treeRegrowth {
 		if target <= 0 {
 			target = treeRegrowthMinTicks
 		}
-		regrowth = append(regrowth, treeRegrowth{ticks: ticks, target: target, seed: state.Seed})
+		// OriginX/OriginY default to 0,0 in a save from before this field
+		// existed -- tickTreeRegrowth just treats that as any other origin
+		// point (retries harmlessly via the usual mechanism if nothing
+		// qualifies nearby), so no separate migration path is needed.
+		regrowth = append(regrowth, treeRegrowth{originX: state.OriginX, originY: state.OriginY, ticks: ticks, target: target, seed: state.Seed})
 	}
 	return regrowth
 }

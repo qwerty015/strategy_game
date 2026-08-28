@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
@@ -70,6 +71,73 @@ func TestQuarryman_EatsAtNearestReachableTavern(t *testing.T) {
 	}
 	if got := tavernFar.InputBuffer[resource.Bread]; got != 3 {
 		t.Fatalf("farther tavern Bread = %d, want 3 (untouched)", got)
+	}
+}
+
+// TestQuarryman_EatsWhileStuckUnloadingInsteadOfStarving is a regression
+// guard for the same bug class as the builder's StateWaitingMaterials fix
+// (see that package): StateUnloading had no upper bound (the hut's
+// OutputBuffer can stay full indefinitely if no serf has collected it yet)
+// and never checked hunger -- only StateIdle did. Runs well past
+// hunger.MaxTicks with the hut deliberately kept full the whole time, and
+// the quarryman must still be alive, having eaten more than once, with its
+// carried cargo never lost or double-counted -- then, once room frees up,
+// still deliver it normally.
+func TestQuarryman_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	hut := &building.Building{Kind: building.QuarryHut, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 3, Y: 0}
+	buildings := []*building.Building{hut, tavern}
+	hut.AddOutput(resource.StoneBlock, building.BufferCapacity) // full: nowhere for the carried blocks to go
+
+	controller := NewController()
+	q := controller.Spawn(hut)
+	if q == nil {
+		t.Fatal("Spawn() returned nil")
+	}
+	q.X, q.Y = hut.X, hut.Y
+	q.state = StateUnloading
+	q.cargo = 1 // becomes 2 StoneBlocks on delivery
+
+	meals := 0
+	lastHunger := 0
+	for range hunger.MaxTicks*2 + 100 {
+		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if len(controller.Quarrymen) == 0 {
+			t.Fatalf("quarryman died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
+		}
+		if q.hungerTick == 0 && lastHunger > 0 {
+			meals++
+		}
+		lastHunger = q.hungerTick
+	}
+	if meals < 2 {
+		t.Fatalf("quarryman ate %d times over %d ticks, want at least 2 (should cycle to the Tavern repeatedly while stuck unloading)", meals, hunger.MaxTicks*2+100)
+	}
+	if q.cargo != 1 {
+		t.Fatalf("cargo after surviving the long wait = %d, want 1 (never lost or double-counted across the meal trips)", q.cargo)
+	}
+
+	// Free up room in the hut and confirm the blocks finally get delivered.
+	hut.OutputBuffer[resource.StoneBlock] = 0
+	delivered := false
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if q.cargo == 0 {
+			delivered = true
+			break
+		}
+	}
+	if !delivered {
+		t.Fatal("quarryman never delivered the blocks once room freed up")
+	}
+	if got := hut.OutputBuffer[resource.StoneBlock]; got != 2 {
+		t.Fatalf("hut OutputBuffer[StoneBlock] = %d, want 2", got)
 	}
 }
 
@@ -143,6 +211,49 @@ func TestQuarrymanMinesNearestDepositAndStoresBlocksAtHut(t *testing.T) {
 	_, got := worker.Cargo()
 	if got != 0 {
 		t.Fatalf("quarryman cargo after unloading = %d, want 0", got)
+	}
+}
+
+// TestQuarryman_SkipsDepositsBeyondMaxWorkRadius is a regression guard for
+// the user's distance-death report: a deposit farther than MaxWorkRadius
+// path tiles away must never be targeted at all (safety over exploiting
+// every last deposit, since hunger is never checked mid-walk), while a
+// nearer one within radius is still mined normally once one appears.
+func TestQuarryman_SkipsDepositsBeyondMaxWorkRadius(t *testing.T) {
+	grid := world.NewGrid(60, 4)
+	hut := &building.Building{Kind: building.QuarryHut, X: 0, Y: 0}
+	farDeposit := building.NewStoneDeposit(MaxWorkRadius+10, 0)
+	buildings := []*building.Building{hut, farDeposit}
+	controller := NewController()
+	q := controller.Spawn(hut)
+	if q == nil {
+		t.Fatal("Spawn() returned nil")
+	}
+
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+	}
+	if q.state != StateIdle {
+		t.Fatalf("state with only an out-of-radius deposit available = %v, want StateIdle (must never target it)", q.state)
+	}
+
+	nearDeposit := building.NewStoneDeposit(10, 0)
+	buildings = append(buildings, nearDeposit)
+
+	mined := false
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if nearDeposit.Reserve < building.StoneDepositReserve {
+			mined = true
+			break
+		}
+	}
+	if !mined {
+		t.Fatal("quarryman never mined the deposit within MaxWorkRadius once one appeared")
 	}
 }
 

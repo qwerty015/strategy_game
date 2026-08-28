@@ -212,7 +212,31 @@ type Controller struct {
 	// player (see SetPriority). A kind with no entry defaults to
 	// PriorityNormal (0).
 	priority map[building.Kind]int
+
+	// constructionBackoff holds a countdown (in simulation ticks) for
+	// construction sites whose delivery route just failed the re-check in
+	// arriveAtPickup -- real bug this fixes ("слуги ходили по кругу с
+	// материалами... материалы на стройку не доставились"): the site's
+	// access point was reachable when the job was assigned
+	// (nearestReachableWarehouseOverLand), but something built in the
+	// meantime blocked the only route by the time the serf actually
+	// arrived at the pickup with cargo in hand. Without this, the very
+	// next idle serf (or even the same one) immediately re-discovers the
+	// exact same doomed job and repeats the failure forever, burning
+	// every serf's time without the site ever making progress. Not
+	// persisted across saves -- it's a short-lived throttle, not game
+	// state; a freshly loaded save just retries once before backing off
+	// again if the route is still blocked.
+	constructionBackoff map[*building.Building]int
 }
+
+// constructionBackoffTicks is how long a construction site sits skipped
+// after a failed delivery before another attempt is allowed -- about a
+// minute at normal speed. Long enough that a permanently blocked route
+// doesn't keep consuming serf trips every single tick; short enough that
+// the site recovers quickly once the player notices and clears the
+// obstruction (or builds a road around it).
+const constructionBackoffTicks = 120
 
 // Supply priority levels a player can assign to a building kind, from a
 // five-step scale. Anything in between or beyond also works -- higher
@@ -227,7 +251,7 @@ const (
 
 // NewController spawns count serfs standing at the warehouse.
 func NewController(warehouse *building.Building, count int) *Controller {
-	c := &Controller{Warehouse: warehouse, Warehouses: []*building.Building{warehouse}, meals: meal.NewSelector(0x243f6a88)}
+	c := &Controller{Warehouse: warehouse, Warehouses: []*building.Building{warehouse}, meals: meal.NewSelector(0x243f6a88), constructionBackoff: map[*building.Building]int{}}
 	for range count {
 		c.Hire()
 	}
@@ -440,6 +464,8 @@ func (c *Controller) MaxWaitingHunger() int {
 // construction-material delivery leg (see startConstructionLeg); every
 // other job still routes exclusively over the road network.
 func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) TickResult {
+	c.tickConstructionBackoff()
+
 	var result TickResult
 	remaining := c.Serfs[:0]
 	for _, s := range c.Serfs {
@@ -471,6 +497,20 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stoc
 	}
 	c.Serfs = remaining
 	return result
+}
+
+// tickConstructionBackoff counts down every site currently sitting out a
+// failed-delivery cooldown (see constructionBackoff's doc comment),
+// dropping the entry once it reaches zero so the site becomes a normal
+// candidate again.
+func (c *Controller) tickConstructionBackoff() {
+	for site, ticks := range c.constructionBackoff {
+		if ticks <= 1 {
+			delete(c.constructionBackoff, site)
+			continue
+		}
+		c.constructionBackoff[site] = ticks - 1
+	}
 }
 
 // nearestTavernWithFood returns the nearest reachable Tavern with at least one
@@ -609,11 +649,11 @@ func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Bui
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
 		return
 	}
-	if pickup, site, t, n, path, ok := findConstructionDirectJob(grid, buildings, ledger, from); ok {
+	if pickup, site, t, n, path, ok := findConstructionDirectJob(grid, buildings, ledger, from, c.constructionBackoff); ok {
 		c.startConstructionLeg(s, pickup, site, t, n, path, ledger)
 		return
 	}
-	if dropoff, t, n, ok := findConstructionSupplyJob(buildings, stock, ledger); ok {
+	if dropoff, t, n, ok := findConstructionSupplyJob(buildings, stock, ledger, c.constructionBackoff); ok {
 		if warehouse, path, ok := nearestReachableWarehouseOverLand(grid, buildings, c.warehouses(), from, dropoff); ok {
 			c.startConstructionLeg(s, warehouse, dropoff, t, n, path, ledger)
 			return
@@ -850,10 +890,13 @@ var constructionMaterials = [...]resource.Type{resource.Plank, resource.StoneBlo
 // reachability itself, for the same reason findSupplyJob doesn't: which
 // registered warehouse is actually reachable depends on the serf's current
 // position, and here "reachable" additionally means over open land, not
-// necessarily a road -- see nearestReachableWarehouseOverLand.
-func findConstructionSupplyJob(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) (site *building.Building, t resource.Type, amount int, ok bool) {
+// necessarily a road -- see nearestReachableWarehouseOverLand. blocked is
+// Controller.constructionBackoff -- a site whose delivery just failed
+// stays skipped for a while instead of being immediately re-offered to
+// the next idle serf.
+func findConstructionSupplyJob(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, blocked map[*building.Building]int) (site *building.Building, t resource.Type, amount int, ok bool) {
 	for _, cand := range buildings {
-		if cand.ConstructionStage == building.ConstructionNone {
+		if cand.ConstructionStage == building.ConstructionNone || blocked[cand] > 0 {
 			continue
 		}
 		for _, rt := range constructionMaterials {
@@ -904,9 +947,9 @@ var constructionMaterialProducer = map[resource.Type]building.Kind{
 // pathfind.FindLandPath, the same off-road exception every construction
 // delivery gets (see startConstructionLeg) -- the site or its producer may
 // have no road yet.
-func findConstructionDirectJob(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger, from pathfind.Point) (pickup, site *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
+func findConstructionDirectJob(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger, from pathfind.Point, blocked map[*building.Building]int) (pickup, site *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
 	for _, cand := range buildings {
-		if cand.ConstructionStage == building.ConstructionNone {
+		if cand.ConstructionStage == building.ConstructionNone || blocked[cand] > 0 {
 			continue
 		}
 		for _, rt := range constructionMaterials {
@@ -1085,6 +1128,12 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 			stock.Add(s.resource, s.amount)
 		} else {
 			s.pickup.AddOutput(s.resource, s.amount)
+		}
+		if s.construction && s.dropoff != nil {
+			// Without this, the very next idle serf immediately
+			// re-discovers this exact same doomed job and repeats the
+			// failure forever -- see constructionBackoff's doc comment.
+			c.constructionBackoff[s.dropoff] = constructionBackoffTicks
 		}
 		s.reset()
 		return

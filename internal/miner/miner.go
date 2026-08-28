@@ -37,6 +37,15 @@ const (
 	// MineTicks is six seconds at normal speed, the same pace as a
 	// lumberjack's ChopTicks/quarryman's MineTicks.
 	MineTicks = 12
+
+	// MaxWorkRadius mirrors lumberjack.MaxWorkRadius -- see its doc
+	// comment for the full derivation from the hunger-budget math. Real
+	// bug this guards against: user report of miners dying from distance
+	// (map generation deliberately keeps every deposit at least
+	// minDepositDistanceFromWarehouse away from the Warehouse, which made
+	// this the most exposed profession of the three), since hunger is
+	// never checked mid-walk to/from a deposit.
+	MaxWorkRadius = 45
 )
 
 // Quota is one entry in DefaultQuota: mine Amount units of Resource (from
@@ -362,6 +371,19 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 
 		switch m.state {
 		case StateIdle:
+			// Unlike lumberjack/quarry, this branch used to be unreachable
+			// with cargo > 0 -- StateUnloading never let go of a miner
+			// while it was still carrying, so there was nothing to resume
+			// here. Now that StateUnloading can also interrupt for a meal
+			// (see below) and return here with cargo still in hand, this
+			// must be checked first, the same way lumberjack/quarry
+			// already do -- otherwise startDepositJob would send the miner
+			// off on a fresh job while quietly overwriting the
+			// undelivered cargo the next time it mines.
+			if m.cargo > 0 {
+				m.routeHome(grid, buildings)
+				continue
+			}
 			if m.hungerTick >= HungerInterval && c.tryStartMeal(m, grid, buildings, ledger) {
 				continue
 			}
@@ -413,6 +435,16 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 				c.advanceQuota(m)
 				m.cargo = 0
 				m.resetToIdle()
+				continue
+			}
+			// Real bug this fixes: if the hut's OutputBuffer is full (no
+			// serf has collected it yet), this wait has no upper bound --
+			// hunger was never checked here, only at StateIdle. cargo is
+			// untouched by tryStartMeal and survives resetToIdle, so after
+			// eating, StateIdle's own "cargo > 0 -> routeHome" branch
+			// naturally resumes trying to unload, with nothing lost.
+			if m.hungerTick >= HungerInterval && c.tryStartMeal(m, grid, buildings, ledger) {
+				continue
 			}
 		case StateToTavern:
 			if len(m.path) == 0 {
@@ -561,7 +593,7 @@ func (c *Controller) startDepositJob(m *Miner, grid *world.Grid, buildings []*bu
 				continue
 			}
 			path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
-			if !ok || len(path) >= bestLength {
+			if !ok || len(path) > MaxWorkRadius || len(path) >= bestLength {
 				continue
 			}
 			bestDeposit, bestPath, bestLength = candidate, path, len(path)
