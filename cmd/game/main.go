@@ -44,12 +44,21 @@ const (
 	startingSerfs     = 3
 
 	// mapWidth/mapHeight is the fixed size of every procedurally generated
-	// map (see generateGrid) -- bigger than the original 40x30 hand-built
-	// test map, per the roadmap's "карта большего размера". Only the
-	// terrain layout within this fixed size is randomized per game, not
-	// the dimensions themselves.
-	mapWidth  = 100
-	mapHeight = 75
+	// map (see generateGrid). Halved from an earlier 100x75 per the user's
+	// direct request ("уменьши карту в 2 раза") -- every other spatial
+	// constant below that measures a distance in tiles rather than a
+	// percentage of map area (minDepositDistanceFromWarehouse,
+	// maxWarehouseDistanceFromWater, warehouseEdgeMargin,
+	// treeRegrowthRadius, fishRegrowthRadius) is halved right along with
+	// it, so a "20 tiles from the coast" rule stays the same fraction of
+	// the map instead of suddenly covering most of it. Generation
+	// abundance itself (sea/ore/thicket percent, tree/fish density) is
+	// already expressed as a percentage of map area, so it scales down
+	// automatically with no separate change needed. Only the terrain
+	// layout within this fixed size is randomized per game, not the
+	// dimensions themselves.
+	mapWidth  = 50
+	mapHeight = 38
 
 	// Named save-panel slots (side panel, settings tab) live in their own
 	// files. Saving/loading is mouse-only through the Settings tab -- there
@@ -121,8 +130,9 @@ const (
 	// minDepositDistanceFromWarehouse keeps every finite deposit kind --
 	// stone, coal, gold ore, iron ore -- away from the town's starting
 	// Warehouse, per the game design ("уголь, камень, руды... должны быть
-	// удалены от первоначального склада, минимум 20 клеток").
-	minDepositDistanceFromWarehouse = 20
+	// удалены от первоначального склада, минимум 20 клеток" -- halved
+	// along with mapWidth/mapHeight, see that constant's doc comment).
+	minDepositDistanceFromWarehouse = 10
 
 	// maxBuilders is a flat town-wide cap, unlike every other profession
 	// (which is capped by matching building count instead) -- a Builder has
@@ -1960,17 +1970,19 @@ func growSeaRegion(g *world.Grid, seed uint32) {
 // warehouseEdgeMargin keeps the starting Warehouse away from the map's
 // outer boundary, so the player always has physical room to build around
 // their starting point regardless of where the random pick (see
-// findWarehouseSpot) lands.
-const warehouseEdgeMargin = 6
+// findWarehouseSpot) lands. Halved along with mapWidth/mapHeight, see that
+// constant's doc comment.
+const warehouseEdgeMargin = 3
 
 // maxWarehouseDistanceFromWater keeps the starting Warehouse close enough
 // to the sea that a Fisher Hut is a realistic early build, per the user's
 // explicit request ("склад спавнился недалеко от воды, максимум 20
-// клеток"). Straight-line distance, the same convention
+// клеток" -- halved along with mapWidth/mapHeight, see that constant's doc
+// comment). Straight-line distance, the same convention
 // minDepositDistanceFromWarehouse/tooCloseToPoint already use elsewhere in
 // this file, not a walked path -- the Warehouse doesn't need a road to the
 // coast, just to not have generated impractically far from it.
-const maxWarehouseDistanceFromWater = 20
+const maxWarehouseDistanceFromWater = 10
 
 // findWarehouseSpot picks a plain-grass tile with a buildable tile
 // directly south for the starting Road, at least warehouseEdgeMargin from
@@ -2525,8 +2537,11 @@ func waterBodyCells(grid *world.Grid, start gridPoint) []gridPoint {
 // of competing with the entire sea's population for room. seedFish (the
 // one-time initial population at world generation) is deliberately left
 // alone -- populating the whole sea once at the start is correct, this is
-// only about where a fish respawns after being caught.
-const fishRegrowthRadius = 20
+// only about where a fish respawns after being caught. Halved along with
+// mapWidth/mapHeight, see that constant's doc comment -- otherwise a
+// "local" 20-tile radius would swallow most of the smaller sea and stop
+// being local at all.
+const fishRegrowthRadius = 10
 
 // waterSectionCells is waterBodyCells bounded to a local section: the same
 // flood-fill, but limited to cells within radius BFS-hops of start, not
@@ -2772,9 +2787,15 @@ func (g *Game) nextTreeSeed() uint32 {
 // everywhere, no matter how empty a heavily-logged area near a hut had
 // become -- exactly the "far trees pile up untouched, the hut's own
 // backyard stays bare forever" symptom the user reported.
+// Both halved along with mapWidth/mapHeight (see that constant's doc
+// comment): halving just the radius and leaving the cap at 12 would pack
+// the same tree count into a quarter of the area (radius scales the
+// linear map dimension, but the local cap is a density over that radius's
+// *area*), so the cap is quartered too -- 12 * (10/20)^2 = 3 -- to keep
+// the same roughly-1% local density the original pairing was tuned for.
 const (
-	treeRegrowthRadius   = 20
-	treeRegrowthLocalCap = 12
+	treeRegrowthRadius   = 10
+	treeRegrowthLocalCap = 3
 )
 
 func (g *Game) tickTreeRegrowth() {
