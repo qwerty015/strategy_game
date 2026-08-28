@@ -177,38 +177,11 @@ func (l Layout) menuIndexAt(x, y int, count int) (int, bool) {
 	return 0, false
 }
 
-// SpeedAt returns the speed button under the cursor. Buttons occupy the
-// lower strip, leaving the left side for the help text.
-func (l Layout) SpeedAt(x, y int) (economy.Speed, bool) {
-	if !image.Pt(x, y).In(l.BottomPanel()) {
-		return economy.Normal, false
-	}
-
-	buttonY := l.Height - l.BottomHeight + 12
-	buttonW := 62
-	startX := l.speedStartX()
-	if y < buttonY || y >= buttonY+36 || x < startX {
-		return economy.Normal, false
-	}
-	index := (x - startX) / buttonW
-	if index < 0 || index > int(economy.Quadruple) {
-		return economy.Normal, false
-	}
-	if x >= startX+(index+1)*buttonW {
-		return economy.Normal, false
-	}
-	return economy.Speed(index), true
-}
-
 // HireAt reports whether the cursor is over the serf hiring button in the
 // bottom panel.
 func (l Layout) HireAt(x, y int) bool {
 	r := image.Rect(l.LeftWidth+16, l.Height-l.BottomHeight+20, l.LeftWidth+196, l.Height-l.BottomHeight+54)
 	return image.Pt(x, y).In(r)
-}
-
-func (l Layout) speedStartX() int {
-	return l.Width - 5*62 - 12
 }
 
 const (
@@ -243,9 +216,8 @@ func (l Layout) PriorityLevelAt(x, y int) (int, bool) {
 	return index - 2, true
 }
 
-// Settings tab layout: a language row, a speed row (mirroring the bottom
-// panel so the player need not leave the tab to change pace), a save-slot
-// list, and -- in place of the slot list while a modal is open -- a naming
+// Settings tab layout: a language row, the game's only speed-control row, a
+// save-slot list, and -- in place of the slot list while a modal is open -- a naming
 // or overwrite-confirmation dialog. Every offset here is shared between
 // drawing (see drawSettingsContent/drawSettingsDialog) and hit-testing
 // below, so the two can never disagree about where a button is.
@@ -295,20 +267,19 @@ func (l Layout) SettingsLangAt(x, y int) (i18n.Lang, bool) {
 }
 
 // SettingsSpeedAt returns the speed button under the cursor within the
-// settings tab's own speed row (distinct from SpeedAt, which reads the
-// always-visible bottom panel).
+// settings tab's speed row. Speed is intentionally configured only here.
 func (l Layout) SettingsSpeedAt(x, y int) (economy.Speed, bool) {
 	if y < settingsSpeedRowY || y >= settingsSpeedRowY+settingsSpeedRowH {
 		return economy.Normal, false
 	}
 	startX := 12
 	w := l.LeftWidth - 24
-	segW := w / 5
+	segW := w / 6
 	if segW <= 0 || x < startX {
 		return economy.Normal, false
 	}
 	index := (x - startX) / segW
-	if index < 0 || index > int(economy.Quadruple) || x >= startX+(index+1)*segW {
+	if index < 0 || index > int(economy.Octuple) || x >= startX+(index+1)*segW {
 		return economy.Normal, false
 	}
 	return economy.Speed(index), true

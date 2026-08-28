@@ -299,6 +299,38 @@ func TestController_DeliversConstructionMaterialsFromWarehouse(t *testing.T) {
 	}
 }
 
+// TestController_ConstructionWarehouseIsNotAnEndpointOrUnlimitedDropoff
+// reproduces the new-warehouse loop: the unfinished Warehouse has the same
+// Kind as a completed one, but must neither join the endpoint list nor bypass
+// the construction material reservation. Exactly one five-plank trip may be
+// assigned to its five-plank requirement, regardless of how many serfs wait.
+func TestController_ConstructionWarehouseIsNotAnEndpointOrUnlimitedDropoff(t *testing.T) {
+	grid := world.NewGrid(12, 3)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := building.NewConstructionSite(building.Warehouse, 8, 0)
+	buildings := []*building.Building{warehouse, site}
+
+	c := NewController(warehouse, 3)
+	c.AddWarehouse(site)
+	if got := len(c.Warehouses); got != 1 {
+		t.Fatalf("registered warehouses = %d, want 1 (unfinished site is not an endpoint)", got)
+	}
+
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Plank, 20)
+	tick(c, grid, buildings, stock)
+
+	assigned := 0
+	for _, s := range c.Serfs {
+		if s.DropoffBuilding() == site {
+			assigned++
+		}
+	}
+	if assigned != 1 {
+		t.Fatalf("serfs assigned to one five-plank warehouse site = %d, want 1", assigned)
+	}
+}
+
 func TestController_HaulsDirectlyBetweenProducerAndConsumer(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20} // far away, off this road entirely
 	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
@@ -683,10 +715,17 @@ func TestController_DismissalRemovesIdleSerfBeforeNewJob(t *testing.T) {
 // would commit to it, walk there, then discover on arrival it can't
 // deliver (goods get returned safely, but the whole trip was wasted).
 func TestController_TavernSupplySkipsProducerThatCannotReachTavern(t *testing.T) {
-	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
-	producer1 := &building.Building{Kind: building.Bakery, X: 0, Y: 2}
+	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20} // only the controller anchor; no route role in this test
+	producer1 := &building.Building{Kind: building.Bakery, X: -4, Y: 0}
 	producer1.AddOutput(resource.Bread, 5)
-	spur := &building.Building{Kind: building.Road, X: 0, Y: 1} // dead end, connects nowhere else
+	// The non-road start point lies between two branches. A serf can reach
+	// either branch from there, while the branches cannot reach each other,
+	// even diagonally.
+	spur := []*building.Building{
+		{Kind: building.Road, X: -3, Y: 0},
+		{Kind: building.Road, X: -2, Y: 0},
+		{Kind: building.Road, X: -1, Y: 0},
+	}
 
 	producer2 := &building.Building{Kind: building.Bakery, X: 5, Y: 1}
 	producer2.AddOutput(resource.Bread, 5)
@@ -694,7 +733,7 @@ func TestController_TavernSupplySkipsProducerThatCannotReachTavern(t *testing.T)
 
 	mainRoad := straightRoad(1, 11, 0) // x=1..10 at y=0, touches producer2 and the Tavern
 
-	buildings := append([]*building.Building{warehouse, producer1, spur, producer2, tavern}, mainRoad...)
+	buildings := append(append([]*building.Building{warehouse, producer1, producer2, tavern}, spur...), mainRoad...)
 
 	c := NewController(warehouse, 1)
 	c.Serfs[0].X, c.Serfs[0].Y = 0, 0
@@ -712,9 +751,13 @@ func TestController_TavernSupplySkipsProducerThatCannotReachTavern(t *testing.T)
 // Mill; producer2 shares the Mill's through-road.
 func TestController_DirectHaulSkipsProducerThatCannotReachConsumer(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20} // off to the side, irrelevant here
-	producer1 := &building.Building{Kind: building.Farm, X: 0, Y: 2}
+	producer1 := &building.Building{Kind: building.Farm, X: -4, Y: 0}
 	producer1.AddOutput(resource.Wheat, 5)
-	spur := &building.Building{Kind: building.Road, X: 0, Y: 1}
+	spur := []*building.Building{
+		{Kind: building.Road, X: -3, Y: 0},
+		{Kind: building.Road, X: -2, Y: 0},
+		{Kind: building.Road, X: -1, Y: 0},
+	}
 
 	producer2 := &building.Building{Kind: building.Farm, X: 5, Y: 1}
 	producer2.AddOutput(resource.Wheat, 5)
@@ -722,7 +765,7 @@ func TestController_DirectHaulSkipsProducerThatCannotReachConsumer(t *testing.T)
 
 	mainRoad := straightRoad(1, 11, 0)
 
-	buildings := append([]*building.Building{warehouse, producer1, spur, producer2, mill}, mainRoad...)
+	buildings := append(append([]*building.Building{warehouse, producer1, producer2, mill}, spur...), mainRoad...)
 
 	c := NewController(warehouse, 1)
 	c.Serfs[0].X, c.Serfs[0].Y = 0, 0
@@ -997,4 +1040,50 @@ func TestTickConstructionBackoff_CountsDownAndExpires(t *testing.T) {
 	if _, still := c.constructionBackoff[site]; still {
 		t.Fatal("backoff entry still present after it should have expired")
 	}
+}
+
+// TestController_DirectHaulSuppliesSmelteryWithIronOre proves that direct
+// producer-to-consumer logistics considers AltRecipes. Before this regression
+// guard, findDirectJob checked only Smeltery.Recipe (GoldOre + Coal), so it
+// sent IronOre from the Miner Hut to the Warehouse instead of the Smeltery.
+func TestController_DirectHaulSuppliesSmelteryWithIronOre(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	minerHut := &building.Building{Kind: building.MinerHut, X: 3, Y: 0}
+	smeltery := &building.Building{Kind: building.Smeltery, X: 6, Y: 0}
+	minerHut.AddOutput(resource.IronOre, 1)
+	buildings := []*building.Building{warehouse, minerHut, smeltery}
+	buildings = append(buildings, straightRoad(1, 3, 0)...)
+	buildings = append(buildings, straightRoad(4, 6, 0)...)
+
+	controller := NewController(warehouse, 1)
+	tick(controller, nil, buildings, resource.NewStockpile(100))
+
+	serf := controller.Serfs[0]
+	if serf.PickupBuilding() != minerHut || serf.DropoffBuilding() != smeltery {
+		t.Fatalf("job = %v -> %v, want MinerHut -> Smeltery for IronOre", serf.PickupBuilding(), serf.DropoffBuilding())
+	}
+	if cargo, amount := serf.Cargo(); cargo != resource.IronOre || amount != 1 {
+		t.Fatalf("reserved cargo = %v x%d, want IronOre x1", cargo, amount)
+	}
+}
+
+// TestController_SuppliesSmelteryWithIronOreFromWarehouse covers the fallback
+// leg after ore has already reached storage. findSupplyJob must consider the
+// Smeltery's alternative iron recipe, otherwise the iron stays in stock
+// forever even when the smeltery is empty and connected.
+func TestController_SuppliesSmelteryWithIronOreFromWarehouse(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	smeltery := &building.Building{Kind: building.Smeltery, X: 3, Y: 0}
+	buildings := append([]*building.Building{warehouse, smeltery}, straightRoad(1, 3, 0)...)
+	stock := resource.NewStockpile(100)
+	stock.Add(resource.IronOre, 1)
+
+	controller := NewController(warehouse, 1)
+	for range 100 {
+		tick(controller, nil, buildings, stock)
+		if smeltery.InputBuffer[resource.IronOre] == 1 {
+			return
+		}
+	}
+	t.Fatalf("smeltery IronOre input = %d, want 1 after a warehouse supply run", smeltery.InputBuffer[resource.IronOre])
 }

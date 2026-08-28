@@ -86,10 +86,10 @@ func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
 	}
 }
 
-// drawSettingsContent renders the settings tab: a live language switch, a
-// speed row mirroring the bottom panel, and the five named save slots -- or,
-// while a modal is open, the naming/overwrite dialog in place of the slot
-// list. See Layout's settings* constants for the shared geometry.
+// drawSettingsContent renders the settings tab: a live language switch, the
+// game's single speed-control row, and the five named save slots -- or, while
+// a modal is open, the naming/overwrite dialog in place of the slot list. See
+// Layout's settings* constants for the shared geometry.
 func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Speed, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
 	t := i18n.T()
 	x := 12
@@ -110,8 +110,8 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 		DrawText(screen, entry.label, float64(bx+6), float64(settingsLangRowY+5))
 	}
 
-	speedLabels := []string{t.SpeedPaused, t.SpeedHalf, t.SpeedNormal, t.SpeedDouble, t.SpeedQuadruple}
-	speedSegW := w / 5
+	speedLabels := []string{t.SpeedPaused, t.SpeedHalf, t.SpeedNormal, t.SpeedDouble, t.SpeedQuadruple, t.SpeedOctuple}
+	speedSegW := w / len(speedLabels)
 	for i, label := range speedLabels {
 		bx := x + i*speedSegW
 		fill := panelInnerColor
@@ -282,17 +282,74 @@ func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
 	screen.DrawImage(img, op)
 }
 
+// drawSelectionIcon reuses the map/palette art in the inspector, so a click
+// always has both a readable name and an immediate visual identity.
+func drawSelectionIcon(screen *ebiten.Image, selection Selection, x, y, size int) {
+	switch selection.Kind {
+	case SelectionBuilding:
+		if selection.Building != nil {
+			drawBuildingIcon(screen, selection.Building.Kind, x, y, size)
+		}
+	case SelectionSerf:
+		drawHireIcon(screen, HireSerf, x, y, size)
+	case SelectionVillager:
+		if selection.Villager != nil {
+			drawHireIcon(screen, hireKindForProfession(selection.Villager.Profession), x, y, size)
+		}
+	case SelectionLumberjack:
+		drawHireIcon(screen, HireLumberjack, x, y, size)
+	case SelectionFisherman:
+		drawHireIcon(screen, HireFisherman, x, y, size)
+	case SelectionQuarryman:
+		drawHireIcon(screen, HireQuarryman, x, y, size)
+	case SelectionBuilder:
+		drawHireIcon(screen, HireBuilder, x, y, size)
+	case SelectionMiner:
+		drawHireIcon(screen, HireMiner, x, y, size)
+	}
+}
+
+func hireKindForProfession(profession villagers.Profession) HireKind {
+	switch profession {
+	case villagers.Farmer:
+		return HireFarmer
+	case villagers.Baker:
+		return HireBaker
+	case villagers.Winemaker:
+		return HireWinemaker
+	case villagers.Swineherd:
+		return HireSwineherd
+	case villagers.Butcher:
+		return HireButcher
+	case villagers.Carpenter:
+		return HireCarpenter
+	case villagers.Smelter:
+		return HireSmelter
+	default:
+		return HireSerf
+	}
+}
+
 // DrawInspectorPanel renders the currently selected object. It reads only
 // public accessors from the logic packages, keeping display formatting out of
-// the simulation.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, occupants int, showPriority bool, priorityLevel int) {
+// the simulation. With no selection it becomes the compact town summary.
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, occupants int, showPriority bool, priorityLevel int) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
-		DrawText(screen, i18n.T().InspectorHint, float64(r.Min.X+18), 62)
+		x := float64(r.Min.X + 18)
+		DrawText(screen, i18n.T().InspectorHint, x, 62)
+		if pop != nil {
+			DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().Population, pop.Count), x, 92)
+			DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().DeathsLabel, pop.Deaths), x, 110)
+			DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().RemovedLabel, pop.Removed), x, 128)
+		}
 		return
 	}
 
+	// A 28-pixel thumbnail preserves the full text layout while identifying
+	// every selected building, natural object and unit at a glance.
+	drawSelectionIcon(screen, selection, r.Max.X-46, 48, 28)
 	switch selection.Kind {
 	case SelectionBuilding:
 		drawBuildingInspector(screen, r.Min.X+18, 62, selection.Building, connected, stock, occupants)
@@ -493,11 +550,7 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		DrawText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
 		for _, rt := range resource.AllTypes() {
-			capacity := fmt.Sprintf("%d", stock.Capacity)
-			if stock.Capacity <= 0 {
-				capacity = t.UnlimitedLabel
-			}
-			DrawText(screen, fmt.Sprintf("%s: %d/%s", t.ResourceName[rt], stock.Amount(rt), capacity), float64(x), float64(y))
+			drawWarehouseResourceRow(screen, x, y, rt, stock.Amount(rt))
 			y += 18
 		}
 	}
@@ -894,27 +947,16 @@ func drawAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y int, marker
 	vector.FillCircle(screen, float32(sx+cam.TilePixels()/2), float32(sy+cam.TilePixels()-6*scale), radius, marker, false)
 }
 
-func DrawSpeedPanel(screen *ebiten.Image, layout Layout, speed economy.Speed) {
+// DrawBottomPanel renders the utility strip. Simulation speed intentionally
+// lives only in the Options tab, leaving this strip for unit controls and help.
+func DrawBottomPanel(screen *ebiten.Image, layout Layout) {
 	r := layout.BottomPanel()
 	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), panelColor, false)
 	vector.FillRect(screen, float32(layout.LeftWidth), float32(r.Min.Y+5), float32(layout.Width-layout.LeftWidth-5), 1, panelEdgeColor, false)
-
-	startX := layout.speedStartX()
-	DrawText(screen, i18n.T().SpeedTitle, float64(startX), float64(r.Min.Y+7))
-	labels := []string{i18n.T().SpeedPaused, i18n.T().SpeedHalf, i18n.T().SpeedNormal, i18n.T().SpeedDouble, i18n.T().SpeedQuadruple}
-	for i, label := range labels {
-		x, y := startX+i*62, r.Min.Y+24
-		fill := panelInnerColor
-		if economy.Speed(i) == speed {
-			fill = selectedColor
-		}
-		vector.FillRect(screen, float32(x), float32(y), 58, 30, fill, false)
-		DrawText(screen, label, float64(x+8), float64(y+8))
-	}
 }
 
-// DrawUnitControls renders the small population action area beside the
-// speed controls. Hiring currently has no resource cost; the visible button
+// DrawUnitControls renders the small population action area in the bottom
+// utility strip. Hiring currently has no resource cost; the visible button
 // gives the action a discoverable mouse target while H remains a shortcut.
 func DrawUnitControls(screen *ebiten.Image, layout Layout, serfCount int) {
 	x := layout.LeftWidth + 16
@@ -958,6 +1000,18 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.Smeltery
 	case building.FisherHut:
 		img = assets.FisherHutFrames[0]
+	case building.Tree:
+		img = assets.TreeFrames[2]
+	case building.Fish:
+		img = assets.FishFrames[2]
+	case building.StoneDeposit:
+		img = assets.StoneDeposit
+	case building.CoalDeposit:
+		img = assets.CoalDeposit
+	case building.GoldOreDeposit:
+		img = assets.GoldOreDeposit
+	case building.IronOreDeposit:
+		img = assets.IronOreDeposit
 	}
 	if img == nil {
 		return

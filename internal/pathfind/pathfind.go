@@ -13,9 +13,12 @@ type Point struct{ X, Y int }
 
 // FindPath returns a shortest tile-by-tile path connecting the access points
 // of from and to. The path may use Road tiles and the two endpoint access
-// tiles, but not the rest of either footprint or any third building. At
-// least one Road tile must be used, so two buildings touching edge-to-edge
-// are not considered connected without an actual road.
+// tiles, but not the rest of either footprint or any third building. It uses
+// all eight neighbouring tiles, so a diagonal road can be walked in one
+// movement step. A road must still meet a building's door by a side, rather
+// than merely touching its corner; this keeps AccessPoint meaningful for
+// multi-tile buildings. At least one Road tile must be used, so two buildings
+// touching edge-to-edge are not considered connected without an actual road.
 func FindPath(buildings []*building.Building, from, to *building.Building) ([]Point, bool) {
 	if from == to {
 		return []Point{accessPoint(from)}, true
@@ -170,6 +173,12 @@ func findPathBetween(buildings []*building.Building, start, goal Point, requireR
 	walkable[goal] = true
 
 	roads := roadSet(buildings)
+	// A saved unit can start on a Road, where leaving diagonally is normal.
+	// A building access tile is not a Road, however: its first/last step has
+	// to be cardinal so a road cannot activate a building by just touching the
+	// corner of its footprint.
+	restrictStartDiagonal := !roads[start]
+	restrictGoalDiagonal := !roads[goal]
 
 	// Breadth-first search over the walkable tile graph. visited maps
 	// each reached tile to the tile it was reached from; the root maps to
@@ -188,6 +197,9 @@ func findPathBetween(buildings []*building.Building, start, goal Point, requireR
 			break
 		}
 		for _, n := range neighbors(p) {
+			if diagonal(p, n) && ((p == start && restrictStartDiagonal) || (n == goal && restrictGoalDiagonal)) {
+				continue
+			}
 			if _, seen := visited[n]; seen {
 				continue
 			}
@@ -242,13 +254,24 @@ func containsRoad(path []Point, roads map[Point]bool) bool {
 	return false
 }
 
-func neighbors(p Point) [4]Point {
-	return [4]Point{
+// neighbors returns the eight adjacent tiles. Moving diagonally costs the
+// same simulation step as moving straight: units occupy discrete map cells
+// and their animation interpolates only between successive path points.
+func neighbors(p Point) [8]Point {
+	return [8]Point{
 		{p.X - 1, p.Y},
 		{p.X + 1, p.Y},
 		{p.X, p.Y - 1},
 		{p.X, p.Y + 1},
+		{p.X - 1, p.Y - 1},
+		{p.X + 1, p.Y - 1},
+		{p.X - 1, p.Y + 1},
+		{p.X + 1, p.Y + 1},
 	}
+}
+
+func diagonal(a, b Point) bool {
+	return a.X != b.X && a.Y != b.Y
 }
 
 func reverse(pts []Point) {

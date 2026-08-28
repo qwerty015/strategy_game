@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/world"
@@ -81,6 +82,65 @@ func TestFishermanUsesRoadToEatWine(t *testing.T) {
 	}
 }
 
+// TestFisherman_EatsWhileStuckUnloadingInsteadOfStarving covers the same
+// bounded-buffer case as lumberjack and quarryman: if no serf clears the hut,
+// carried fish must survive repeated Tavern trips rather than making the
+// fisherman starve in StateUnloading.
+func TestFisherman_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
+	grid := world.NewGrid(15, 4)
+	hut := &building.Building{Kind: building.FisherHut, X: 0, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 3, Y: 0}
+	buildings := []*building.Building{hut, tavern}
+	for x := 1; x < 3; x++ {
+		buildings = append(buildings, &building.Building{Kind: building.Road, X: x, Y: 0})
+	}
+	hut.AddOutput(resource.Fish, building.BufferCapacity) // full: nowhere for the carried fish to go
+
+	controller := NewController()
+	fisherman := controller.Spawn(hut)
+	if fisherman == nil {
+		t.Fatal("Spawn() returned nil")
+	}
+	fisherman.X, fisherman.Y = hut.X, hut.Y
+	fisherman.state = StateUnloading
+	fisherman.cargo = 1
+
+	meals := 0
+	lastHunger := 0
+	for range hunger.MaxTicks*2 + 100 {
+		tavern.AddInput(resource.Bread, 1) // food is not the constraint in this regression
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if len(controller.Fishermen) == 0 {
+			t.Fatalf("fisherman died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
+		}
+		if fisherman.hungerTick == 0 && lastHunger > 0 {
+			meals++
+		}
+		lastHunger = fisherman.hungerTick
+	}
+	if meals < 2 {
+		t.Fatalf("fisherman ate %d times over %d ticks, want at least 2 while stuck unloading", meals, hunger.MaxTicks*2+100)
+	}
+	if fisherman.cargo != 1 {
+		t.Fatalf("cargo after surviving the long wait = %d, want 1", fisherman.cargo)
+	}
+
+	hut.OutputBuffer[resource.Fish] = 0
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if fisherman.cargo == 0 {
+			if got := hut.OutputBuffer[resource.Fish]; got != 1 {
+				t.Fatalf("hut Fish output = %d, want 1", got)
+			}
+			return
+		}
+	}
+	t.Fatal("fisherman never delivered the fish once room freed up")
+}
 func TestFishermanRestoreKeepsWineMeal(t *testing.T) {
 	grid := world.NewGrid(7, 3)
 	hut := &building.Building{Kind: building.FisherHut, X: 0, Y: 0}

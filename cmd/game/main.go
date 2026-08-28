@@ -800,10 +800,7 @@ func (g *Game) handleMouse() {
 			return
 		}
 	}
-	if speed, ok := g.layout.SpeedAt(mx, my); ok {
-		g.sim.SetSpeed(speed)
-		return
-	}
+
 	if g.layout.HireAt(mx, my) {
 		g.hireSerf()
 		return
@@ -837,12 +834,31 @@ func (g *Game) handleMouse() {
 		g.statusMsg = i18n.T().CantBuildHere
 		return
 	}
+
+	// Every newly placed building starts with one completed road tile at its
+	// marked entrance. It makes the connection point unambiguous while the
+	// foundation is still under construction; the player then extends this
+	// visible anchor to the rest of the road network. Roads themselves remain
+	// individually constructed and do not receive another starter road.
+	var starterRoad *building.Building
+	if kind != building.Road {
+		var roadOK bool
+		starterRoad, roadOK = building.FoundationRoad(g.grid, g.buildings, kind, tx, ty)
+		if !roadOK {
+			g.statusMsg = i18n.T().CantBuildHere
+			return
+		}
+	}
+
 	// Placement only reserves the footprint and starts a construction site
 	// (see package builder) -- it neither produces nor, for a Warehouse,
 	// acts as a logistics endpoint until a Builder actually finishes it;
 	// see finishConstruction.
 	placed := building.NewConstructionSite(kind, tx, ty)
 	g.buildings = append(g.buildings, placed)
+	if starterRoad != nil {
+		g.buildings = append(g.buildings, starterRoad)
+	}
 	g.invalidateConnectionCache()
 	g.statusMsg = ""
 }
@@ -1025,23 +1041,25 @@ func (g *Game) clearMissingUnitSelection() {
 }
 
 // refreshPopulation rebuilds the live headcount while retaining the
-// persistent death/removal history shown in the HUD.
+// persistent death/removal history shown in the empty inspector panel.
 func (g *Game) refreshPopulation() {
 	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners)
 }
 
-// selectionAt resolves map coordinates to a live game object. Units have
-// priority over buildings because a worker standing beside a building is the
-// more useful thing to inspect on a click.
-// selectionAt resolves map coordinates to a live game object. A unit only
-// takes priority over a building at the same tile while it's actually
-// drawn there (VisibleOnMap): a worker standing beside a building is the
-// more useful thing to inspect on a click, but a resident merely stationed
-// inside its workplace (invisible, per the same rule the renderer uses)
-// must not steal a click meant for the building itself. Serfs have no
-// building to hide inside, so they're always eligible.
+// selectionAt resolves map coordinates to a live game object. A building
+// always wins a click on any tile of its footprint, even when a visible unit
+// currently stands there. This keeps a warehouse, construction site, or
+// workplace inspectable while workers pass through it; units remain selected
+// normally on every unoccupied map tile.
 func (g *Game) selectionAt(mx, my int) ui.Selection {
 	tx, ty := g.camera.ScreenToTile(mx, my)
+	for i := len(g.buildings) - 1; i >= 0; i-- {
+		b := g.buildings[i]
+		footprint := building.Types[b.Kind].Footprint
+		if tx >= b.X && tx < b.X+footprint && ty >= b.Y && ty < b.Y+footprint {
+			return ui.Selection{Kind: ui.SelectionBuilding, Building: b}
+		}
+	}
 	for i := len(g.vills.Villagers) - 1; i >= 0; i-- {
 		v := g.vills.Villagers[i]
 		if v.X == tx && v.Y == ty && v.VisibleOnMap() {
@@ -1082,13 +1100,6 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		m := g.miners.Miners[i]
 		if m.X == tx && m.Y == ty && m.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionMiner, Miner: m}
-		}
-	}
-	for i := len(g.buildings) - 1; i >= 0; i-- {
-		b := g.buildings[i]
-		footprint := building.Types[b.Kind].Footprint
-		if tx >= b.X && tx < b.X+footprint && ty >= b.Y && ty < b.Y+footprint {
-			return ui.Selection{Kind: ui.SelectionBuilding, Building: b}
 		}
 	}
 	return ui.Selection{}
@@ -1511,7 +1522,7 @@ func (g *Game) loadGame(path string) error {
 	// Tavern no longer silently resets the town.
 	g.logi = logistics.NewController(warehouse, 0)
 	for _, b := range buildings {
-		if b.Kind == building.Warehouse && b != warehouse {
+		if b.IsOperationalWarehouse() && b != warehouse {
 			g.logi.AddWarehouse(b)
 		}
 	}
@@ -1526,7 +1537,7 @@ func (g *Game) loadGame(path string) error {
 		// Keep those saves playable with the old sensible defaults.
 		g.logi = logistics.NewController(warehouse, startingSerfs)
 		for _, b := range buildings {
-			if b.Kind == building.Warehouse && b != warehouse {
+			if b.IsOperationalWarehouse() && b != warehouse {
 				g.logi.AddWarehouse(b)
 			}
 		}
@@ -1586,7 +1597,7 @@ func (g *Game) loadAndReport(path string) {
 
 func findWarehouse(buildings []*building.Building) *building.Building {
 	for _, b := range buildings {
-		if b.Kind == building.Warehouse {
+		if b.IsOperationalWarehouse() {
 			return b
 		}
 	}
@@ -2996,11 +3007,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			priorityLevel = g.logi.Priority(g.selection.Building.Kind)
 		}
 	}
-	ui.DrawResourceBarAt(screen, g.stock, g.pop, float64(g.layout.LeftWidth+16), 10)
 	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions(), g.sim.Speed(), g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, occupants, showPriority, priorityLevel)
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel)
+	ui.DrawBottomPanel(screen, g.layout)
 	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
-	ui.DrawSpeedPanel(screen, g.layout, g.sim.Speed())
 
 	ui.DrawText(screen, i18n.T().Help, float64(g.layout.LeftWidth+16), float64(g.layout.Height-20))
 	if g.statusMsg != "" {

@@ -65,6 +65,7 @@ func init() {
 		SpeedNormal:    "1x",
 		SpeedDouble:    "2x",
 		SpeedQuadruple: "4x",
+		SpeedOctuple:   "8x",
 
 		StateLabel:                  "Состояние",
 		CargoLabel:                  "Груз",

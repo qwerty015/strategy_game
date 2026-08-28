@@ -8,34 +8,9 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"strategy_game/internal/building"
-	"strategy_game/internal/economy"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/render"
-	"strategy_game/internal/resource"
 )
-
-// DrawResourceBar prints current stockpile counts and population along
-// the top-left of the screen. Placeholder text HUD -- swappable for real
-// art later without touching game logic.
-func DrawResourceBar(screen *ebiten.Image, stock *resource.Stockpile, pop *economy.Population) {
-	DrawResourceBarAt(screen, stock, pop, 8, 8)
-}
-
-// DrawResourceBarAt draws the resource strip at a caller-selected position,
-// which lets the game keep it inside the map viewport beside the side panels.
-func DrawResourceBarAt(screen *ebiten.Image, stock *resource.Stockpile, pop *economy.Population, x, y float64) {
-	t := i18n.T()
-	line := fmt.Sprintf(
-		"%s: %d  %s: %d  %s: %d | %s: %d  %s: %d  %s: %d",
-		t.Population, pop.Count,
-		t.DeathsLabel, pop.Deaths,
-		t.RemovedLabel, pop.Removed,
-		t.ResourceName[resource.Wheat], stock.Amount(resource.Wheat),
-		t.ResourceName[resource.Flour], stock.Amount(resource.Flour),
-		t.ResourceName[resource.Bread], stock.Amount(resource.Bread),
-	)
-	DrawText(screen, line, x, y)
-}
 
 // DrawPalette prints the building selection hotkeys, highlighting the
 // currently selected one.

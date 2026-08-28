@@ -29,6 +29,31 @@ func TestFindPath_ConnectedViaRoad(t *testing.T) {
 	}
 }
 
+func TestFindPath_UsesDiagonalRoadSegmentsButNotDiagonalDoorContact(t *testing.T) {
+	from := &building.Building{Kind: building.Mill, X: 0, Y: 0}
+	to := &building.Building{Kind: building.Mill, X: 4, Y: 2}
+	buildings := []*building.Building{
+		from,
+		to,
+		// The first and final segment meet each building's access tile by
+		// a side. The middle two segments prove a diagonal road is walkable.
+		{Kind: building.Road, X: 1, Y: 0},
+		{Kind: building.Road, X: 2, Y: 1},
+		{Kind: building.Road, X: 3, Y: 2},
+	}
+
+	path, ok := FindPath(buildings, from, to)
+	if !ok {
+		t.Fatal("FindPath() over a diagonal road chain = not found, want found")
+	}
+	if len(path) != 5 {
+		t.Fatalf("diagonal road path length = %d, want 5", len(path))
+	}
+	if path[2] != (Point{X: 2, Y: 1}) {
+		t.Fatalf("path middle = %v, want diagonal road tile (2,1)", path[2])
+	}
+}
+
 func TestFindLandPath_WalksWithoutRoadButNotThroughWater(t *testing.T) {
 	grid := world.NewGrid(8, 3)
 	from, to := Point{X: 0, Y: 1}, Point{X: 7, Y: 1}
@@ -46,6 +71,17 @@ func TestFindLandPath_WalksWithoutRoadButNotThroughWater(t *testing.T) {
 	}
 	if _, ok := FindLandPath(grid, nil, from, to); ok {
 		t.Fatal("FindLandPath() across a full water barrier = found, want not found")
+	}
+}
+
+func TestFindLandPath_AllowsDiagonalMovement(t *testing.T) {
+	grid := world.NewGrid(2, 2)
+	path, ok := FindLandPath(grid, nil, Point{X: 0, Y: 0}, Point{X: 1, Y: 1})
+	if !ok {
+		t.Fatal("FindLandPath() across diagonal land tiles = not found, want found")
+	}
+	if len(path) != 2 {
+		t.Fatalf("diagonal land path length = %d, want 2", len(path))
 	}
 }
 
@@ -107,6 +143,20 @@ func TestFindWaterPath_StaysInOneWaterBody(t *testing.T) {
 	grid.Set(3, 1, world.Tile{Terrain: world.Grass})
 	if _, ok := FindWaterPath(grid, from, to); ok {
 		t.Fatal("FindWaterPath() across a land break = found, want not found")
+	}
+}
+
+func TestFindWaterPath_AllowsDiagonalMovement(t *testing.T) {
+	grid := world.NewGrid(2, 2)
+	grid.Set(0, 0, world.Tile{Terrain: world.Water})
+	grid.Set(1, 1, world.Tile{Terrain: world.Water})
+
+	path, ok := FindWaterPath(grid, Point{X: 0, Y: 0}, Point{X: 1, Y: 1})
+	if !ok {
+		t.Fatal("FindWaterPath() across diagonal water tiles = not found, want found")
+	}
+	if len(path) != 2 {
+		t.Fatalf("diagonal water path length = %d, want 2", len(path))
 	}
 }
 

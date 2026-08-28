@@ -448,11 +448,10 @@ func TestSelectionAt_BuildingWinsOverInvisibleResident(t *testing.T) {
 	}
 }
 
-// TestSelectionAt_VisibleFarmerStillSelectable is the companion case: a
-// farmer actively tending a field cell IS drawn there, so clicking that
-// exact tile should still select the farmer, not fall through to the
-// Farm building underneath.
-func TestSelectionAt_VisibleFarmerStillSelectable(t *testing.T) {
+// TestSelectionAt_BuildingWinsOverVisibleFarmer verifies that a building
+// remains inspectable even when its visible farmer is standing on a field
+// cell inside the Farm footprint.
+func TestSelectionAt_BuildingWinsOverVisibleFarmer(t *testing.T) {
 	farm := &building.Building{Kind: building.Farm, X: 0, Y: 0}
 	game := &Game{
 		buildings: []*building.Building{farm},
@@ -474,8 +473,60 @@ func TestSelectionAt_VisibleFarmerStillSelectable(t *testing.T) {
 
 	sx, sy := game.camera.TileToScreen(farmer.X, farmer.Y)
 	got := game.selectionAt(int(sx)+1, int(sy)+1)
-	if got.Kind != ui.SelectionVillager || got.Villager != farmer {
-		t.Fatalf("selection = %+v, want the visible farmer", got)
+	if got.Kind != ui.SelectionBuilding || got.Building != farm {
+		t.Fatalf("selection = %+v, want the Farm under the visible farmer", got)
+	}
+}
+
+// TestSelectionAt_ConstructionSiteWinsOverBuilder verifies the universal
+// click rule for the unit that is always visible: a builder working on a
+// construction site must not prevent the player from inspecting that site.
+func TestSelectionAt_ConstructionSiteWinsOverBuilder(t *testing.T) {
+	site := building.NewConstructionSite(building.LumberjackHut, 2, 0)
+	game := &Game{
+		buildings: []*building.Building{site},
+		vills:     villagers.NewController(),
+		logi:      logistics.NewController(&building.Building{Kind: building.Warehouse}, 0),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
+		miners:    miner.NewController(),
+		camera:    render.NewCamera(),
+	}
+	bl := game.builders.Hire(&building.Building{Kind: building.Warehouse})
+	bl.X, bl.Y = site.X, site.Y
+
+	sx, sy := game.camera.TileToScreen(site.X, site.Y)
+	got := game.selectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionBuilding || got.Building != site {
+		t.Fatalf("selection = %+v, want the construction site under the builder", got)
+	}
+}
+
+// TestSelectionAt_WarehouseWinsOverSerf verifies that the same rule applies
+// to a serf, which is always visible while working: the Warehouse remains
+// the selected object on its own tile.
+func TestSelectionAt_WarehouseWinsOverSerf(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	game := &Game{
+		buildings: []*building.Building{warehouse},
+		vills:     villagers.NewController(),
+		logi:      logistics.NewController(warehouse, 1),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
+		miners:    miner.NewController(),
+		camera:    render.NewCamera(),
+	}
+	serf := game.logi.Serfs[0]
+	serf.X, serf.Y = warehouse.X, warehouse.Y
+
+	sx, sy := game.camera.TileToScreen(warehouse.X, warehouse.Y)
+	got := game.selectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionBuilding || got.Building != warehouse {
+		t.Fatalf("selection = %+v, want the Warehouse under the serf", got)
 	}
 }
 

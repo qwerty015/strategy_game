@@ -244,3 +244,24 @@ func TestTickWithConnectivity_SmelteryAlternatesGoldAndIron(t *testing.T) {
 		t.Fatalf("after 4 cycles with both ores always available: Gold=%d Iron=%d, want both > 0 (alternation, not one recipe starving the other)", gold, iron)
 	}
 }
+
+// TestTickWithConnectivity_SmelteryProducesIronWhenOnlyIronIsAvailable
+// proves the production side of the chain independently of delivery: coal
+// plus IronOre must select the alternate recipe and create Iron even with no
+// GoldOre buffered at all.
+func TestTickWithConnectivity_SmelteryProducesIronWhenOnlyIronIsAvailable(t *testing.T) {
+	smeltery := &building.Building{Kind: building.Smeltery}
+	smeltery.AddInput(resource.IronOre, 1)
+	smeltery.AddInput(resource.Coal, 1)
+
+	ticks := building.Types[building.Smeltery].AltRecipes[0].TicksToProduce
+	for range ticks {
+		TickWithConnectivity([]*building.Building{smeltery}, nil, nil)
+	}
+	if got := smeltery.OutputBuffer[resource.Iron]; got != 1 {
+		t.Fatalf("Smeltery Iron output = %d, want 1", got)
+	}
+	if got := smeltery.OutputBuffer[resource.Gold]; got != 0 {
+		t.Fatalf("Smeltery Gold output = %d, want 0 without GoldOre", got)
+	}
+}

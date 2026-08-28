@@ -200,12 +200,40 @@ func (t Type) AllRecipes() []Recipe {
 	return out
 }
 
+// InputRequirement reports the largest buffer target for rt across every
+// runnable recipe of this type. Logistics uses it instead of looking only at
+// Type.Recipe.Inputs, because a multi-recipe building such as the Smeltery
+// must receive inputs for its alternative recipe too (IronOre as well as
+// GoldOre). The loop is deliberately allocation-free: job search calls it for
+// many buildings and idle serfs on a large map.
+func (t Type) InputRequirement(rt resource.Type) int {
+	need := 0
+	if t.Recipe.TicksToProduce > 0 {
+		need = t.Recipe.Inputs[rt]
+	}
+	for _, recipe := range t.AltRecipes {
+		if recipe.TicksToProduce > 0 && recipe.Inputs[rt] > need {
+			need = recipe.Inputs[rt]
+		}
+	}
+	return need
+}
+
 // AccessPoint returns the world tile that serves as this building's door or
 // loading point. Roads connected to another part of a multi-tile building do
 // not make that building reachable.
 func (b *Building) AccessPoint() Point {
 	bt := Types[b.Kind]
 	return Point{X: b.X + bt.AccessX, Y: b.Y + bt.AccessY}
+}
+
+// IsOperationalWarehouse reports whether b is a finished Warehouse that can
+// serve as a logistics endpoint. A Warehouse construction site still uses the
+// same Kind so it can show the future building's art, but it must not expose
+// the shared stockpile or be chosen as a pickup/dropoff point until the
+// Builder has completed it.
+func (b *Building) IsOperationalWarehouse() bool {
+	return b != nil && b.Kind == Warehouse && b.ConstructionStage == ConstructionNone
 }
 
 // CanBuildOn reports whether a single tile satisfies this building

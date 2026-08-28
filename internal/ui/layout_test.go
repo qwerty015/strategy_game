@@ -120,15 +120,15 @@ func TestSettingsSlotActionAtCoversAllFiveSlots(t *testing.T) {
 	}
 }
 
-// TestSettingsSpeedAtCoversAllFiveSpeeds mirrors the bottom panel's SpeedAt
-// test but for the settings tab's own copy of the speed control.
-func TestSettingsSpeedAtCoversAllFiveSpeeds(t *testing.T) {
+// TestSettingsSpeedAtCoversAllSixSpeeds verifies every Option-tab speed
+// segment, including the highest 8x setting.
+func TestSettingsSpeedAtCoversAllSixSpeeds(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	startX := 12
 	w := layout.LeftWidth - 24
-	segW := w / 5
+	segW := w / 6
 
-	for i := 0; i <= int(economy.Quadruple); i++ {
+	for i := 0; i <= int(economy.Octuple); i++ {
 		got, ok := layout.SettingsSpeedAt(startX+i*segW+segW/2, settingsSpeedRowY+settingsSpeedRowH/2)
 		if !ok || got != economy.Speed(i) {
 			t.Fatalf("speed segment %d resolved to %v, %v; want %v, true", i, got, ok, economy.Speed(i))

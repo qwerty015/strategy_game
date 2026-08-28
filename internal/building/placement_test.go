@@ -38,10 +38,22 @@ func TestCanPlace(t *testing.T) {
 			wantValid: false,
 		},
 		{
-			name: "adjacent, no overlap",
+			name: "adjacent player buildings need a gap",
 			kind: Mill, x: 1, y: 0,
 			existing:  []*Building{{Kind: Mill, X: 0, Y: 0}},
+			wantValid: false,
+		},
+		{
+			name: "one empty tile between player buildings is valid",
+			kind: Mill, x: 2, y: 0,
+			existing:  []*Building{{Kind: Mill, X: 0, Y: 0}},
 			wantValid: true,
+		},
+		{
+			name: "diagonal player buildings need a gap",
+			kind: Mill, x: 1, y: 1,
+			existing:  []*Building{{Kind: Mill, X: 0, Y: 0}},
+			wantValid: false,
 		},
 		{
 			name: "only one tree per cell",
@@ -91,5 +103,31 @@ func TestCanPlace(t *testing.T) {
 				t.Errorf("CanPlace(%v, x=%d, y=%d) = %v, want %v", tc.kind, tc.x, tc.y, got, tc.wantValid)
 			}
 		})
+	}
+}
+
+func TestFoundationRoad(t *testing.T) {
+	g := world.NewGrid(8, 8)
+	road, ok := FoundationRoad(g, nil, Mill, 4, 4)
+	if !ok || road == nil {
+		t.Fatal("FoundationRoad() did not create the entrance road")
+	}
+	if road.Kind != Road || road.X != 4 || road.Y != 5 {
+		t.Fatalf("starter road = %#v, want finished Road at (4,5)", road)
+	}
+	if road.ConstructionStage != ConstructionNone {
+		t.Fatalf("starter road stage = %v, want ConstructionNone", road.ConstructionStage)
+	}
+}
+
+func TestFoundationRoadReusesExistingFinishedRoad(t *testing.T) {
+	g := world.NewGrid(8, 8)
+	existing := []*Building{{Kind: Road, X: 4, Y: 5}}
+	road, ok := FoundationRoad(g, existing, Mill, 4, 4)
+	if !ok {
+		t.Fatal("FoundationRoad() rejected an existing entrance road")
+	}
+	if road != nil {
+		t.Fatalf("FoundationRoad() = %#v, want nil because the existing road is reused", road)
 	}
 }

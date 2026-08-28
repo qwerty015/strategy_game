@@ -303,7 +303,7 @@ func (c *Controller) SetMealSeed(seed uint32) { c.meals.SetSeed(seed) }
 // endpoint. All warehouses share the same unlimited town stockpile, while the
 // primary warehouse remains the spawn point for newly hired serfs.
 func (c *Controller) AddWarehouse(warehouse *building.Building) {
-	if warehouse == nil || warehouse.Kind != building.Warehouse {
+	if !warehouse.IsOperationalWarehouse() {
 		return
 	}
 	for _, existing := range c.Warehouses {
@@ -776,8 +776,8 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 				if consumer == warehouse || consumer == producer || consumer.Kind == building.Road || consumer.Kind == building.Tree {
 					continue
 				}
-				need, wants := building.Types[consumer.Kind].Recipe.Inputs[rt]
-				if !wants {
+				need := building.Types[consumer.Kind].InputRequirement(rt)
+				if need <= 0 {
 					continue
 				}
 				short := ledger.RoomFor(consumer, rt, need)
@@ -860,9 +860,12 @@ func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, le
 		if b != nil && priority[cand.Kind] <= bestPriority {
 			continue // a candidate at least as prioritized already won
 		}
-		recipe := building.Types[cand.Kind].Recipe
-		for _, rt := range sortedResourceTypes(recipe.Inputs) {
-			short := ledger.RoomFor(cand, rt, recipe.Inputs[rt])
+		for _, rt := range resource.AllTypes() {
+			need := building.Types[cand.Kind].InputRequirement(rt)
+			if need <= 0 {
+				continue
+			}
+			short := ledger.RoomFor(cand, rt, need)
 			if short <= 0 {
 				continue
 			}
@@ -1099,7 +1102,7 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 	}
 
 	var ok bool
-	if s.pickup.Kind == building.Warehouse {
+	if s.pickup.IsOperationalWarehouse() {
 		ok = stock.Remove(s.resource, s.amount)
 	} else {
 		ok = s.pickup.TakeOutput(s.resource, s.amount)
@@ -1124,7 +1127,7 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 		// Road got cut (or, for a construction delivery, the site became
 		// unreachable over land) after the job was assigned. Return the
 		// goods rather than lose them, then give up on the job.
-		if s.pickup.Kind == building.Warehouse {
+		if s.pickup.IsOperationalWarehouse() {
 			stock.Add(s.resource, s.amount)
 		} else {
 			s.pickup.AddOutput(s.resource, s.amount)
@@ -1145,7 +1148,7 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 func (c *Controller) arriveAtDropoff(s *Serf, stock *resource.Stockpile) {
 	s.atBuilding = s.dropoff
 	switch {
-	case s.dropoff.Kind == building.Warehouse:
+	case s.dropoff.IsOperationalWarehouse():
 		stock.Add(s.resource, s.amount)
 	case s.construction:
 		fit := s.dropoff.AddConstructionMaterial(s.resource, s.amount)

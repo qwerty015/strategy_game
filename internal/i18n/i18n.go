@@ -42,6 +42,7 @@ type Catalog struct {
 	SpeedNormal    string
 	SpeedDouble    string
 	SpeedQuadruple string
+	SpeedOctuple   string
 
 	StateLabel                  string
 	CargoLabel                  string

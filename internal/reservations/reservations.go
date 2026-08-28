@@ -45,11 +45,11 @@ func New() *Ledger {
 // ReservePickup marks n units of t at b as already promised to a unit
 // that will collect them -- from OutputBuffer for an ordinary producer,
 // or from InputBuffer for a building like the Tavern that gets consumed
-// from directly. Pickups from any Warehouse draw on the one shared
+// from directly. Pickups from a finished Warehouse draw on the one shared
 // stockpile instead of a specific building, since several warehouses
 // share it.
 func (l *Ledger) ReservePickup(b *building.Building, t resource.Type, n int) {
-	if b.Kind == building.Warehouse {
+	if b.IsOperationalWarehouse() {
 		l.stock[t] += n
 		return
 	}
@@ -60,10 +60,11 @@ func (l *Ledger) ReservePickup(b *building.Building, t resource.Type, n int) {
 }
 
 // ReserveDropoff marks n units of t as already promised into b's
-// InputBuffer. A Warehouse has no capacity limit, so its dropoffs are
-// never worth tracking.
+// InputBuffer. A finished Warehouse has no capacity limit, so its
+// dropoffs are never worth tracking; a construction site is reserved
+// against its material cost like every other unfinished building.
 func (l *Ledger) ReserveDropoff(b *building.Building, t resource.Type, n int) {
-	if b.Kind == building.Warehouse {
+	if b.IsOperationalWarehouse() {
 		return
 	}
 	if l.dropoff[b] == nil {

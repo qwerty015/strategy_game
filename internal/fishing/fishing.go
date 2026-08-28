@@ -244,11 +244,14 @@ func (c *Controller) Reserve(ledger *reservations.Ledger) {
 	}
 }
 
-// MaxWaitingHunger supports fair cross-controller Tavern contention.
+// MaxWaitingHunger supports fair cross-controller Tavern contention. An
+// unloading fisherman with cargo is included as well: a full hut buffer can
+// block that state indefinitely, so it is a legitimate waiting-to-eat state.
 func (c *Controller) MaxWaitingHunger() int {
 	best := -1
 	for _, f := range c.Fishermen {
-		if f.state == StateIdle && f.hungerTick >= HungerInterval && f.hungerTick > best {
+		canStartMeal := f.state == StateIdle || (f.state == StateUnloading && f.cargo > 0)
+		if canStartMeal && f.hungerTick >= HungerInterval && f.hungerTick > best {
 			best = f.hungerTick
 		}
 	}
@@ -313,9 +316,20 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 				f.state = StateUnloading
 			}
 		case StateUnloading:
+			if f.cargo == 0 {
+				f.resetAtHome()
+				continue
+			}
 			if f.Home != nil && f.Home.AddOutput(resource.Fish, f.cargo) == f.cargo {
 				f.cargo = 0
 				f.resetAtHome()
+				continue
+			}
+			// A full hut buffer can keep the fisherman here indefinitely if no
+			// serf has collected its fish. Preserve cargo while he walks to eat;
+			// StateIdle resumes this exact unloading attempt on his return.
+			if f.hungerTick >= HungerInterval && c.tryStartMeal(f, buildings, ledger) {
+				continue
 			}
 		case StateToTavern:
 			if !f.advancePath() {

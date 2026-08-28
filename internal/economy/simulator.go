@@ -25,6 +25,7 @@ const (
 	Normal
 	Double
 	Quadruple
+	Octuple
 )
 
 func (s Speed) multiplier() float64 {
@@ -37,6 +38,8 @@ func (s Speed) multiplier() float64 {
 		return 2
 	case Quadruple:
 		return 4
+	case Octuple:
+		return 8
 	default:
 		return 1
 	}
@@ -51,7 +54,7 @@ func NewSimulator(framesPerTick int) *Simulator {
 // SetSpeed changes the simulation speed. Invalid values are treated as the
 // normal speed so a corrupted UI state cannot stop the simulation forever.
 func (s *Simulator) SetSpeed(speed Speed) {
-	if speed < Paused || speed > Quadruple {
+	if speed < Paused || speed > Octuple {
 		speed = Normal
 	}
 	s.speed = speed
