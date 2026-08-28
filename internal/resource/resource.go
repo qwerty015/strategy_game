@@ -18,6 +18,12 @@ const (
 	Log
 	Plank
 	StoneBlock
+
+	// Gold is currency, not a hauled good: no building produces or accepts
+	// it, and no serf ever carries it. It only ever changes by a direct
+	// Stockpile.Remove/Add at the moment a unit is hired -- see
+	// cmd/game's trySpendGold.
+	Gold
 )
 
 var typeNames = map[Type]string{
@@ -31,6 +37,7 @@ var typeNames = map[Type]string{
 	Log:        "log",
 	Plank:      "plank",
 	StoneBlock: "stone_block",
+	Gold:       "gold",
 }
 
 var namesToType = func() map[string]Type {
@@ -75,7 +82,7 @@ func (t *Type) UnmarshalText(data []byte) error {
 // are intentionally used for buffers, but UI and service logic must not
 // change order from one frame to the next.
 func AllTypes() []Type {
-	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log, Plank, StoneBlock}
+	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log, Plank, StoneBlock, Gold}
 }
 
 // FoodTypes returns every resource that can feed a unit in a Tavern. The

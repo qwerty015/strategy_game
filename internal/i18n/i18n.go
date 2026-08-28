@@ -104,6 +104,7 @@ type Catalog struct {
 
 	Help                  string
 	CantBuildHere         string
+	NotEnoughGold         string
 	SaveFailedPrefix      string
 	LoadFailedPrefix      string
 	Saved                 string

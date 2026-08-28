@@ -441,6 +441,7 @@ func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 	}
+	game.stock.Add(resource.Gold, 10) // enough to hire a couple of units
 
 	options := game.hireOptions()
 	farmer := findHireOption(t, options, ui.HireFarmer)
@@ -470,6 +471,67 @@ func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
 	game.hireFromTab(ui.HireFarmer)
 	if got := len(game.vills.Villagers); got != 1 {
 		t.Fatalf("villagers after a second hire attempt = %d, want still 1 (no vacant Farm)", got)
+	}
+}
+
+// TestHireSerfSpendsGoldAndFailsWhenBroke covers "создание любого юнита -1
+// золото": hiring a serf must deduct exactly one Gold, and must refuse
+// (leaving the stockpile and roster untouched) once the town is broke.
+func TestHireSerfSpendsGoldAndFailsWhenBroke(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	game := &Game{
+		buildings: []*building.Building{warehouse},
+		stock:     resource.NewStockpile(0),
+		pop:       &economy.Population{},
+		logi:      logistics.NewController(warehouse, 0),
+		vills:     villagers.NewController(),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
+	}
+	game.stock.Add(resource.Gold, 1)
+
+	game.hireSerf()
+	if got := len(game.logi.Serfs); got != 1 {
+		t.Fatalf("serfs after hiring with 1 gold = %d, want 1", got)
+	}
+	if got := game.stock.Amount(resource.Gold); got != 0 {
+		t.Fatalf("gold after hiring = %d, want 0", got)
+	}
+
+	game.hireSerf()
+	if got := len(game.logi.Serfs); got != 1 {
+		t.Fatalf("serfs after hiring while broke = %d, want still 1 (hire must fail, not go into debt)", got)
+	}
+	if game.statusMsg == "" {
+		t.Fatal("hiring while broke left statusMsg empty, want a message explaining why it failed")
+	}
+}
+
+// TestFinishConstructionDoesNotAutoSpawnAWorker covers "юнита юзер создает
+// отдельно за золото": a building completing construction must NOT get a
+// resident automatically -- it stays empty until the player pays to hire
+// someone into it, exactly like a workplace whose resident died.
+func TestFinishConstructionDoesNotAutoSpawnAWorker(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	hut := building.NewConstructionSite(building.LumberjackHut, 5, 0)
+	game := &Game{
+		buildings: []*building.Building{warehouse, hut},
+		stock:     resource.NewStockpile(0),
+		pop:       &economy.Population{},
+		logi:      logistics.NewController(warehouse, 0),
+		vills:     villagers.NewController(),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
+	}
+
+	game.finishConstruction(hut)
+
+	if got := len(game.jacks.Lumberjacks); got != 0 {
+		t.Fatalf("lumberjacks after finishConstruction = %d, want 0 (no auto-spawn -- must be hired separately)", got)
 	}
 }
 

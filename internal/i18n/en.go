@@ -23,6 +23,7 @@ func init() {
 			resource.Log:        "Log",
 			resource.Plank:      "Plank",
 			resource.StoneBlock: "Stone Block",
+			resource.Gold:       "Gold",
 		},
 		BuildingName: map[building.Kind]string{
 			building.Farm:              "Farm",
@@ -117,6 +118,7 @@ func init() {
 
 		Help:                  "Arrows/Middle drag: pan | Wheel +/-: zoom | 1-0/Q: select | Click: place/select | H: hire serf | Delete: remove | S/L: save/load | Esc: quit",
 		CantBuildHere:         "Can't build there",
+		NotEnoughGold:         "Not enough gold",
 		SaveFailedPrefix:      "Save failed: ",
 		LoadFailedPrefix:      "Load failed: ",
 		Saved:                 "Saved.",

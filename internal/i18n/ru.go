@@ -23,6 +23,7 @@ func init() {
 			resource.Log:        "Бревно",
 			resource.Plank:      "Доска",
 			resource.StoneBlock: "Каменный блок",
+			resource.Gold:       "Золото",
 		},
 		BuildingName: map[building.Kind]string{
 			building.Farm:              "Ферма",
@@ -117,6 +118,7 @@ func init() {
 
 		Help:                  "Стрелки/СКМ: камера | Колесо +/-: масштаб | 1-0/Q: выбор | Клик: построить/выбрать | H: нанять слугу | Delete: удалить | S/L: сохранение/загрузка | Esc: выход",
 		CantBuildHere:         "Здесь нельзя строить",
+		NotEnoughGold:         "Не хватает золота",
 		SaveFailedPrefix:      "Не удалось сохранить: ",
 		LoadFailedPrefix:      "Не удалось загрузить: ",
 		Saved:                 "Сохранено.",

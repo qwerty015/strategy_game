@@ -88,6 +88,14 @@ const (
 	startingFish    = 100
 	startingSausage = 100
 	startingWine    = 100
+	startingGold    = 100
+
+	// unitHireCost is spent from the shared stockpile every time the player
+	// creates a unit -- serf, any profession, or builder -- through the
+	// Hire tab or the H shortcut. A building finishing construction no
+	// longer spawns its resident automatically (see finishConstruction);
+	// staffing it is always this same paid action.
+	unitHireCost = 1
 )
 
 type treeRegrowth struct {
@@ -168,6 +176,7 @@ func NewGame() *Game {
 	stock.Add(resource.Fish, startingFish)
 	stock.Add(resource.Sausage, startingSausage)
 	stock.Add(resource.Wine, startingWine)
+	stock.Add(resource.Gold, startingGold)
 
 	layout := ui.NewLayout(screenWidth, screenHeight)
 	camera := render.NewCamera()
@@ -407,13 +416,17 @@ func (g *Game) unstaffedWorkerBuildings() map[*building.Building]bool {
 // hireOptions reports the current headcount, building-based limit, and
 // availability for every hireable unit kind, for the left panel's Hire tab.
 // Serfs are the only unlimited option; every profession is capped at one
-// worker per matching building (Spawn/HasHome already enforce this
-// one-to-one rule -- this just surfaces it to the player before they click).
+// worker per matching *finished* building (Spawn/HasHome already enforce
+// the one-to-one rule -- this just surfaces it to the player before they
+// click). A building still under construction doesn't count: it has no
+// resident to hire into yet, see finishConstruction. Every card is also
+// gated on canAffordHire, so a card the player can't currently pay for
+// reads as unavailable even when a vacancy exists.
 func (g *Game) hireOptions() []ui.HireOption {
 	countBuildings := func(kind building.Kind) int {
 		n := 0
 		for _, b := range g.buildings {
-			if b.Kind == kind {
+			if b.Kind == kind && b.ConstructionStage == building.ConstructionNone {
 				n++
 			}
 		}
@@ -428,12 +441,13 @@ func (g *Game) hireOptions() []ui.HireOption {
 		}
 		return n
 	}
+	afford := g.canAffordHire()
 	limited := func(kind ui.HireKind, bKind building.Kind, current int) ui.HireOption {
 		limit := countBuildings(bKind)
-		return ui.HireOption{Kind: kind, Current: current, Limit: limit, Available: current < limit}
+		return ui.HireOption{Kind: kind, Current: current, Limit: limit, Available: current < limit && afford}
 	}
 	return []ui.HireOption{
-		{Kind: ui.HireSerf, Current: len(g.logi.Serfs), Limit: 0, Available: true},
+		{Kind: ui.HireSerf, Current: len(g.logi.Serfs), Limit: 0, Available: afford},
 		limited(ui.HireFarmer, building.Farm, countProfession(villagers.Farmer)),
 		limited(ui.HireBaker, building.Bakery, countProfession(villagers.Baker)),
 		limited(ui.HireWinemaker, building.Winery, countProfession(villagers.Winemaker)),
@@ -443,15 +457,15 @@ func (g *Game) hireOptions() []ui.HireOption {
 		limited(ui.HireButcher, building.MeatWorkshop, countProfession(villagers.Butcher)),
 		limited(ui.HireCarpenter, building.CarpentryWorkshop, countProfession(villagers.Carpenter)),
 		limited(ui.HireQuarryman, building.QuarryHut, len(g.quarry.Quarrymen)),
-		{Kind: ui.HireBuilder, Current: len(g.builders.Builders), Limit: maxBuilders, Available: len(g.builders.Builders) < maxBuilders},
+		{Kind: ui.HireBuilder, Current: len(g.builders.Builders), Limit: maxBuilders, Available: len(g.builders.Builders) < maxBuilders && afford},
 	}
 }
 
 // hireFromTab executes a click on an available Hire-tab card. It finds the
-// first matching building without a resident and assigns a fresh worker to
-// it -- the same one-worker-per-building placement spawnWorkersFor uses when
-// a building is first built, so a hired replacement behaves identically to
-// an original resident.
+// first matching finished building without a resident, spends unitHireCost,
+// and assigns a fresh worker to it -- the only way a building ever gets its
+// resident now (see finishConstruction), so a freshly built empty workplace
+// and one whose worker died look identical to this search.
 func (g *Game) hireFromTab(kind ui.HireKind) {
 	switch kind {
 	case ui.HireSerf:
@@ -470,7 +484,10 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 		g.hireVillagerInto(villagers.Carpenter, building.CarpentryWorkshop)
 	case ui.HireLumberjack:
 		for _, b := range g.buildings {
-			if b.Kind == building.LumberjackHut && !g.jacks.HasHome(b) {
+			if b.Kind == building.LumberjackHut && b.ConstructionStage == building.ConstructionNone && !g.jacks.HasHome(b) {
+				if !g.trySpendGold() {
+					return
+				}
 				g.jacks.Spawn(b)
 				g.refreshPopulation()
 				g.statusMsg = ""
@@ -479,7 +496,10 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 		}
 	case ui.HireFisherman:
 		for _, b := range g.buildings {
-			if b.Kind == building.FisherHut && !g.fishers.HasHome(b) {
+			if b.Kind == building.FisherHut && b.ConstructionStage == building.ConstructionNone && !g.fishers.HasHome(b) {
+				if !g.trySpendGold() {
+					return
+				}
 				g.fishers.Spawn(b)
 				g.refreshPopulation()
 				g.statusMsg = ""
@@ -488,7 +508,10 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 		}
 	case ui.HireQuarryman:
 		for _, b := range g.buildings {
-			if b.Kind == building.QuarryHut && !g.quarry.HasHome(b) {
+			if b.Kind == building.QuarryHut && b.ConstructionStage == building.ConstructionNone && !g.quarry.HasHome(b) {
+				if !g.trySpendGold() {
+					return
+				}
 				g.quarry.Spawn(b)
 				g.refreshPopulation()
 				g.statusMsg = ""
@@ -497,6 +520,9 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 		}
 	case ui.HireBuilder:
 		if len(g.builders.Builders) < maxBuilders {
+			if !g.trySpendGold() {
+				return
+			}
 			g.builders.Hire(g.logi.Warehouse)
 			g.refreshPopulation()
 			g.statusMsg = ""
@@ -506,7 +532,10 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 
 func (g *Game) hireVillagerInto(profession villagers.Profession, kind building.Kind) {
 	for _, b := range g.buildings {
-		if b.Kind == kind && !g.vills.HasHome(b) {
+		if b.Kind == kind && b.ConstructionStage == building.ConstructionNone && !g.vills.HasHome(b) {
+			if !g.trySpendGold() {
+				return
+			}
 			g.vills.Spawn(profession, b)
 			g.refreshPopulation()
 			g.statusMsg = ""
@@ -712,7 +741,29 @@ func (g *Game) handleUnitActions() {
 	}
 }
 
+// canAffordHire reports whether the stockpile can currently cover one more
+// unitHireCost. Used both to gate the hire actions themselves and to grey
+// out a Hire-tab card before the player even clicks it (see hireOptions).
+func (g *Game) canAffordHire() bool {
+	return g.stock.Amount(resource.Gold) >= unitHireCost
+}
+
+// trySpendGold deducts unitHireCost from the stockpile and reports success.
+// On failure it leaves the stockpile untouched and sets a status message,
+// so every hire call site can just `if !g.trySpendGold() { return }` before
+// actually creating the unit.
+func (g *Game) trySpendGold() bool {
+	if !g.stock.Remove(resource.Gold, unitHireCost) {
+		g.statusMsg = i18n.T().NotEnoughGold
+		return false
+	}
+	return true
+}
+
 func (g *Game) hireSerf() {
+	if !g.trySpendGold() {
+		return
+	}
 	g.logi.Hire()
 	g.refreshPopulation()
 	g.statusMsg = ""
@@ -960,7 +1011,11 @@ func (g *Game) buildingConnected(b *building.Building) bool {
 
 // spawnWorkersFor gives each worker building its physical resident. Other
 // building kinds don't get a resident: serfs remain a town-wide logistics
-// pool, while a lumberjack is tied to one Lumberjack Hut.
+// pool, while a lumberjack is tied to one Lumberjack Hut. The only caller
+// left is the pre-unit-persistence save migration path in loadGame: a
+// building finishing construction no longer auto-spawns its worker (see
+// finishConstruction), and neither does NewGame's starting Warehouse/Road
+// (neither is RequiresWorker) -- staffing is always a separate, paid hire.
 func (g *Game) spawnWorkersFor(b *building.Building) {
 	switch b.Kind {
 	case building.Farm:
@@ -984,18 +1039,19 @@ func (g *Game) spawnWorkersFor(b *building.Building) {
 	}
 }
 
-// finishConstruction reacts to builder.ConstructionComplete: a freshly
-// finished building gets exactly the same treatment a normally-placed one
-// always has -- its resident worker, and, for a Warehouse specifically,
-// registration as an additional logistics endpoint. Both were deliberately
-// deferred from placement time to this point (see handleMouse) so an
-// unfinished building never produces or acts as a warehouse before a
-// Builder has actually finished it.
+// finishConstruction reacts to builder.ConstructionComplete: a Warehouse
+// specifically is registered as an additional logistics endpoint, deferred
+// from placement time to this point (see handleMouse) so an unfinished
+// Warehouse never accepts deliveries before a Builder has actually finished
+// it. It deliberately does NOT spawn a resident worker: staffing a
+// finished building is always a separate, paid action through the Hire tab
+// (see hireVillagerInto and hireFromTab's per-profession cases) -- a
+// building completing construction leaves it staffed exactly like a
+// resident who just died, empty and waiting to be hired into.
 func (g *Game) finishConstruction(b *building.Building) {
 	if b.Kind == building.Warehouse {
 		g.logi.AddWarehouse(b)
 	}
-	g.spawnWorkersFor(b)
 	g.statusMsg = ""
 }
 
