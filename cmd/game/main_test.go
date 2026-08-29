@@ -55,7 +55,7 @@ func TestSeedStoneDepositsSplitsAcrossMultipleRegions(t *testing.T) {
 	buildings := seedStoneDeposits(grid, nil, 0x1b873593, gridPoint{}, 0)
 
 	area := grid.Width * grid.Height
-	minCells, maxCells := scaledDepositCells(area, 5), scaledDepositCells(area, 10)
+	minCells, maxCells := scaledStoneDepositCells(area, 5), scaledStoneDepositCells(area, 10)
 	if len(buildings) < minCells || len(buildings) > maxCells {
 		t.Fatalf("placed %d stone-deposit cells, want between %d and %d (reduced 5-10%% target of %d)", len(buildings), minCells, maxCells, area)
 	}
@@ -1082,4 +1082,14 @@ func findHireOption(t *testing.T, options []ui.HireOption, kind ui.HireKind) ui.
 	}
 	t.Fatalf("no hire option for kind %v", kind)
 	return ui.HireOption{}
+}
+
+func TestScaledDepositCellsUseResourceSpecificDensity(t *testing.T) {
+	const area, percent = 10000, 10
+	if got, want := scaledStoneDepositCells(area, percent), 400; got != want {
+		t.Fatalf("stone cells=%d, want %d (40%% of prior density)", got, want)
+	}
+	if got, want := scaledDepositCells(area, percent), 700; got != want {
+		t.Fatalf("ore cells=%d, want %d (70%% of prior density)", got, want)
+	}
 }

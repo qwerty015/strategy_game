@@ -99,9 +99,11 @@ const (
 	ironOreMinPercent, ironOreMaxPercent = 2, 4
 	goldOreMinPercent, goldOreMaxPercent = 1, 2
 
-	// depositGenerationPercent applies the same 30% reduction to every
-	// non-regrowing map deposit while preserving each resource's balance.
-	depositGenerationPercent = 70
+	// Ore deposits keep 70% of their former density. Stone is intentionally
+	// scarcer (40% of the former density), so quarry placement remains a real
+	// expansion decision instead of blanketing a fresh map.
+	oreDepositGenerationPercent   = 70
+	stoneDepositGenerationPercent = 40
 
 	// seaMinPercent/seaMaxPercent bound the one sea's share of the map's
 	// area. Per the roadmap ("водоёмы генерируются у края карты, а не где
@@ -2447,10 +2449,17 @@ func treeScatterScore(x, y int) uint32 {
 	return uint32(x)*73856093 ^ uint32(y)*19349663 ^ 0x85ebca6b
 }
 
-// scaledDepositCells reduces the original percentage target by 30%. Kept in
-// one helper so stone, coal and both ores always scale identically.
+// scaledDepositCells keeps coal and ores at 70% of their former density on
+// new maps. Stone deliberately uses the separate helper below.
 func scaledDepositCells(area, percent int) int {
-	return area * percent * depositGenerationPercent / 10000
+	return area * percent * oreDepositGenerationPercent / 10000
+}
+
+// scaledStoneDepositCells leaves 40% of the former stone-deposit count. The
+// value only participates in fresh generation (and old-save migration that
+// had no seeded stone yet); it never removes deposits from an existing map.
+func scaledStoneDepositCells(area, percent int) int {
+	return area * percent * stoneDepositGenerationPercent / 10000
 }
 
 // seedStoneDeposits splits a random 3.5-7% of the map's area (per the game
@@ -2466,7 +2475,7 @@ func scaledDepositCells(area, percent int) int {
 func seedStoneDeposits(grid *world.Grid, buildings []*building.Building, seed uint32, avoid gridPoint, minDistance int) []*building.Building {
 	area := grid.Width * grid.Height
 	percent := 5 + int(seed%6) // 5..10 inclusive, total share of the map
-	total := scaledDepositCells(area, percent)
+	total := scaledStoneDepositCells(area, percent)
 	if total <= 0 {
 		return buildings
 	}
@@ -3244,6 +3253,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawBuilders(screen, g.builders.Builders, g.camera)
 	render.DrawAmbientSkyLife(screen, g.grid, g.camera)
 	render.DrawMiners(screen, g.miners.Miners, g.camera)
+	render.DrawAtmosphericOverlay(screen, g.grid, g.camera)
 
 	mx, my := ebiten.CursorPosition()
 	tx, ty := g.camera.ScreenToTile(mx, my)

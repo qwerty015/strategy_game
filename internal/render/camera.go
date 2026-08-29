@@ -52,6 +52,12 @@ func (c *Camera) SetViewport(x, y, width, height int) {
 	c.viewportWidth, c.viewportHeight = width, height
 }
 
+// Viewport returns the on-screen rectangle owned by the map. Ambient overlays
+// use it instead of the whole window, so weather can never tint UI panels.
+func (c *Camera) Viewport() (x, y, width, height int) {
+	return c.viewportX, c.viewportY, c.viewportWidth, c.viewportHeight
+}
+
 // TilePixels is the current on-screen size of one world tile.
 func (c *Camera) TilePixels() float64 {
 	scale := c.Scale

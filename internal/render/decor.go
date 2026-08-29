@@ -44,6 +44,7 @@ func drawGroundDecor(screen *ebiten.Image, g *world.Grid, terrain world.TerrainT
 		if shoreEdge, ok := findShoreEdge(g, tx, ty, world.Grass); ok {
 			drawReeds(screen, sx, sy, tx, ty, tilePixels, shoreEdge)
 		}
+		drawWaterGlint(screen, sx, sy, tx, ty, tilePixels)
 		drawWaterSplash(screen, sx, sy, tx, ty, tilePixels)
 	}
 }
@@ -232,6 +233,22 @@ func drawVegetationTuft(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePi
 		}
 		vector.StrokeLine(screen, cx+offset*float32(tilePixels), cy, cx+offset*float32(tilePixels)+lean-width/2, cy-height, width, color, true)
 	}
+}
+
+// drawWaterGlint adds a brief, muted specular streak between fish splashes.
+// It deliberately avoids shore-only logic: a glint belongs to the open water
+// surface and stays sparse even on very large lakes.
+func drawWaterGlint(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePixels float64) {
+	hash := tileHash(tx, ty, 3266489917, 374761393)
+	phase := (animFrame/8 + int(hash%90)) % 90
+	if phase > 5 {
+		return
+	}
+	cx := float32(sx + tilePixels*(0.24+0.50*float64((hash>>9)&0xff)/255))
+	cy := float32(sy + tilePixels*(0.30+0.38*float64((hash>>18)&0xff)/255))
+	length := float32(tilePixels * (0.085 + 0.028*float64(phase)))
+	alpha := uint8(170 - phase*18)
+	vector.StrokeLine(screen, cx-length, cy, cx+length, cy, maxPixel(tilePixels*0.025), color.RGBA{R: 184, G: 214, B: 204, A: alpha}, true)
 }
 
 // drawWaterSplash creates a very rare, quiet ripple on open water. It is

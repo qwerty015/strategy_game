@@ -239,6 +239,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			drawStandingAtScale(screen, assets.FisherHutFrames[frame], sx, sy, buildingHeight, tilePixels)
 		}
 
+		drawProductionWorkEffect(screen, b.Kind, b.ProgressTicks, sx, sy, tilePixels)
 		if bt.Recipe.TicksToProduce > 0 {
 			progress := float32(b.ProgressTicks) / float32(bt.Recipe.TicksToProduce)
 			if progress > 1 {

@@ -104,10 +104,13 @@ var (
 	Builder    = staticFrames("generated/unit_builder.png")
 	Miner      = staticFrames("generated/unit_miner.png")
 	Smelter    = staticFrames("generated/unit_smelter.png")
-	// HareFrames is a transparent three-frame running loop for the ambient
-	// visual layer. Hares are not simulation units and are never saved.
-	HareFrames  = mustLoadAtlasFrames("generated/ambient_hare_run.png")
-	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
+	// HareFrames and ButterflyFrames are transparent three-frame ambient loops.
+	// They belong only to the visual layer and are never simulation units or
+	// save-file data.
+	HareFrames      = mustLoadAtlasFrames("generated/ambient_hare_run.png")
+	ButterflyFrames = mustLoadAtlasFrames("generated/ambient_butterfly_flap.png")
+	FoxFrames       = mustLoadAtlasFrames("generated/ambient_fox_trot.png")
+	FishingBoat     = mustLoad("generated/unit_fishing_boat.png")
 )
 
 func mustDecode(name string) image.Image {

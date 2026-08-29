@@ -189,3 +189,33 @@ func drawBuilderWorkCue(screen *ebiten.Image, sx, sy, tilePixels float64, finish
 	vector.FillRect(screen, float32(x), float32(y), float32(5*scale), float32(maxPixel(scale)), cueColor, false)
 	vector.FillCircle(screen, float32(x+4*scale), float32(y+2*scale), float32(maxPixel(scale)), cueColor, false)
 }
+
+// drawProductionWorkEffect adds sparse dust, sawdust or sparks only while a
+// compatible building has actual production progress. It is visual feedback,
+// not a worker, and draws at most three tiny particles per visible building.
+func drawProductionWorkEffect(screen *ebiten.Image, kind building.Kind, progress int, sx, sy, tilePixels float64) {
+	if progress <= 0 {
+		return
+	}
+	var particle color.RGBA
+	switch kind {
+	case building.CarpentryWorkshop:
+		particle = color.RGBA{R: 231, G: 195, B: 113, A: 188}
+	case building.MeatWorkshop:
+		particle = color.RGBA{R: 219, G: 155, B: 88, A: 150}
+	case building.QuarryHut, building.MinerHut:
+		particle = color.RGBA{R: 182, G: 177, B: 160, A: 176}
+	case building.Smeltery:
+		particle = color.RGBA{R: 255, G: 170, B: 64, A: 205}
+	default:
+		return
+	}
+	scale := tilePixels / TileSize
+	phase := (animFrame / 5) % 4
+	for index := 0; index < 4; index++ {
+		x := sx + float64(9+(index*6+phase*4)%19)*scale
+		y := sy + float64(15-(index+phase)%4*3)*scale
+		size := maxPixel(scale) * 1.65
+		vector.FillRect(screen, float32(x)-size/2, float32(y)-size/2, size, size, particle, false)
+	}
+}

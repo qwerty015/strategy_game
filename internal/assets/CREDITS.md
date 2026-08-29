@@ -52,3 +52,7 @@ are visually distinct from the quarry and carpentry chain.
 
 
 building_warehouse_v2.png was generated with the built-in OpenAI image generation tool on 2026-08-29 as a distinct warehouse sprite for this prototype. It is original project art and does not derive from a specific commercial game asset.
+
+`ambient_butterfly_flap.png` was generated with the built-in OpenAI image generation tool on 2026-08-29 as a three-frame transparent butterfly atlas for the cosmetic ambient layer. It is original project art and does not derive from a specific commercial game asset.
+
+mbient_fox_trot.png was generated with the built-in OpenAI image generation tool on 2026-08-29 as a three-frame transparent fox atlas for the cosmetic ambient layer. It is original project art and does not derive from a specific commercial game asset.
