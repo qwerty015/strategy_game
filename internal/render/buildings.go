@@ -240,14 +240,6 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		}
 
 		drawProductionWorkEffect(screen, b.Kind, b.ProgressTicks, sx, sy, tilePixels)
-		// A staffed workplace shows a lamplit window at night ("тип они
-		// несут лампу" -- the user's request). An empty (unstaffed)
-		// building stays dark: nobody's there to light it.
-		if bt.RequiresWorker && !unstaffed[b] {
-			glowX := sx + float64(bt.Footprint)*tilePixels*0.5
-			glowY := sy + float64(bt.Footprint)*tilePixels*0.4
-			drawNightGlow(screen, glowX, glowY, tilePixels)
-		}
 		if bt.Recipe.TicksToProduce > 0 {
 			progress := float32(b.ProgressTicks) / float32(bt.Recipe.TicksToProduce)
 			if progress > 1 {

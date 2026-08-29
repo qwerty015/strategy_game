@@ -27,7 +27,6 @@ func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Ca
 			continue
 		}
 		sx, sy := cam.TileToScreen(f.X, f.Y)
-		drawNightGlow(screen, sx+tilePixels*0.5, sy+tilePixels*0.5, tilePixels)
 		bob := unitBob()
 		tint := color.Color(color.White)
 		if f.Starving {

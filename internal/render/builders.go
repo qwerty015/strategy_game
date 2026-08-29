@@ -23,7 +23,6 @@ func DrawBuilders(screen *ebiten.Image, builders []*builder.Builder, cam *Camera
 			continue
 		}
 		sx, sy := cam.TileToScreen(b.X, b.Y)
-		drawNightGlow(screen, sx+tilePixels*0.5, sy+tilePixels*0.5, tilePixels)
 		frame := (animFrame / 10) % len(assets.Builder)
 		bob := unitBob()
 		tint := color.Color(color.White)

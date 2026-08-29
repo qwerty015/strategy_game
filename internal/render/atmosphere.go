@@ -85,28 +85,17 @@ func drawAmbientDarkening(screen *ebiten.Image, viewX, viewY, viewWidth, viewHei
 	vector.FillRect(screen, float32(viewX), float32(viewY), float32(viewWidth), float32(viewHeight), color.RGBA{R: 66, G: 58, B: 45, A: uint8(alpha)}, false)
 }
 
-// drawNightGlow draws a small warm lamplight glow centered at the given
-// screen coordinates. Used for staffed buildings (see buildings.go) and
-// every mobile unit (see each profession's Draw* function) at night, per
-// the user's request ("подумай над свечением зданий и юнитов ночью, тип
-// они несут лампу"). A no-op outside the Night phase.
-func drawNightGlow(screen *ebiten.Image, cx, cy, tilePixels float64) {
-	if currentDayState().Phase != worldclock.Night {
-		return
-	}
-	x, y := float32(cx), float32(cy)
-	// Three soft rings falling off from a dim amber core, instead of one
-	// bright, pale disc. Real bug the user caught ("слишком яркий, прям
-	// белый шар"): the old core (255,224,160 @ alpha 85, radius 0.22) was
-	// light and opaque enough to read as a solid near-white ball. The core
-	// here is smaller, dimmer and warmer (more orange, less white); the
-	// wider two rings replace that lost brightness as a softer spread
-	// around the unit instead of concentrating it at the center.
-	vector.FillCircle(screen, x, y, float32(tilePixels*0.85), color.RGBA{R: 255, G: 180, B: 90, A: 22}, true)
-	vector.FillCircle(screen, x, y, float32(tilePixels*0.5), color.RGBA{R: 255, G: 190, B: 100, A: 34}, true)
-	vector.FillCircle(screen, x, y, float32(tilePixels*0.16), color.RGBA{R: 255, G: 205, B: 130, A: 60}, true)
-}
-
+// Real bug the user caught, twice, in-game: a night lamplight glow used to
+// be drawn here (drawNightGlow) for both staffed buildings and every mobile
+// unit, per an earlier request ("подумай над свечением зданий и юнитов
+// ночью, тип они несут лампу"). Toning it down once (smaller, dimmer,
+// warmer core, wider soft outer rings) fixed nothing the user could see --
+// units still read as "тупо белые" (plain white), and once that was
+// dropped, buildings turned out to have the exact same problem at their
+// larger on-screen size. With no way to see the actual rendered result in
+// this environment, two blind tuning attempts in a row is the signal to
+// stop guessing rather than try a third: the whole effect was removed
+// instead, on both buildings and units.
 func atmosphericRain() (raining bool, phase int) {
 	phase = animFrame % atmosphereWeatherCycleFrames
 	return phase >= atmosphereRainStartFrame && phase < atmosphereRainEndFrame, phase
