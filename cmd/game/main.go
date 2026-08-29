@@ -245,6 +245,14 @@ type Game struct {
 	autosaveTicks int
 
 	statusMsg string
+
+	// screen is screenPlay during a running settlement. The other values use
+	// the same renderer for the title presentation, save picker and manual,
+	// but deliberately do not advance the simulation.
+	screen     appScreen
+	titleFrame int
+	helpPages  []helpPage
+	helpPage   int
 }
 
 // autosaveIntervalTicks is how often (in simulation ticks, not render
@@ -257,9 +265,15 @@ type Game struct {
 // else in the simulation is clocked to the wall either.
 const autosaveIntervalTicks = 2000
 
+// NewGame creates a standard playable settlement. The separate sized factory
+// below is also used by the non-simulating title presentation map.
 func NewGame() *Game {
+	return newGameWithSize(mapWidth, mapHeight)
+}
+
+func newGameWithSize(width, height int) *Game {
 	mapSeed := newMapSeed()
-	grid := generateGrid(mapWidth, mapHeight, mapSeed)
+	grid := generateGrid(width, height, mapSeed)
 
 	warehousePoint, ok := findWarehouseSpot(grid, mapSeed^0xc2b2ae35)
 	if !ok {
@@ -328,6 +342,9 @@ func NewGame() *Game {
 func (g *Game) Update() error {
 	if width, height := ebiten.WindowSize(); width > 0 && height > 0 {
 		g.resizeLayout(width, height)
+	}
+	if g.screen != screenPlay {
+		return g.updateFrontScreen()
 	}
 	g.handleCameraPan()
 	g.handleCameraZoom()
@@ -475,6 +492,10 @@ func (g *Game) resizeLayout(width, height int) {
 		return
 	}
 	g.layout = ui.NewLayout(width, height)
+	if g.screen != screenPlay {
+		g.camera.SetViewport(0, 0, width, height)
+		return
+	}
 	mapRect := g.layout.MapRect()
 	g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
 	g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
@@ -3220,6 +3241,10 @@ func restoreTreeRegrowth(states []save.TreeRegrowthState) []treeRegrowth {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
+	if g.screen != screenPlay {
+		g.drawFrontScreen(screen)
+		return
+	}
 	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
@@ -3308,7 +3333,7 @@ func main() {
 	ebiten.SetWindowSize(screenWidth, screenHeight)
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetWindowTitle(i18n.T().WindowTitle)
-	if err := ebiten.RunGame(NewGame()); err != nil {
+	if err := ebiten.RunGame(NewApplication()); err != nil {
 		log.Fatal(err)
 	}
 }

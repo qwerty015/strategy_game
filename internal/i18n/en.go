@@ -7,7 +7,7 @@ import (
 
 func init() {
 	register(EN, Catalog{
-		WindowTitle: "Town Builder",
+		WindowTitle: "Lands of Craft",
 
 		Population:   "Population",
 		DeathsLabel:  "Deaths",

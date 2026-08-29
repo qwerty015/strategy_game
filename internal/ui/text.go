@@ -29,6 +29,27 @@ var textOutlineColor = color.RGBA{R: 20, G: 15, B: 15, A: 255}
 // glyphs are never fractionally scaled: that was blurring their edges in both
 // side panels. A one-pixel dark outline supplies weight and contrast while
 // keeping every glyph aligned to the pixel grid.
+// DrawTitleText is a nearest-neighbour scaled, outlined heading for the
+// title screen and Markdown help. It shares the UI font, so Cyrillic remains
+// crisp rather than depending on a separate logo image.
+func DrawTitleText(screen *ebiten.Image, s string, x, y, scale float64) {
+	if scale <= 0 {
+		return
+	}
+	for _, offset := range [][2]float64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+		drawScaledTextColor(screen, s, x+offset[0]*scale, y+offset[1]*scale, scale, textOutlineColor)
+	}
+	drawScaledTextColor(screen, s, x, y, scale, color.White)
+}
+
+func drawScaledTextColor(screen *ebiten.Image, s string, x, y, scale float64, tint color.Color) {
+	op := &text.DrawOptions{}
+	op.GeoM.Scale(scale, scale)
+	op.GeoM.Translate(x, y)
+	op.ColorScale.ScaleWithColor(tint)
+	op.Blend = ebiten.BlendSourceOver
+	text.Draw(screen, s, textFace, op)
+}
 func DrawMenuText(screen *ebiten.Image, s string, x, y float64) {
 	drawOutlinedText(screen, s, x, y)
 }
