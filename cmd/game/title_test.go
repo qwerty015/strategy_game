@@ -58,6 +58,17 @@ func TestTitleActionAt(t *testing.T) {
 	}
 }
 
+func TestFrontScreenDimensionsPreferRenderedFullscreenSize(t *testing.T) {
+	game := NewGame()
+	game.frontWidth = 1920
+	game.frontHeight = 1080
+
+	width, height := game.frontScreenDimensions()
+	if width != 1920 || height != 1080 {
+		t.Fatalf("front-screen dimensions = %dx%d, want rendered 1920x1080", width, height)
+	}
+}
+
 func TestTitleShowcaseIsSelfContainedAndCoversAllDistricts(t *testing.T) {
 	game := &Game{}
 	game.populateTitleTown()

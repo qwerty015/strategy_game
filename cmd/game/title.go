@@ -45,6 +45,7 @@ const (
 	titleActionNewGame titleAction = iota
 	titleActionLoad
 	titleActionHelp
+	titleActionExit
 )
 
 type titleCopy struct {
@@ -146,14 +147,16 @@ func cleanMarkdown(value string) string {
 
 func (g *Game) updateFrontScreen() error {
 	g.titleFrame++
-	g.camera.SetViewport(0, 0, g.layout.Width, g.layout.Height)
+	frontWidth, frontHeight := g.frontScreenDimensions()
+	g.camera.SetViewport(0, 0, frontWidth, frontHeight)
 	g.advanceTitleCamera()
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		if g.screen == screenTitle {
-			return ebiten.Termination
+		// The title screen must never close the application accidentally.
+		// Esc only returns from its secondary screens; explicit Exit is a button.
+		if g.screen != screenTitle {
+			g.screen = screenTitle
 		}
-		g.screen = screenTitle
 		return nil
 	}
 	if g.screen == screenHelp {
@@ -170,7 +173,7 @@ func (g *Game) updateFrontScreen() error {
 	mx, my := ebiten.CursorPosition()
 	switch g.screen {
 	case screenTitle:
-		switch action, ok := titleActionAt(mx, my, g.layout.Width, g.layout.Height); {
+		switch action, ok := titleActionAt(mx, my, frontWidth, frontHeight); {
 		case !ok:
 			return nil
 		case action == titleActionNewGame:
@@ -181,13 +184,15 @@ func (g *Game) updateFrontScreen() error {
 		case action == titleActionHelp:
 			g.helpPage = 0
 			g.screen = screenHelp
+		case action == titleActionExit:
+			return ebiten.Termination
 		}
 	case screenLoad:
-		if image.Pt(mx, my).In(titleBackRect(g.layout.Width, g.layout.Height)) {
+		if image.Pt(mx, my).In(titleBackRect(frontWidth, frontHeight)) {
 			g.screen = screenTitle
 			return nil
 		}
-		if slot, ok := titleLoadSlotAt(mx, my, g.layout.Width, g.layout.Height, len(g.slotCache)); ok && g.slotCache[slot-1].Occupied {
+		if slot, ok := titleLoadSlotAt(mx, my, frontWidth, frontHeight, len(g.slotCache)); ok && g.slotCache[slot-1].Occupied {
 			if err := g.loadGame(slotPath(slot)); err == nil {
 				g.screen = screenPlay
 				g.statusMsg = i18n.T().Loaded
@@ -196,7 +201,7 @@ func (g *Game) updateFrontScreen() error {
 			}
 		}
 	case screenHelp:
-		back, previous, next := helpNavRects(g.layout.Width, g.layout.Height)
+		back, previous, next := helpNavRects(frontWidth, frontHeight)
 		point := image.Pt(mx, my)
 		switch {
 		case point.In(back):
@@ -210,6 +215,15 @@ func (g *Game) updateFrontScreen() error {
 	return nil
 }
 
+// frontScreenDimensions returns the actual dimensions last used to draw the
+// title UI. Ebiten can report a stale logical WindowSize in fullscreen, while
+// input coordinates are in the draw-buffer coordinate system.
+func (g *Game) frontScreenDimensions() (int, int) {
+	if g.frontWidth > 0 && g.frontHeight > 0 {
+		return g.frontWidth, g.frontHeight
+	}
+	return g.layout.Width, g.layout.Height
+}
 func (g *Game) advanceTitleCamera() {
 	if g.grid == nil || g.camera.Scale <= 0 {
 		return
@@ -415,6 +429,15 @@ func (g *Game) populateTitleTown() {
 type titlePoint struct{ x, y int }
 
 func (g *Game) drawFrontScreen(screen *ebiten.Image) {
+	// In fullscreen Ebiten's draw buffer can be wider than the last window-size
+	// value seen by Update. The title world owns every pixel, unlike gameplay's
+	// center map strip, so use the actual buffer dimensions here.
+	bounds := screen.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	g.frontWidth, g.frontHeight = width, height
+	g.camera.SetViewport(0, 0, width, height)
+	g.positionTitleCamera()
+
 	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
@@ -423,7 +446,7 @@ func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
 	render.DrawAmbientSkyLife(screen, g.grid, g.camera)
 	render.DrawAtmosphericOverlay(screen, g.grid, g.camera)
-	vector.FillRect(screen, 0, 0, float32(g.layout.Width), float32(g.layout.Height), color.RGBA{R: 19, G: 20, B: 23, A: 124}, false)
+	vector.FillRect(screen, 0, 0, float32(width), float32(height), color.RGBA{R: 19, G: 20, B: 23, A: 124}, false)
 
 	switch g.screen {
 	case screenLoad:
@@ -437,10 +460,11 @@ func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 
 func (g *Game) drawTitleScreen(screen *ebiten.Image) {
 	copy := activeTitleCopy()
-	width, height := g.layout.Width, g.layout.Height
+	bounds := screen.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
 	ui.DrawTitleText(screen, copy.title, 66, float64(height)*0.17, 4)
 	ui.DrawTitleText(screen, copy.subtitle, 70, float64(height)*0.17+42, 1.45)
-	for index, label := range []string{copy.newGame, copy.load, copy.help} {
+	for index, label := range []string{copy.newGame, copy.load, copy.help, i18n.T().ExitButton} {
 		r := titleButtonRects(width, height)[index]
 		drawTitleButton(screen, r, label, false)
 	}
@@ -448,7 +472,8 @@ func (g *Game) drawTitleScreen(screen *ebiten.Image) {
 
 func (g *Game) drawLoadScreen(screen *ebiten.Image) {
 	copy := activeTitleCopy()
-	width, height := g.layout.Width, g.layout.Height
+	bounds := screen.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
 	panel := image.Rect(width/2-230, height/2-205, width/2+230, height/2+205)
 	drawTitlePanel(screen, panel)
 	ui.DrawTitleText(screen, copy.loadTitle, float64(panel.Min.X+24), float64(panel.Min.Y+24), 2)
@@ -470,7 +495,8 @@ func (g *Game) drawLoadScreen(screen *ebiten.Image) {
 
 func (g *Game) drawHelpScreen(screen *ebiten.Image) {
 	copy := activeTitleCopy()
-	width, height := g.layout.Width, g.layout.Height
+	bounds := screen.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
 	panel := image.Rect(44, 34, width-44, height-34)
 	drawTitlePanel(screen, panel)
 	if len(g.helpPages) == 0 {
@@ -618,6 +644,7 @@ func titleButtonRects(width, height int) []image.Rectangle {
 		image.Rect(x, y, x+w, y+42),
 		image.Rect(x, y+52, x+w, y+94),
 		image.Rect(x, y+104, x+w, y+146),
+		image.Rect(x, y+156, x+w, y+198),
 	}
 }
 

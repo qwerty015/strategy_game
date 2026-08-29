@@ -250,6 +250,11 @@ type Game struct {
 
 	statusMsg string
 
+	// frontWidth/frontHeight are the actual draw-buffer size of the title UI.
+	// Fullscreen input must use these, not WindowSize's stale logical size.
+	frontWidth  int
+	frontHeight int
+
 	// paused freezes every simulation tick and routes all input to the Esc
 	// menu. pauseHelp is the menu's embedded Markdown manual subpage.
 	paused    bool
