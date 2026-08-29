@@ -267,6 +267,13 @@ type Game struct {
 	titleFrame int
 	helpPages  []helpPage
 	helpPage   int
+
+	// worldTicks is the game clock (see internal/worldclock): total
+	// simulation ticks elapsed, incremented once per tick inside the
+	// g.sim.Advance() loop in Update. Deliberately not part of save.GameState
+	// (same call as rain/clouds, see AGENTS.md) -- a loaded game simply
+	// resumes the day/night cycle from tick 0 rather than persisting it.
+	worldTicks int
 }
 
 // autosaveIntervalTicks is how often (in simulation ticks, not render
@@ -388,6 +395,7 @@ func (g *Game) Update() error {
 	}
 
 	for range g.sim.Advance() {
+		g.worldTicks++
 		for _, b := range g.buildings {
 			b.TickGrowth()
 		}
@@ -483,6 +491,8 @@ func (g *Game) Update() error {
 				g.finishConstruction(event.Building)
 			case builder.WorkerDied:
 				g.pop.Deaths++
+			case builder.WorkerDismissed:
+				g.pop.Removed++
 			}
 		}
 		for _, event := range minerEvents {
@@ -859,6 +869,10 @@ func (g *Game) handleCameraZoom() {
 }
 func (g *Game) handleMouse() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
+		mx, my := ebiten.CursorPosition()
+		if g.handleHireCardDismissRightClick(mx, my) {
+			return
+		}
 		g.buildMode = false
 		g.demolitionMode = false
 		g.leftPanning = false
@@ -874,6 +888,45 @@ func (g *Game) handleMouse() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		g.handleLeftClick(mx, my)
 	}
+}
+
+// handleHireCardDismissRightClick lets the player right-click the Serf or
+// Builder card in the Hire tab to dismiss one, the reverse of a left-click
+// there hiring one. Per the user's explicit request ("ПКМ по слуге в левом
+// меню во вкладке Юниты сокращает 1 слугу, ПКМ по строителю - сокращает
+// строителя"). Only Serf and Builder support this: every other profession
+// is tied 1:1 to a specific workplace building (see hireOptions), so
+// dismissing one of those from a flat headcount card wouldn't have an
+// unambiguous building to vacate -- removing the workplace itself, via the
+// inspector, is how those are let go.
+func (g *Game) handleHireCardDismissRightClick(mx, my int) bool {
+	if g.leftTab != ui.HireTab {
+		return false
+	}
+	options := g.hireOptions()
+	index, ok := g.layout.HireIndexAt(mx, my, len(options))
+	if !ok || index >= len(options) {
+		return false
+	}
+	switch options[index].Kind {
+	case ui.HireSerf:
+		if len(g.logi.Serfs) == 0 {
+			return true
+		}
+		if g.logi.RequestDismissal(g.logi.Serfs[0]) {
+			g.statusMsg = i18n.T().SerfDismissRequested
+		}
+		return true
+	case ui.HireBuilder:
+		if len(g.builders.Builders) == 0 {
+			return true
+		}
+		if g.builders.RequestDismissal(g.builders.Builders[0]) {
+			g.statusMsg = i18n.T().BuilderDismissRequested
+		}
+		return true
+	}
+	return false
 }
 
 // handleLeftMapDrag delays a map click until release. A short press remains a
@@ -915,6 +968,13 @@ func (g *Game) handleLeftMapDrag(mx, my int) bool {
 	return true
 }
 func (g *Game) handleLeftClick(mx, my int) {
+	// The minimap centers the camera on the clicked point instead of
+	// selecting anything -- checked first so it always wins over whatever
+	// the inspector happens to show underneath it.
+	if worldX, worldY, ok := render.MinimapWorldPoint(g.grid, g.layout.MinimapRect(), mx, my); ok {
+		g.camera.CenterOn(worldX, worldY, g.grid.Width, g.grid.Height)
+		return
+	}
 	if tab, ok := g.layout.MenuTabAt(mx, my); ok {
 		g.leftTab = tab
 		g.buildMode = false
@@ -3232,6 +3292,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if !g.paused {
 		render.Tick()
 	}
+	render.SetWorldTicks(g.worldTicks)
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
 	// visibleConnectivity feeds both the building tint below and the
@@ -3299,6 +3360,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts())
 	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog)
+	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
 
 	if g.statusMsg != "" {
 		ui.DrawText(screen, g.statusMsg, float64(g.layout.LeftWidth+12), 10)

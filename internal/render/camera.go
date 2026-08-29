@@ -138,6 +138,20 @@ func (c *Camera) Pan(dx, dy float64, gridWidth, gridHeight, screenWidth, screenH
 	c.clampWithViewport(gridWidth, gridHeight, screenWidth, screenHeight)
 }
 
+// CenterOn moves the camera so world pixel (worldX, worldY) lands in the
+// middle of the current viewport, then clamps exactly like Pan so a point
+// near the map's edge doesn't pull the viewport past it. Used by the
+// minimap: clicking a point there should show that point in the center of
+// the screen (see cmd/game's minimap click handling).
+func (c *Camera) CenterOn(worldX, worldY float64, gridWidth, gridHeight int) {
+	if c.Scale <= 0 {
+		c.Scale = 1
+	}
+	c.X = worldX - float64(c.viewportWidth)/(2*c.Scale)
+	c.Y = worldY - float64(c.viewportHeight)/(2*c.Scale)
+	c.clamp(gridWidth, gridHeight)
+}
+
 func (c *Camera) clamp(gridWidth, gridHeight int) {
 	c.clampWithViewport(gridWidth, gridHeight, c.viewportWidth, c.viewportHeight)
 }

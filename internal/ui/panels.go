@@ -376,7 +376,7 @@ func drawRemoveButton(screen *ebiten.Image, layout Layout, selection Selection, 
 // identical geometry, so the two can never drift apart.
 func drawPriorityControl(screen *ebiten.Image, layout Layout, current int) {
 	r := layout.RightPanel()
-	rowY := r.Max.Y - priorityRowHeight - priorityBottomGap
+	rowY := layout.rightPanelUsableBottom() - priorityRowHeight - priorityBottomGap
 	startX := r.Min.X + priorityMargin
 	segW := (r.Dx() - 2*priorityMargin) / 5
 

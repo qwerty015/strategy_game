@@ -110,6 +110,7 @@ type Catalog struct {
 	ConfirmRemovalButton        string
 	Deleted                     string
 	SerfDismissRequested        string
+	BuilderDismissRequested     string
 	CannotDeleteWarehouse       string
 	CannotDeleteTree            string
 	CannotDeleteFish            string

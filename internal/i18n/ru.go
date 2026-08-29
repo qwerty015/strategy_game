@@ -133,6 +133,7 @@ func init() {
 		ConfirmRemovalButton:        "Удалить",
 		Deleted:                     "Удалено.",
 		SerfDismissRequested:        "Слуга завершит рейс и уйдёт.",
+		BuilderDismissRequested:     "Строитель закончит текущую стройку и уйдёт.",
 		CannotDeleteWarehouse:       "Нельзя удалить последний склад",
 		CannotDeleteTree:            "Дерево пока нельзя убрать",
 		CannotDeleteFish:            "Рыбу нельзя убрать вручную",

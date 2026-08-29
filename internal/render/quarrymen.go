@@ -29,6 +29,7 @@ func DrawQuarrymen(screen *ebiten.Image, quarrymen []*quarry.Quarryman, cam *Cam
 		}
 
 		sx, sy := cam.TileToScreen(q.X, q.Y)
+		drawNightGlow(screen, sx+tilePixels*0.5, sy+tilePixels*0.5, tilePixels)
 		frame := (animFrame / 10) % len(assets.Quarryman)
 		bob := unitBob()
 		tint := color.Color(color.White)

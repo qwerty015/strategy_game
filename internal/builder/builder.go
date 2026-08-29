@@ -50,6 +50,7 @@ const (
 	// freshly built building always has.
 	ConstructionComplete EventKind = iota
 	WorkerDied
+	WorkerDismissed
 )
 
 // Event is returned after a worker finishes a world interaction.
@@ -79,6 +80,18 @@ type Builder struct {
 	// stocked Tavern. The worker keeps performing the current work loop so a
 	// missing Tavern does not deadlock construction.
 	Starving bool
+
+	// dismissing mirrors logistics.Serf's field of the same name: set by
+	// RequestDismissal, the builder finishes whatever site he's currently
+	// working before leaving, exactly like a serf finishes an in-progress
+	// haul first.
+	dismissing bool
+}
+
+// Dismissing reports whether the builder will leave town after finishing
+// his current site (see RequestDismissal).
+func (b *Builder) Dismissing() bool {
+	return b.dismissing
 }
 
 // Controller owns every builder in the settlement.
@@ -161,6 +174,20 @@ func (c *Controller) Restore(warehouse *building.Building, x, y, hungerTicks int
 
 	c.Builders = append(c.Builders, b)
 	return b
+}
+
+// RequestDismissal marks a live builder to leave once idle -- construction
+// in progress is finished first, mirroring logistics.Controller's method of
+// the same name for a Serf. Returns false for a stale pointer, which keeps
+// UI actions harmless after a builder was already removed.
+func (c *Controller) RequestDismissal(b *Builder) bool {
+	for _, candidate := range c.Builders {
+		if candidate == b {
+			candidate.dismissing = true
+			return true
+		}
+	}
+	return false
 }
 
 // RemoveWarehouse re-anchors every builder whose Warehouse is about to be
@@ -273,6 +300,13 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 		b.hungerTick++
 		if hunger.Dead(b.hungerTick) {
 			events = append(events, Event{Kind: WorkerDied})
+			continue
+		}
+		// Checked before hunger/job assignment, same ordering as
+		// logistics.Controller.Tick: an idle builder leaves immediately,
+		// and one who just finished a site never starts a fresh job first.
+		if b.dismissing && b.state == StateIdle {
+			events = append(events, Event{Kind: WorkerDismissed})
 			continue
 		}
 		remaining = append(remaining, b)

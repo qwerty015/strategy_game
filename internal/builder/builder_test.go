@@ -50,6 +50,74 @@ func TestBuilder_EatsAtNearestReachableTavern(t *testing.T) {
 	}
 }
 
+// TestController_DismissalRemovesIdleBuilder mirrors
+// logistics.TestController_DismissalRemovesIdleSerfBeforeNewJob: right-
+// clicking the Builder hire card (see cmd/game's
+// handleHireCardDismissRightClick) should remove an idle builder on the
+// very next tick.
+func TestController_DismissalRemovesIdleBuilder(t *testing.T) {
+	grid := world.NewGrid(4, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	controller := NewController()
+	b := controller.Hire(warehouse)
+
+	if !controller.RequestDismissal(b) || !b.Dismissing() {
+		t.Fatal("RequestDismissal did not mark the live builder")
+	}
+	events := controller.Tick(grid, []*building.Building{warehouse}, reservations.New())
+	if got := len(controller.Builders); got != 0 {
+		t.Fatalf("builders after dismissing an idle one = %d, want 0", got)
+	}
+	found := false
+	for _, e := range events {
+		if e.Kind == WorkerDismissed {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Tick did not emit a WorkerDismissed event")
+	}
+}
+
+// TestController_DismissalWaitsForCurrentSite mirrors
+// logistics.TestController_DismissalWaitsForCurrentHaul: a builder mid-site
+// must finish that site before actually leaving, exactly like a serf
+// finishes an in-progress haul first.
+func TestController_DismissalWaitsForCurrentSite(t *testing.T) {
+	grid := world.NewGrid(8, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	site := &building.Building{Kind: building.Farm, X: 3, Y: 0, ConstructionStage: building.ConstructionFoundation}
+	// Materials pre-delivered: no serf controller runs in this isolated
+	// test, and this test's concern is dismissal timing, not delivery.
+	bt := building.Types[building.Farm]
+	site.AddInput(resource.Plank, bt.PlankCost)
+	site.AddInput(resource.StoneBlock, bt.StoneCost)
+	buildings := []*building.Building{warehouse, site}
+
+	controller := NewController()
+	b := controller.Hire(warehouse)
+	controller.Tick(grid, buildings, reservations.New()) // assigns the site
+	if b.state == StateIdle {
+		t.Fatal("builder did not pick up the construction site before dismissal")
+	}
+	if !controller.RequestDismissal(b) {
+		t.Fatal("RequestDismissal did not mark the live builder")
+	}
+
+	for range building.Types[building.Farm].ConstructionFoundationTicks + building.Types[building.Farm].ConstructionBuildTicks + 20 {
+		controller.Tick(grid, buildings, reservations.New())
+		if len(controller.Builders) == 0 {
+			break
+		}
+	}
+	if got := len(controller.Builders); got != 0 {
+		t.Fatalf("builders after completed dismissal = %d, want 0", got)
+	}
+	if site.ConstructionStage != building.ConstructionNone {
+		t.Fatalf("site construction stage = %v, want ConstructionNone (must finish before the builder leaves)", site.ConstructionStage)
+	}
+}
+
 // TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving is a regression
 // guard for a real bug the user reported ("погибают строители ожидая
 // ресурсы"): StateWaitingMaterials had no upper bound (a serf can take a

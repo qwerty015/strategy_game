@@ -29,6 +29,7 @@ func DrawLumberjacks(screen *ebiten.Image, jacks []*lumberjack.Lumberjack, cam *
 		}
 
 		sx, sy := cam.TileToScreen(j.X, j.Y)
+		drawNightGlow(screen, sx+tilePixels*0.5, sy+tilePixels*0.5, tilePixels)
 		frame := (animFrame / 10) % len(assets.Lumberjack)
 		bob := unitBob()
 		tint := color.Color(color.White)

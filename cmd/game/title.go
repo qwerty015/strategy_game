@@ -18,6 +18,7 @@ import (
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
 	"strategy_game/internal/world"
+	"strategy_game/internal/worldclock"
 )
 
 const (
@@ -476,6 +477,12 @@ func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 	g.positionTitleCamera()
 
 	render.Tick()
+	// The showcase town always reads as a bright, midday scene -- it never
+	// ticks a real simulation, so there's no meaningful "current time" to
+	// show, and picking noon keeps the demo from looking artificially
+	// darkened or from ever hiding buildings behind fireflies/butterflies
+	// the player hasn't triggered themselves.
+	render.SetWorldTicks(worldclock.TicksPerDay / 2)
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
 	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, map[*building.Building]bool{}, map[*building.Building]bool{})

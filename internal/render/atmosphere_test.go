@@ -1,6 +1,10 @@
 package render
 
-import "testing"
+import (
+	"testing"
+
+	"strategy_game/internal/worldclock"
+)
 
 func TestAtmosphericRainSchedule(t *testing.T) {
 	original := animFrame
@@ -23,17 +27,21 @@ func TestAtmosphericRainSchedule(t *testing.T) {
 	}
 }
 
-// TestAtmosphericTwilightIsFrozen locks in the user's explicit request
-// ("убери смену освещения, пусть всегда будет статично и только при дожде -
-// темнее"): lighting never cycles through the day any more, at any frame.
-func TestAtmosphericTwilightIsFrozen(t *testing.T) {
-	original := animFrame
-	t.Cleanup(func() { animFrame = original })
+// TestCurrentDayStateFollowsWorldTicksNotAnimFrame locks in the user's
+// explicit request: the day/night cycle (and therefore ambient darkening,
+// fireflies vs. butterflies, the night glow) follows the simulation tick
+// count set via SetWorldTicks, not the render-frame clock rain/clouds use.
+func TestCurrentDayStateFollowsWorldTicksNotAnimFrame(t *testing.T) {
+	originalTicks, originalFrame := worldTicks, animFrame
+	t.Cleanup(func() { worldTicks, animFrame = originalTicks, originalFrame })
 
-	for _, frame := range []int{0, 12420, 17100, 999999} {
-		animFrame = frame
-		if got := atmosphericTwilight(); got != 0 {
-			t.Fatalf("frame %d: twilight=%f, want 0 (lighting must stay static)", frame, got)
-		}
+	animFrame = 999999 // must have zero effect on the day/night phase
+	SetWorldTicks(0)   // midnight
+	if got := currentDayState().Phase; got != worldclock.Night {
+		t.Fatalf("ticks=0 (midnight): phase=%v, want Night", got)
+	}
+	SetWorldTicks(worldclock.TicksPerDay / 2) // noon, well into Day
+	if got := currentDayState().Phase; got != worldclock.Day {
+		t.Fatalf("ticks=1/2 day (noon): phase=%v, want Day", got)
 	}
 }

@@ -29,6 +29,7 @@ func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 			continue
 		}
 		sx, sy := cam.TileToScreen(s.X, s.Y)
+		drawNightGlow(screen, sx+tilePixels*0.5, sy+tilePixels*0.5, tilePixels)
 
 		frame := 0
 		bob := 0.0

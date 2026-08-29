@@ -29,6 +29,7 @@ func DrawMiners(screen *ebiten.Image, miners []*miner.Miner, cam *Camera) {
 		}
 
 		sx, sy := cam.TileToScreen(m.X, m.Y)
+		drawNightGlow(screen, sx+tilePixels*0.5, sy+tilePixels*0.5, tilePixels)
 		frame := (animFrame / 10) % len(assets.Miner)
 		bob := unitBob()
 		tint := color.Color(color.White)

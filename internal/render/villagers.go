@@ -45,6 +45,7 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 		}
 
 		sx, sy := cam.TileToScreen(v.X, v.Y)
+		drawNightGlow(screen, sx+tilePixels*0.5, sy+tilePixels*0.5, tilePixels)
 
 		frame := 0
 		bob := 0.0

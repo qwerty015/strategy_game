@@ -9,6 +9,7 @@ import (
 
 	"strategy_game/internal/assets"
 	"strategy_game/internal/world"
+	"strategy_game/internal/worldclock"
 )
 
 const (
@@ -110,7 +111,7 @@ func DrawAmbientSkyLife(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 // an NPC or a map-wide update. Their short routes are recomputed from the
 // current animation cycle and visible tile range, exactly like birds/hares.
 func drawAmbientButterflies(screen *ebiten.Image, g *world.Grid, cam *Camera) {
-	if atmosphericTwilight() > 0.45 || g.Width == 0 || g.Height == 0 {
+	if currentDayState().Phase != worldclock.Day || g.Width == 0 || g.Height == 0 {
 		return
 	}
 	visible := cam.VisibleTileBounds(0)
@@ -137,11 +138,16 @@ func drawAmbientButterflies(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 	}
 }
 
-// drawAmbientFireflies appears only during the darker part of the slow
-// evening pass. It uses fixed candidate count and no persistent state.
+// fireflyCount was 10 before the user asked for more of them at night
+// ("и светлячков ночью сделай больше") now that they're actually reachable
+// (see the Phase gate below -- Night now recurs every in-game day, unlike
+// the old evening-only window that in practice was almost never seen).
+const fireflyCount = 26
+
+// drawAmbientFireflies appears only at night. It uses a fixed candidate
+// count and no persistent state.
 func drawAmbientFireflies(screen *ebiten.Image, g *world.Grid, cam *Camera) {
-	twilight := atmosphericTwilight()
-	if twilight < 0.45 || g.Width == 0 || g.Height == 0 {
+	if currentDayState().Phase != worldclock.Night || g.Width == 0 || g.Height == 0 {
 		return
 	}
 	visible := cam.VisibleTileBounds(0)
@@ -152,7 +158,7 @@ func drawAmbientFireflies(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 	}
 	tilePixels := cam.TilePixels()
 	cycle := animFrame / 180
-	for index := 0; index < 10; index++ {
+	for index := 0; index < fireflyCount; index++ {
 		seed := ambientHash(uint32(cycle)*3266489917 + uint32(index)*668265263)
 		tileX := visible.MinX + int(seed%uint32(viewWidth))
 		tileY := visible.MinY + int((seed>>11)%uint32(viewHeight))
@@ -160,7 +166,7 @@ func drawAmbientFireflies(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 			continue
 		}
 		sx, sy := cam.TileToScreen(tileX, tileY)
-		glow := color.RGBA{R: 246, G: 229, B: 109, A: uint8(95 + int(twilight*110))}
+		glow := color.RGBA{R: 246, G: 229, B: 109, A: 205}
 		x := float32(sx + tilePixels*(0.18+0.62*float64((seed>>20)&0xff)/255))
 		y := float32(sy + tilePixels*(0.20+0.52*float64((seed>>8)&0xff)/255))
 		radius := float32(maxPixel(tilePixels * 0.042))

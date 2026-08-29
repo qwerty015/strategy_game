@@ -6,6 +6,41 @@ import (
 	"strategy_game/internal/building"
 )
 
+// TestMinimapRectStaysInsideRightPanel guards the docked bottom-center
+// minimap against ever drifting outside its own panel or overlapping the
+// title bar, across the same window sizes TestLayoutKeepsPanelsAtWindowEdges
+// checks.
+func TestMinimapRectStaysInsideRightPanel(t *testing.T) {
+	for _, size := range [][2]int{{1024, 768}, {1920, 1080}, {800, 600}} {
+		layout := NewLayout(size[0], size[1])
+		right := layout.RightPanel()
+		m := layout.MinimapRect()
+		if !m.In(right) {
+			t.Fatalf("size %v: minimap %v not inside right panel %v", size, m, right)
+		}
+		c := layout.ClockRect()
+		if c.Min.Y >= m.Min.Y {
+			t.Fatalf("size %v: clock row %v does not sit above minimap %v", size, c, m)
+		}
+		if !c.In(right) {
+			t.Fatalf("size %v: clock row %v not inside right panel %v", size, c, right)
+		}
+	}
+}
+
+// TestPriorityRowClearsTheMinimap locks in the fix for the real bug this
+// docking introduced: before rightPanelUsableBottom existed, the priority
+// row and minimap could overlap because both were independently anchored to
+// the panel's raw bottom edge.
+func TestPriorityRowClearsTheMinimap(t *testing.T) {
+	layout := NewLayout(1024, 768)
+	rowY := layout.rightPanelUsableBottom() - priorityRowHeight - priorityBottomGap
+	priorityBottom := rowY + priorityRowHeight
+	if minimapTop := layout.MinimapRect().Min.Y; priorityBottom > minimapTop {
+		t.Fatalf("priority row bottom %d overlaps minimap top %d", priorityBottom, minimapTop)
+	}
+}
+
 func TestLayoutKeepsPanelsAtWindowEdges(t *testing.T) {
 	for _, size := range [][2]int{{1024, 768}, {800, 600}, {640, 480}} {
 		layout := NewLayout(size[0], size[1])
@@ -98,7 +133,10 @@ func TestPalettePlacesTheWholeFoodChainFirst(t *testing.T) {
 func TestPriorityLevelAtCoversAllFiveSegments(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	r := layout.RightPanel()
-	rowY := r.Max.Y - priorityRowHeight - priorityBottomGap
+	// Anchored to rightPanelUsableBottom, not r.Max.Y directly, since the
+	// minimap/clock now reserve a fixed band at the panel's actual bottom
+	// (see Layout.MinimapRect) that this row must stay clear of.
+	rowY := layout.rightPanelUsableBottom() - priorityRowHeight - priorityBottomGap
 	startX := r.Min.X + priorityMargin
 	segW := (r.Dx() - 2*priorityMargin) / 5
 

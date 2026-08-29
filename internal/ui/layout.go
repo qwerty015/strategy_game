@@ -194,15 +194,62 @@ const (
 	inspectorConfirmRemoveButtonY = 52
 )
 
+// The minimap and clock (see MinimapRect/ClockRect) are docked in a fixed
+// band at the very bottom of the right panel, always visible regardless of
+// what's selected. Every other bottom-anchored inspector element (the
+// remove button, the priority control, the removal confirmation dialog)
+// reads its "floor" from rightPanelUsableBottom instead of the panel's raw
+// Max.Y, so nothing can ever be drawn underneath -- or hit-test behind --
+// the minimap.
+const (
+	minimapSize      = 168
+	minimapMargin    = 18
+	minimapBottomGap = 14
+	clockRowHeight   = 22
+	clockMinimapGap  = 6
+	minimapReserved  = clockRowHeight + clockMinimapGap + minimapSize + minimapBottomGap
+)
+
+// MinimapRect is the fixed square the minimap draws into, docked bottom
+// center of the right panel.
+func (l Layout) MinimapRect() image.Rectangle {
+	r := l.RightPanel()
+	size := minimapSize
+	if usable := r.Dx() - 2*minimapMargin; size > usable {
+		size = usable
+	}
+	if size < 0 {
+		size = 0
+	}
+	x := r.Min.X + (r.Dx()-size)/2
+	bottom := r.Max.Y - minimapBottomGap
+	top := bottom - size
+	return image.Rect(x, top, x+size, bottom)
+}
+
+// ClockRect is the thin row directly above the minimap where the phase icon
+// and in-game hour are drawn.
+func (l Layout) ClockRect() image.Rectangle {
+	m := l.MinimapRect()
+	return image.Rect(m.Min.X, m.Min.Y-clockMinimapGap-clockRowHeight, m.Max.X, m.Min.Y-clockMinimapGap)
+}
+
+// rightPanelUsableBottom is where bottom-anchored inspector content must
+// stop so it never overlaps the minimap/clock band reserved above.
+func (l Layout) rightPanelUsableBottom() int {
+	return l.RightPanel().Max.Y - minimapReserved
+}
+
 // InspectorConfirmRemoveRect is the modal that confirms a destructive
 // inspector action. It deliberately lives in the inspector, beside the
 // selected object, rather than returning the player to a separate UI area.
 func (l Layout) InspectorConfirmRemoveRect() image.Rectangle {
 	r := l.RightPanel()
+	floor := l.rightPanelUsableBottom()
 	top := r.Min.Y + inspectorConfirmRemoveTop
 	bottom := top + inspectorConfirmRemoveHeight
-	if bottom > r.Max.Y-inspectorConfirmRemoveMargin {
-		bottom = r.Max.Y - inspectorConfirmRemoveMargin
+	if bottom > floor-inspectorConfirmRemoveMargin {
+		bottom = floor - inspectorConfirmRemoveMargin
 		top = bottom - inspectorConfirmRemoveHeight
 	}
 	return image.Rect(r.Min.X+inspectorConfirmRemoveMargin, top, r.Max.X-inspectorConfirmRemoveMargin, bottom)
@@ -240,7 +287,7 @@ func (l Layout) InspectorConfirmRemoveAt(x, y int) (bool, bool) {
 // panel's bottom. Drawing and hit-testing use this one rectangle.
 func (l Layout) InspectorRemoveRect(showPriority bool) image.Rectangle {
 	r := l.RightPanel()
-	y := r.Max.Y - inspectorRemoveBottomGap - inspectorRemoveHeight
+	y := l.rightPanelUsableBottom() - inspectorRemoveBottomGap - inspectorRemoveHeight
 	if showPriority {
 		y -= priorityRowHeight + priorityBottomGap + inspectorRemovePriorityGap
 	}
@@ -263,7 +310,7 @@ func (l Layout) InspectorRemoveAt(x, y int, showPriority bool) bool {
 // how tall that text block happened to be this frame.
 func (l Layout) PriorityLevelAt(x, y int) (int, bool) {
 	r := l.RightPanel()
-	rowY := r.Max.Y - priorityRowHeight - priorityBottomGap
+	rowY := l.rightPanelUsableBottom() - priorityRowHeight - priorityBottomGap
 	if y < rowY || y >= rowY+priorityRowHeight {
 		return 0, false
 	}
