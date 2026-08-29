@@ -43,7 +43,7 @@ type imageRect struct{ x, y, w, h int }
 // DrawBuildPanel renders construction, NPC hiring and settings in the same
 // left panel. A professional card is muted when every matching workplace
 // already has a resident, making the one-worker-per-building limit visible.
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, options []HireOption, speed economy.Speed, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, options []HireOption, builtCounts map[building.Kind]int, speed economy.Speed, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
@@ -73,7 +73,11 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		iconX := x + 8
 		iconY := y + (cardH-iconSize)/2
 		drawBuildingIcon(screen, kind, iconX, iconY, iconSize)
-		DrawMenuText(screen, i18n.T().BuildingName[kind], float64(iconX+iconSize+10), float64(y+(cardH-12)/2))
+		label := i18n.T().BuildingName[kind]
+		if n := builtCounts[kind]; n > 0 {
+			label = fmt.Sprintf("%s (%d)", label, n)
+		}
+		DrawMenuText(screen, label, float64(iconX+iconSize+10), float64(y+(cardH-12)/2))
 	}
 }
 

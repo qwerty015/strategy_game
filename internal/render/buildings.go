@@ -71,12 +71,13 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // than the tile itself (see buildingHeight), with a production-progress bar
 // underneath. MillFrames contains three compact sail positions, switched
 // periodically to animate the windmill.
-func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera, unstaffed map[*building.Building]bool) {
+func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera, unstaffed, disconnected map[*building.Building]bool) {
 	tilePixels := cam.TilePixels()
 	// Two tiles cover tall roofs, construction effects and the one-tile
 	// prefetch ring while the camera pans. Objects outside this rectangle are
 	// still simulated; they simply submit no draw calls this frame.
 	visible := cam.VisibleTileBounds(2)
+	roads := finishedRoadPositions(buildings)
 	// Ground is drawn before this function. Roads and stone deposits are
 	// both flat, terrain-scale ground decoration rather than standing
 	// objects, so both render in this same bottom pass -- otherwise a
@@ -95,6 +96,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			drawConstructionSite(screen, b, 1, sx, sy, tilePixels)
 		case b.Kind == building.Road:
 			drawStandingAtScale(screen, assets.Road, sx, sy, 1, tilePixels)
+			drawRoadConnections(screen, roads, b.X, b.Y, sx, sy, tilePixels)
 		case b.Kind == building.StoneDeposit:
 			drawStoneDeposit(screen, sx, sy, tilePixels, b.Reserve)
 		case b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit:
@@ -228,10 +230,84 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		// to one merely away eating) is tinted red across its whole
 		// footprint, so an empty workplace reads at a glance instead of
 		// only being discoverable by opening the inspector.
-		if unstaffed[b] {
-			size := float32(bt.Footprint) * float32(tilePixels)
+		//
+		// A *staffed* building that isn't producing -- no road connection,
+		// short a raw material, or finished with nowhere to put the
+		// result -- used to get the same red tint, and the user reported
+		// exactly the problem that invites: an idle worker and an empty
+		// building looked identical at a glance. It's now a small "Zzz"
+		// sleep bubble over the roof instead of a footprint-wide wash,
+		// deliberately less alarming than the red tint and legible next
+		// to it without being confused for it -- "someone's here but
+		// dozing" reads as a different, lesser problem than "no one's
+		// here at all", which is exactly true. All three stalled reasons
+		// share one bubble rather than three different indicators: the
+		// inspector already explains *why* once clicked, the map-level
+		// glance only needs to flag *that* something's stalled.
+		size := float32(bt.Footprint) * float32(tilePixels)
+		switch {
+		case unstaffed[b]:
 			vector.FillRect(screen, float32(sx), float32(sy), size, size, unstaffedTint, false)
+		case disconnected[b], buildingStallReason(b) != stallNone:
+			drawIdleBubble(screen, sx, sy, tilePixels)
 		}
+	}
+}
+
+// drawIdleBubble draws a small "Zzz" sleep bubble above a staffed building
+// that isn't currently producing (see the stall/disconnected check above)
+// -- deliberately smaller and calmer than unstaffedTint's footprint-wide
+// red wash, so "someone's here but stuck" doesn't read as the same
+// problem as "nobody's here at all" (the user's own report: the two
+// looked identical). Anchored above the building's own standing sprite
+// at buildingHeight over its first tile, not centred on a multi-tile
+// footprint -- for Farm/Winery that's where the actual roof is, not the
+// empty field tiles beside it.
+func drawIdleBubble(screen *ebiten.Image, sx, sy, tilePixels float64) {
+	cx := float32(sx + tilePixels*0.5)
+	// drawStandingScaled anchors a tilesTall sprite to the *bottom* of its
+	// tile (translate.y = sy+tilePixels-drawnH), not the top -- this must
+	// mirror that exactly or the marker ends up a whole tile too high,
+	// floating well above the actual roof instead of sitting on it.
+	top := float32(sy + tilePixels - tilePixels*buildingHeight)
+	bob := float32(0)
+	if (animFrame/20)%2 == 1 {
+		bob = -float32(tilePixels) * 0.05
+	}
+	cy := top - float32(tilePixels)*0.06 + bob
+	tp := float32(tilePixels)
+
+	// A soft, low-alpha thought-cloud -- bigger and fainter than the
+	// first version (a plain small ball) the user asked to redo it away
+	// from: "не шарик, а облачко, и крупнее, слабо заметное". assets.
+	// IdleCloud is one flat-alpha shape (see its own doc comment for
+	// why), so this single draw fades it uniformly instead of
+	// overlapping circles compounding into a more-opaque patch in the
+	// middle -- low alpha keeps it a background hint rather than
+	// competing with unstaffedTint's much bolder red for attention.
+	cb := assets.IdleCloud.Bounds()
+	cloudSize := tp * 0.85
+	s := float64(cloudSize) / float64(cb.Dx())
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(s, s)
+	op.GeoM.Translate(float64(cx)-float64(cloudSize)/2, float64(cy)-float64(cloudSize)/2)
+	op.ColorScale.ScaleAlpha(0.4)
+	op.Blend = ebiten.BlendSourceOver
+	screen.DrawImage(assets.IdleCloud, op)
+
+	// "Zzz" over the cloud, the classic sleep motif -- drawn as plain
+	// line segments rather than a font glyph, so render doesn't need a
+	// text face of its own (importing package ui for one would cycle
+	// back to render, which ui already imports for render.Camera).
+	mark := color.RGBA{R: 70, G: 70, B: 80, A: 235}
+	for i, scale := range [...]float32{0.14, 0.19, 0.24} {
+		zcx := cx - tp*0.12 + float32(i)*tp*0.13
+		zcy := cy - tp*0.02 - float32(i)*tp*0.12
+		zw, zh := tp*scale, tp*scale*0.6
+		width := tp * 0.04
+		vector.StrokeLine(screen, zcx-zw/2, zcy-zh/2, zcx+zw/2, zcy-zh/2, width, mark, true)
+		vector.StrokeLine(screen, zcx+zw/2, zcy-zh/2, zcx-zw/2, zcy+zh/2, width, mark, true)
+		vector.StrokeLine(screen, zcx-zw/2, zcy+zh/2, zcx+zw/2, zcy+zh/2, width, mark, true)
 	}
 }
 
@@ -246,6 +322,76 @@ func drawTree(screen *ebiten.Image, sx, sy, tilePixels float64, stage int) {
 		stage = 2
 	}
 	drawStandingAtScale(screen, assets.TreeFrames[stage], sx, sy, 1.75, tilePixels)
+}
+
+// roadTile is a lightweight map key for exact tile positions -- cheaper
+// than a *building.Building lookup, used only to answer "is there a
+// finished Road at this exact cell" in O(1) from drawRoadConnections.
+type roadTile struct{ x, y int }
+
+// finishedRoadPositions indexes every completed Road tile in buildings, so
+// drawRoadConnections can test each of a road's four neighbours in O(1)
+// instead of a linear scan per tile. A road still under construction does
+// not count -- see the ConstructionStage check in the caller's switch,
+// it isn't drawn as a real road yet either.
+func finishedRoadPositions(buildings []*building.Building) map[roadTile]bool {
+	roads := make(map[roadTile]bool)
+	for _, b := range buildings {
+		if b.Kind == building.Road && b.ConstructionStage == building.ConstructionNone {
+			roads[roadTile{b.X, b.Y}] = true
+		}
+	}
+	return roads
+}
+
+// drawRoadConnections layers a brightening correction over whichever edges
+// of the Road tile at (x,y) face another finished Road, cancelling
+// terrain_road_stone.png's own dark vignette there (see
+// assets.RoadFadeN's doc comment) -- otherwise every road tile reads as a
+// separately framed stone slab, and a straight street looks like a row of
+// disconnected paving stones instead of one continuous path.
+func drawRoadConnections(screen *ebiten.Image, roads map[roadTile]bool, x, y int, sx, sy, tilePixels float64) {
+	if roads[roadTile{x, y - 1}] {
+		drawRoadFade(screen, assets.RoadFadeN, sx, sy, tilePixels, false)
+	}
+	if roads[roadTile{x, y + 1}] {
+		drawRoadFade(screen, assets.RoadFadeS, sx, sy, tilePixels, false)
+	}
+	if roads[roadTile{x - 1, y}] {
+		drawRoadFade(screen, assets.RoadFadeW, sx, sy, tilePixels, true)
+	}
+	if roads[roadTile{x + 1, y}] {
+		drawRoadFade(screen, assets.RoadFadeE, sx, sy, tilePixels, true)
+	}
+}
+
+// drawRoadFade blits one of assets.RoadFadeN/E/S/W flush against its own
+// edge of the tile at (sx,sy), scaled uniformly with the rest of the tile
+// (img's native size already encodes which edge it belongs to -- a
+// TileSize-wide, shallow band for N/S, or a TileSize-tall, narrow band for
+// E/W). farEdge selects the translate branch: false positions the image at
+// the tile's own origin (already correct for N, whose band starts at the
+// top, and W, whose band starts at the left); true shifts it flush against
+// the tile's bottom (S) or right (E) edge instead. The additive
+// (ebiten.BlendLighter) blend is what makes this a brightening correction
+// rather than an opaque patch -- the cobblestone texture underneath stays
+// visible.
+func drawRoadFade(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels float64, farEdge bool) {
+	b := img.Bounds()
+	s := tilePixels / float64(assets.TileSize)
+	w := float64(b.Dx()) * s
+	h := float64(b.Dy()) * s
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(s, s)
+	dx, dy := sx, sy
+	if farEdge && w < h {
+		dx = sx + tilePixels - w // East: the narrow (depth) axis is X
+	} else if farEdge {
+		dy = sy + tilePixels - h // South: the narrow (depth) axis is Y
+	}
+	op.GeoM.Translate(dx, dy)
+	op.Blend = ebiten.BlendLighter
+	screen.DrawImage(img, op)
 }
 
 // drawConstructionSite renders the three shared visual construction stages.

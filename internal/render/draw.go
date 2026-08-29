@@ -1,6 +1,7 @@
 package render
 
 import (
+	"image"
 	"image/color"
 	"math"
 
@@ -28,8 +29,119 @@ func DrawGrid(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 			if terrain == world.Grass {
 				drawGrassSway(screen, sx, sy, tx, ty, tilePixels)
 			}
+			blendTerrainEdges(screen, g, terrain, tx, ty, sx, sy, tilePixels)
+			drawGroundDecor(screen, g, terrain, tx, ty, sx, sy, tilePixels)
 		}
 	}
+}
+
+// terrainEdgeBands shapes blendTerrainEdges' feathered shoreline, from
+// outermost (right at the tile boundary) to innermost (deepest into the
+// tile): each band redraws a shrinking crop of the *neighbouring* tile's
+// own texture, cropped from the strip of it nearest the shared edge, at
+// low alpha. Layered together via ordinary alpha-over, the strongest
+// blending lands right at the boundary and tapers off by depthFraction,
+// turning a hard one-pixel terrain swap (e.g. grass meeting water) into a
+// soft multi-pixel gradient -- without needing dedicated shoreline art or
+// a custom shader.
+var terrainEdgeBands = [...]struct {
+	depthFraction float64 // how deep into the tile this band's crop reaches, as a fraction of TileSize
+	alpha         float32
+}{
+	{1.00, 0.16},
+	{0.70, 0.18},
+	{0.40, 0.22},
+	{0.18, 0.26},
+}
+
+// blendTerrainEdges softens the boundary of tile (tx,ty) against any of
+// its 4 cardinal neighbours that has a *different* terrain type -- see
+// terrainEdgeBands' doc comment. A tile with no differing neighbour (the
+// overwhelming majority, away from any coastline) draws nothing extra.
+func blendTerrainEdges(screen *ebiten.Image, g *world.Grid, terrain world.TerrainType, tx, ty int, sx, sy, tilePixels float64) {
+	type dir struct {
+		dx, dy int
+		edge   edgeSide
+	}
+	for _, d := range [...]dir{{0, -1, edgeN}, {0, 1, edgeS}, {-1, 0, edgeW}, {1, 0, edgeE}} {
+		nx, ny := tx+d.dx, ty+d.dy
+		if !g.InBounds(nx, ny) {
+			continue
+		}
+		neighborTerrain := g.At(nx, ny).Terrain
+		if neighborTerrain == terrain {
+			continue
+		}
+		neighborImg := terrainImage(neighborTerrain)
+		for _, band := range terrainEdgeBands {
+			drawEdgeStrip(screen, neighborImg, sx, sy, tilePixels, d.edge, band.depthFraction*assets.TileSize, band.alpha)
+		}
+	}
+}
+
+// edgeSide names which of a tile's 4 sides an edge-strip effect (a road
+// connector's brightening fade, or a terrain boundary's feathered blend)
+// belongs to.
+type edgeSide int
+
+const (
+	edgeN edgeSide = iota
+	edgeE
+	edgeS
+	edgeW
+)
+
+// drawEdgeStrip crops a depthPx-deep band from img's own edge nearest the
+// shared boundary (e.g. for edgeN, img's own bottom rows -- the part of
+// the neighbour actually touching this tile) and draws it at alpha,
+// flush against this tile's matching edge. Used by blendTerrainEdges to
+// stack several such crops at decreasing alpha for a soft gradient.
+func drawEdgeStrip(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels float64, edge edgeSide, depthPx float64, alpha float32) {
+	b := img.Bounds()
+	d := int(depthPx)
+	if d < 1 {
+		d = 1
+	}
+	if d > b.Dy() {
+		d = b.Dy()
+	}
+	var src image.Rectangle
+	switch edge {
+	case edgeN:
+		src = image.Rect(b.Min.X, b.Max.Y-d, b.Max.X, b.Max.Y)
+	case edgeS:
+		src = image.Rect(b.Min.X, b.Min.Y, b.Max.X, b.Min.Y+d)
+	case edgeW:
+		src = image.Rect(b.Max.X-d, b.Min.Y, b.Max.X, b.Max.Y)
+	case edgeE:
+		src = image.Rect(b.Min.X, b.Min.Y, b.Min.X+d, b.Max.Y)
+	}
+	sub, ok := img.SubImage(src).(*ebiten.Image)
+	if !ok {
+		return
+	}
+
+	s := tilePixels / assets.TileSize
+	destDepth := depthPx * s
+	dx, dy := sx, sy
+	switch edge {
+	case edgeS:
+		dy = sy + tilePixels - destDepth
+	case edgeE:
+		dx = sx + tilePixels - destDepth
+	}
+
+	op := &ebiten.DrawImageOptions{}
+	// SubImage keeps the parent's coordinate space (its Bounds() is src
+	// itself, not reset to the origin) -- normalize it to (0,0) before
+	// scaling/positioning, or the crop would be drawn offset by its own
+	// position within the source texture.
+	op.GeoM.Translate(-float64(src.Min.X), -float64(src.Min.Y))
+	op.GeoM.Scale(s, s)
+	op.GeoM.Translate(dx, dy)
+	op.ColorScale.ScaleAlpha(alpha)
+	op.Blend = ebiten.BlendSourceOver
+	screen.DrawImage(sub, op)
 }
 
 // drawGround uses integer destination edges and a tiny one-pixel overlap.

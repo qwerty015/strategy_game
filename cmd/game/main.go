@@ -526,6 +526,23 @@ func (g *Game) unstaffedWorkerBuildings() map[*building.Building]bool {
 	return m
 }
 
+// finishedBuildingCounts counts already-built (not under construction)
+// buildings of each kind, for the left panel's Build tab -- a "(N)" next
+// to every card's name, by direct request ("по аналогии с количеством
+// юнитов в скобках"), so the player can see how many of a building they
+// already have without opening the inspector for each one. A site still
+// under construction doesn't count yet, same convention hireOptions'
+// own countBuildings below already uses.
+func (g *Game) finishedBuildingCounts() map[building.Kind]int {
+	counts := make(map[building.Kind]int)
+	for _, b := range g.buildings {
+		if b.ConstructionStage == building.ConstructionNone {
+			counts[b.Kind]++
+		}
+	}
+	return counts
+}
+
 // hireOptions reports the current headcount, building-based limit, and
 // availability for every hireable unit kind, for the left panel's Hire tab.
 // Serfs are the only unlimited option; every profession is capped at one
@@ -3000,7 +3017,28 @@ func restoreTreeRegrowth(states []save.TreeRegrowthState) []treeRegrowth {
 func (g *Game) Draw(screen *ebiten.Image) {
 	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
-	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, g.unstaffedWorkerBuildings())
+	// visibleConnectivity feeds both the building tint below and the
+	// access-point dot further down -- each buildingConnected call is a
+	// full pathfind BFS, so computing it once per visible building here
+	// and reusing the result is what keeps this at the same one-BFS-per-
+	// visible-building cost the access marker alone used to pay, instead
+	// of quietly doubling it (see showsAccessMarker's doc comment for the
+	// exact "hundreds of full BFS calls every frame" bug this pattern
+	// exists to avoid repeating).
+	visible := g.camera.VisibleTileBounds(2)
+	visibleConnectivity := make(map[*building.Building]bool, len(g.buildings))
+	disconnected := make(map[*building.Building]bool, len(g.buildings))
+	for _, b := range g.buildings {
+		if !showsAccessMarker(b.Kind) || !visible.Intersects(b.X, b.Y, building.Types[b.Kind].Footprint) {
+			continue
+		}
+		connected := g.buildingConnected(b)
+		visibleConnectivity[b] = connected
+		if building.Types[b.Kind].Recipe.TicksToProduce > 0 && !connected {
+			disconnected[b] = true
+		}
+	}
+	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, g.unstaffedWorkerBuildings(), disconnected)
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
 	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera)
@@ -3021,11 +3059,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// Every non-road building exposes its access tile. This keeps the road
 	// connection rule visible without requiring the player to click buildings
 	// one by one; the inspector still explains the selected building in detail.
-	visible := g.camera.VisibleTileBounds(2)
-	for _, b := range g.buildings {
-		if showsAccessMarker(b.Kind) && visible.Intersects(b.X, b.Y, building.Types[b.Kind].Footprint) {
-			ui.DrawAccessMarker(screen, g.camera, b, g.buildingConnected(b))
-		}
+	// connected, not a fresh g.buildingConnected(b) call, reuses the same
+	// BFS result visibleConnectivity already paid for above.
+	for b, connected := range visibleConnectivity {
+		ui.DrawAccessMarker(screen, g.camera, b, connected)
 	}
 	ui.DrawSelectionMarker(screen, g.camera, g.selection)
 	connected := false
@@ -3040,7 +3077,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			priorityLevel = g.logi.Priority(g.selection.Building.Kind)
 		}
 	}
-	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions(), g.sim.Speed(), g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions(), g.finishedBuildingCounts(), g.sim.Speed(), g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
 	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog)
 
 	if g.statusMsg != "" {
