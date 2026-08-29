@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -44,7 +45,7 @@ type imageRect struct{ x, y, w, h int }
 // DrawBuildPanel renders construction, NPC hiring and settings in the same
 // left panel. A professional card is muted when every matching workplace
 // already has a resident, making the one-worker-per-building limit visible.
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, options []HireOption, builtCounts map[building.Kind]int, speed economy.Speed, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, options []HireOption, builtCounts map[building.Kind]int, speed economy.Speed, zoom float64, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
@@ -54,7 +55,7 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		drawHireCards(screen, layout, options)
 		return
 	case SettingsTab:
-		drawSettingsContent(screen, layout, speed, slots, dialog, dialogSlot, dialogText)
+		drawSettingsContent(screen, layout, speed, zoom, slots, dialog, dialogSlot, dialogText)
 		return
 	}
 	stride, cardH := layout.cardGeometry(len(p.Kinds))
@@ -82,6 +83,21 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 	}
 }
 
+// closestZoomPreset returns the index of the ZoomPresets entry nearest to
+// zoom, for highlighting a button even when the actual camera scale (set
+// by the mouse wheel, or landing between two presets after clamping) is
+// not an exact match.
+func closestZoomPreset(zoom float64) int {
+	best, bestDist := 0, math.MaxFloat64
+	for i, preset := range ZoomPresets {
+		dist := math.Abs(preset - zoom)
+		if dist < bestDist {
+			best, bestDist = i, dist
+		}
+	}
+	return best
+}
+
 func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
 	labels := []string{i18n.T().BuildTab, i18n.T().HireTab, i18n.T().SettingsTab}
 	for i, label := range labels {
@@ -99,7 +115,7 @@ func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
 // game's single speed-control row, and the five named save slots -- or, while
 // a modal is open, the naming/overwrite dialog in place of the slot list. See
 // Layout's settings* constants for the shared geometry.
-func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Speed, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
+func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Speed, zoom float64, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
 	t := i18n.T()
 	x := 12
 	w := layout.LeftWidth - 24
@@ -129,6 +145,21 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 		}
 		vector.FillRect(screen, float32(bx), float32(settingsSpeedRowY), float32(speedSegW-2), float32(settingsSpeedRowH), fill, false)
 		DrawCompactMenuText(screen, label, float64(bx+4), float64(settingsSpeedRowY+8))
+	}
+
+	zoomSegW := w / len(ZoomPresets)
+	for i, preset := range ZoomPresets {
+		bx := x + i*zoomSegW
+		fill := panelInnerColor
+		// The active button is whichever preset the current zoom is
+		// closest to, not an exact match -- the player can still reach
+		// in-between levels with the mouse wheel, and that shouldn't
+		// leave the row looking like nothing is selected at all.
+		if i == closestZoomPreset(zoom) {
+			fill = selectedColor
+		}
+		vector.FillRect(screen, float32(bx), float32(settingsZoomRowY), float32(zoomSegW-2), float32(settingsZoomRowH), fill, false)
+		DrawCompactMenuText(screen, fmt.Sprintf("%d%%", int(preset*100)), float64(bx+4), float64(settingsZoomRowY+7))
 	}
 
 	vector.FillRect(screen, float32(x), float32(settingsNewGameRowY), float32(w), float32(settingsNewGameRowH), panelInnerColor, false)

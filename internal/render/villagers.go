@@ -59,7 +59,8 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 			frame = (animFrame / 10) % len(frames)
 			bob = unitBob()
 		}
-		drawStandingTintedAtScale(screen, frames[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint)
+		flip := facingLeft(v.X, v.RemainingPath())
+		drawStandingFacingTintedAtScale(screen, frames[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint, flip)
 
 		if v.Working() && (v.Profession == villagers.Farmer || v.Profession == villagers.Winemaker) {
 			drawFarmWorkCue(screen, sx, sy+bob*tilePixels/TileSize, tilePixels)

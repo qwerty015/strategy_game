@@ -820,6 +820,10 @@ func (g *Game) handleMouse() {
 			g.sim.SetSpeed(speed)
 			return
 		}
+		if index, ok := g.layout.SettingsZoomAt(mx, my); ok {
+			g.camera.SetZoom(ui.ZoomPresets[index], g.grid.Width, g.grid.Height)
+			return
+		}
 		if g.layout.SettingsNewGameAt(mx, my) {
 			g.dialog = ui.DialogConfirmNewGame
 			return
@@ -3184,7 +3188,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			priorityLevel = g.logi.Priority(g.selection.Building.Kind)
 		}
 	}
-	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions(), g.finishedBuildingCounts(), g.sim.Speed(), g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions(), g.finishedBuildingCounts(), g.sim.Speed(), g.camera.Scale, g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
 	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog)
 
 	if g.statusMsg != "" {

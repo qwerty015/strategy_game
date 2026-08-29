@@ -35,7 +35,8 @@ func DrawMiners(screen *ebiten.Image, miners []*miner.Miner, cam *Camera) {
 		if m.Starving {
 			tint = color.RGBA{R: 255, G: 105, B: 90, A: 255}
 		}
-		drawStandingTintedAtScale(screen, assets.Miner[frame], sx, sy+bob*tilePixels/TileSize, minerHeight, tilePixels, tint)
+		flip := facingLeft(m.X, m.RemainingPath())
+		drawStandingFacingTintedAtScale(screen, assets.Miner[frame], sx, sy+bob*tilePixels/TileSize, minerHeight, tilePixels, tint, flip)
 
 		cargo, amount := m.Cargo()
 		if amount > 0 {

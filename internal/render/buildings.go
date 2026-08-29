@@ -120,6 +120,12 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			continue
 		}
 
+		// A natural world object (Tree/Fish) grounds itself through its
+		// own multi-stage sprite, not a building's contact shadow.
+		if b.Kind != building.Tree && b.Kind != building.Fish {
+			drawBuildingShadow(screen, sx, sy, tilePixels)
+		}
+
 		switch b.Kind {
 		case building.Tree:
 			drawTree(screen, sx, sy, tilePixels, b.GrowthStage())
@@ -309,6 +315,23 @@ func drawIdleBubble(screen *ebiten.Image, sx, sy, tilePixels float64) {
 		vector.StrokeLine(screen, zcx+zw/2, zcy-zh/2, zcx-zw/2, zcy+zh/2, width, mark, true)
 		vector.StrokeLine(screen, zcx-zw/2, zcy+zh/2, zcx+zw/2, zcy+zh/2, width, mark, true)
 	}
+}
+
+// drawBuildingShadow blits assets.BuildingShadow flush against the bottom
+// of the tile at (sx,sy) -- the same bottom edge drawStandingScaled
+// anchors a standing sprite's own feet to, so the shadow reads as
+// underneath the building rather than floating at an unrelated offset.
+func drawBuildingShadow(screen *ebiten.Image, sx, sy, tilePixels float64) {
+	img := assets.BuildingShadow
+	b := img.Bounds()
+	s := tilePixels / float64(assets.TileSize)
+	w := float64(b.Dx()) * s
+	h := float64(b.Dy()) * s
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(s, s)
+	op.GeoM.Translate(sx+tilePixels/2-w/2, sy+tilePixels-h)
+	op.Blend = ebiten.BlendSourceOver
+	screen.DrawImage(img, op)
 }
 
 // drawTree uses the dedicated three-stage transparent sprite sheet. Keeping

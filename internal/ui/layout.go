@@ -7,6 +7,13 @@ import (
 	"strategy_game/internal/i18n"
 )
 
+// ZoomPresets are the discrete zoom levels offered by the Settings tab's
+// zoom row -- the two ends deliberately match render's own minZoom/maxZoom
+// exactly, so the leftmost/rightmost buttons really do reach the same
+// limits the mouse wheel's ZoomAt is clamped to, not an arbitrary near
+// value.
+var ZoomPresets = [...]float64{0.60, 1.00, 1.50, 2.00, 2.50}
+
 // Layout defines the screen regions shared by drawing and mouse hit-testing.
 // Keeping these rectangles in one place prevents the UI from drifting away
 // from the input coordinates as the panels evolve.
@@ -277,11 +284,17 @@ const (
 	settingsSpeedRowY = settingsLangRowY + settingsLangRowH + 10
 	settingsSpeedRowH = 30
 
+	// settingsZoomRowY/H is a row of preset zoom buttons (see ZoomPresets),
+	// docked right under the speed row -- a keyboard/mouse-click way to set
+	// camera zoom, alongside the pre-existing mouse-wheel ZoomAt.
+	settingsZoomRowY = settingsSpeedRowY + settingsSpeedRowH + 10
+	settingsZoomRowH = 26
+
 	// settingsNewGameRowY/H is the full-width "New Game" button, docked
-	// between the speed row and the save-slot list -- always visible (like
-	// the language/speed rows), unlike the slot list which the confirm
+	// between the zoom row and the save-slot list -- always visible (like
+	// the language/speed/zoom rows), unlike the slot list which the confirm
 	// dialog below temporarily replaces.
-	settingsNewGameRowY = settingsSpeedRowY + settingsSpeedRowH + 14
+	settingsNewGameRowY = settingsZoomRowY + settingsZoomRowH + 14
 	settingsNewGameRowH = 28
 
 	settingsSlotsLabelY = settingsNewGameRowY + settingsNewGameRowH + 20
@@ -336,6 +349,25 @@ func (l Layout) SettingsSpeedAt(x, y int) (economy.Speed, bool) {
 		return economy.Normal, false
 	}
 	return economy.Speed(index), true
+}
+
+// SettingsZoomAt returns the index into ZoomPresets under the cursor
+// within the settings tab's zoom row.
+func (l Layout) SettingsZoomAt(x, y int) (int, bool) {
+	if y < settingsZoomRowY || y >= settingsZoomRowY+settingsZoomRowH {
+		return 0, false
+	}
+	startX := 12
+	w := l.LeftWidth - 24
+	segW := w / len(ZoomPresets)
+	if segW <= 0 || x < startX {
+		return 0, false
+	}
+	index := (x - startX) / segW
+	if index < 0 || index >= len(ZoomPresets) || x >= startX+(index+1)*segW {
+		return 0, false
+	}
+	return index, true
 }
 
 // SettingsNewGameAt reports whether the cursor is over the settings tab's

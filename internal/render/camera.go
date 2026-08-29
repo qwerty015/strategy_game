@@ -88,6 +88,31 @@ func (c *Camera) ZoomAt(delta float64, screenX, screenY int, gridWidth, gridHeig
 	c.clamp(gridWidth, gridHeight)
 }
 
+// SetZoom changes zoom to an absolute scale (clamped to [minZoom,maxZoom]
+// like ZoomAt), keeping the current viewport's *centre* point fixed --
+// used by the Settings tab's zoom buttons, where there's no cursor
+// position over the map to anchor to the way the mouse wheel's ZoomAt
+// does.
+func (c *Camera) SetZoom(scale float64, gridWidth, gridHeight int) {
+	oldScale := c.Scale
+	if oldScale <= 0 {
+		oldScale = 1
+	}
+	newScale := clamp(scale, minZoom, maxZoom)
+	if newScale == oldScale {
+		return
+	}
+
+	centerX := c.viewportX + c.viewportWidth/2
+	centerY := c.viewportY + c.viewportHeight/2
+	worldX := c.X + float64(centerX-c.viewportX)/oldScale
+	worldY := c.Y + float64(centerY-c.viewportY)/oldScale
+	c.Scale = newScale
+	c.X = worldX - float64(centerX-c.viewportX)/newScale
+	c.Y = worldY - float64(centerY-c.viewportY)/newScale
+	c.clamp(gridWidth, gridHeight)
+}
+
 // Pan moves the camera by (dx, dy) pixels and clamps it so the viewport
 // never shows negative coordinates or scrolls past the map's far edge.
 func (c *Camera) Pan(dx, dy float64, gridWidth, gridHeight, screenWidth, screenHeight int) {

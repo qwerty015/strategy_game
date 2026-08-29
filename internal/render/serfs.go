@@ -43,7 +43,8 @@ func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 				tint = color.White
 			}
 		}
-		drawStandingTintedAtScale(screen, assets.Serf[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint)
+		flip := facingLeft(s.X, s.RemainingPath())
+		drawStandingFacingTintedAtScale(screen, assets.Serf[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint, flip)
 
 		// A tiny resource badge makes the logistics simulation readable on the
 		// map itself: the player can see that this is a loaded serf before

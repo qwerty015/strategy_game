@@ -80,8 +80,8 @@ func edgeAnchor(sx, sy, tilePixels float64, edge edgeSide) (x, y float64) {
 }
 
 var (
-	rockColor          = color.RGBA{R: 120, G: 118, B: 112, A: 255}
-	rockHighlightColor = color.RGBA{R: 170, G: 168, B: 160, A: 255}
+	rockColor          = color.RGBA{R: 96, G: 95, B: 92, A: 255} // darker than the earlier 120/118/112 -- too close to grass's own shading to read as a distinct rock at normal zoom, especially inside a rocky decorZoneKind meant to look visually distinct
+	rockHighlightColor = color.RGBA{R: 165, G: 163, B: 155, A: 255}
 	stumpColor         = color.RGBA{R: 107, G: 74, B: 46, A: 255}
 	stumpRingColor     = color.RGBA{R: 79, G: 53, B: 31, A: 255}
 	bushColor          = color.RGBA{R: 58, G: 102, B: 44, A: 255}
@@ -98,19 +98,99 @@ var flowerColors = [...]color.RGBA{
 	{R: 186, G: 130, B: 224, A: 255}, // violet
 }
 
-// drawGrassDecor scatters one small decoration (rock/stump/flower/bush)
-// onto roughly 1 in 32 grass tiles -- sparse enough to read as detail, not
-// clutter, and independent of drawGrassSway's own tile selection.
-func drawGrassDecor(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePixels float64) {
+// decorZoneSize is the edge length, in tiles, of one decorative-zone cell
+// -- see decorZoneKindAt.
+const decorZoneSize = 12
+
+// decorZoneKind is a coarse cosmetic "flavour" layered on top of
+// drawGrassDecor's uniform per-tile scatter -- a meadow reads as
+// noticeably flower-heavy, a rocky patch as noticeably rock-heavy,
+// spanning many tiles instead of drawGrassDecor's usual scattered
+// individual decorations. Purely visual: neither affects CanPlace or
+// anything else in world.Grid.
+type decorZoneKind int
+
+const (
+	zoneNone decorZoneKind = iota
+	zoneMeadow
+	zoneRocky
+)
+
+// decorZoneKindAt reports which decorative zone tile (tx,ty) falls in.
+// Deterministic from tile coordinates alone, the same way tileHash's
+// per-tile decorations already are -- nothing about a zone's shape or
+// location is stored anywhere, so a save/reload reproduces the exact
+// same zones without a single new save-file field. Most zone cells are
+// plain (zoneNone, ~65%); a minority read as a distinct meadow or rocky
+// patch (~17.5% each) -- the same spirit as seedThickets layering denser
+// tree clusters on top of the uniform tree scatter, but computed at
+// render time instead of placed as real world objects, since a patch of
+// flowers has no gameplay weight to justify that.
+func decorZoneKindAt(tx, ty int) decorZoneKind {
+	zx, zy := tx/decorZoneSize, ty/decorZoneSize
+	roll := tileHash(zx, zy, 668265263, 2246822519) % 100
+	switch {
+	case roll < 17:
+		return zoneMeadow
+	case roll < 34:
+		return zoneRocky
+	default:
+		return zoneNone
+	}
+}
+
+// grassDecorPick is drawGrassDecor's decision logic, pulled out as a pure
+// function so the density/variant-bias rules a decorZoneKind applies can
+// be checked with a plain go test instead of only by eye in a screenshot
+// (a screenshot is still how the actual visual result was checked --
+// individual dots at normal zoom are too small and too close to
+// drawGrassSway's own texture noise to visually judge a 3x density
+// change by eye with any confidence).
+func grassDecorPick(tx, ty int) (variant int, ok bool) {
 	hash := tileHash(tx, ty, 2654435761, 40503)
-	if hash%32 != 0 {
+	zone := decorZoneKindAt(tx, ty)
+	threshold := uint32(32)
+	if zone != zoneNone {
+		threshold = 10
+	}
+	if hash%threshold != 0 {
+		return 0, false
+	}
+
+	variant = int((hash / 800) % 4)
+	switch zone {
+	case zoneMeadow:
+		if (hash/800)%3 != 0 {
+			variant = 2 // mostly flowers, ...
+		} else {
+			variant = 3 // ...occasionally a bush
+		}
+	case zoneRocky:
+		if (hash/800)%3 != 0 {
+			variant = 0 // mostly rocks, ...
+		} else {
+			variant = 1 // ...occasionally a stump
+		}
+	}
+	return variant, true
+}
+
+// drawGrassDecor scatters one small decoration (rock/stump/flower/bush)
+// onto grass tiles -- roughly 1 in 32 outside any named zone, sparse
+// enough to read as detail, not clutter and independent of
+// drawGrassSway's own tile selection; roughly 1 in 10 (and biased toward
+// that zone's own flavour) inside a meadow or rocky decorZoneKind.
+func drawGrassDecor(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePixels float64) {
+	variant, ok := grassDecorPick(tx, ty)
+	if !ok {
 		return
 	}
+	hash := tileHash(tx, ty, 2654435761, 40503)
 	cx := float32(sx + tilePixels*(0.3+0.4*float64((hash/32)%5)/4))
 	cy := float32(sy + tilePixels*(0.35+0.35*float64((hash/160)%5)/4))
 	tp := float32(tilePixels)
 
-	switch (hash / 800) % 4 {
+	switch variant {
 	case 0: // rock
 		vector.FillCircle(screen, cx, cy, 0.16*tp, rockColor, false)
 		vector.FillCircle(screen, cx-0.06*tp, cy-0.06*tp, 0.06*tp, rockHighlightColor, false)

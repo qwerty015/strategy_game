@@ -4,6 +4,8 @@ import (
 	"image/color"
 
 	"github.com/hajimehoshi/ebiten/v2"
+
+	"strategy_game/internal/pathfind"
 )
 
 // drawStanding draws img so its bottom edge sits on the bottom of tile
@@ -66,6 +68,33 @@ func drawStandingTintedAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, 
 }
 
 func drawStandingScaled(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall, tilePixels float64, clr color.Color) {
+	drawStandingFacingScaled(screen, img, sx, sy, tilesTall, tilePixels, clr, false)
+}
+
+// facingLeft reports whether a walking unit's sprite should be
+// horizontally mirrored to face its direction of travel, derived from
+// its own current tile vs. the next tile on its route -- so it needs no
+// new field on any of the seven profession structs (Serf, Villager,
+// Lumberjack, Fisherman, Quarryman, Builder, Miner all already expose
+// RemainingPath, added for the route-line overlay, and this reuses it).
+// The source art's own default facing is treated as "right"; a unit with
+// no path right now (idle, or working at its post rather than walking)
+// keeps that default rather than flipping arbitrarily -- there's no
+// direction of travel to face.
+func facingLeft(x int, path []pathfind.Point) bool {
+	if len(path) == 0 {
+		return false
+	}
+	return path[0].X < x
+}
+
+// drawStandingFacingTintedAtScale is drawStandingTintedAtScale with an
+// optional horizontal mirror -- see facingLeft.
+func drawStandingFacingTintedAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall, tilePixels float64, clr color.Color, flip bool) {
+	drawStandingFacingScaled(screen, img, sx, sy, tilesTall, tilePixels, clr, flip)
+}
+
+func drawStandingFacingScaled(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall, tilePixels float64, clr color.Color, flip bool) {
 	b := img.Bounds()
 	native := float64(b.Dy())
 	scale := (tilesTall * tilePixels) / native
@@ -73,8 +102,18 @@ func drawStandingScaled(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTa
 	drawnH := native * scale
 
 	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(scale, scale)
-	op.GeoM.Translate(sx+tilePixels/2-drawnW/2, sy+tilePixels-drawnH)
+	if flip {
+		// A negative X scale mirrors the image around its own local
+		// origin, which extends it leftward instead of rightward -- the
+		// translate below has to land on the bounding box's *right*
+		// edge instead of its left for the final on-screen position to
+		// match the unflipped case exactly, just mirrored in place.
+		op.GeoM.Scale(-scale, scale)
+		op.GeoM.Translate(sx+tilePixels/2+drawnW/2, sy+tilePixels-drawnH)
+	} else {
+		op.GeoM.Scale(scale, scale)
+		op.GeoM.Translate(sx+tilePixels/2-drawnW/2, sy+tilePixels-drawnH)
+	}
 	op.ColorScale.ScaleWithColor(clr)
 	// The zero-value CompositeMode is CompositeModeCustom (not
 	// SourceOver!) with a zero-value Blend, which does NOT behave like
