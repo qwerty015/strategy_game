@@ -110,7 +110,11 @@ var (
 	HareFrames      = mustLoadAtlasFrames("generated/ambient_hare_run.png")
 	ButterflyFrames = mustLoadAtlasFrames("generated/ambient_butterfly_flap.png")
 	FoxFrames       = mustLoadAtlasFrames("generated/ambient_fox_trot.png")
-	FishingBoat     = mustLoad("generated/unit_fishing_boat.png")
+	// BirdFrames is a transparent three-frame wingbeat loop: raised,
+	// outstretched and lowered wings. Like the other ambient atlases, it is
+	// cosmetic only and is sliced once during startup.
+	BirdFrames  = mustLoadAtlasFrames("generated/ambient_bird_flap.png")
+	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 
 func mustDecode(name string) image.Image {

@@ -279,19 +279,31 @@ func drawAmbientBirds(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 		baseX += (x-math.Floor(x))*tilePixels + tilePixels*0.5
 		baseY += tilePixels * (0.18 + 0.12*float64((seed>>6)&1))
 		flutter := float64((animFrame/8+flock)%3-1) * tilePixels * 0.025
-		for _, bird := range formation {
-			drawBirdSilhouette(screen, baseX+bird.x*tilePixels, baseY+(bird.y*tilePixels)+flutter, tilePixels*bird.scale*1.28)
+		for index, bird := range formation {
+			// A single atlas advances through raised, horizontal and lowered
+			// wings. Offset flock and formation indices make the small V-shape
+			// feel organic instead of every bird beating in perfect unison.
+			frame := (animFrame/6 + flock + index) % len(assets.BirdFrames)
+			drawFlyingSprite(screen, assets.BirdFrames[frame], baseX+bird.x*tilePixels, baseY+bird.y*tilePixels+flutter, tilePixels*bird.scale*0.82)
 		}
 	}
 }
 
-func drawBirdSilhouette(screen *ebiten.Image, x, y, size float64) {
-	wing := float32(size * 0.30)
-	stroke := float32(maxPixel(size * 0.058))
-	bird := color.RGBA{R: 39, G: 35, B: 31, A: 238}
-	cx, cy := float32(x), float32(y)
-	vector.StrokeLine(screen, cx-wing, cy, cx, cy-wing*0.48, stroke, bird, true)
-	vector.StrokeLine(screen, cx, cy-wing*0.48, cx+wing, cy, stroke, bird, true)
+// drawFlyingSprite centres a sprite on a point in open air. Ground sprites
+// use drawStandingFacingScaled and anchor their feet at a tile edge; applying
+// that convention to birds would make their wingbeats visibly jump one tile.
+func drawFlyingSprite(screen *ebiten.Image, img *ebiten.Image, x, y, size float64) {
+	bounds := img.Bounds()
+	if size <= 0 || bounds.Dx() == 0 || bounds.Dy() == 0 {
+		return
+	}
+	scale := size / float64(bounds.Dy())
+	drawnWidth := float64(bounds.Dx()) * scale
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(scale, scale)
+	op.GeoM.Translate(x-drawnWidth/2, y-size/2)
+	op.Blend = ebiten.BlendSourceOver
+	screen.DrawImage(img, op)
 }
 
 // ambientHash is a tiny integer mixer for visual-only scheduling. It avoids
