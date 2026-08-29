@@ -35,6 +35,8 @@ const (
 	screenWidth  = 1024
 	screenHeight = 768
 	panSpeed     = 8 // pixels per frame while a pan key is held
+	edgePanSize  = 18
+	edgePanSpeed = 6
 
 	framesPerSimTick = 30 // simulation ticks run at 2/sec on a 60fps display
 
@@ -60,8 +62,8 @@ const (
 	mapWidth  = 50
 	mapHeight = 38
 
-	// Named save-panel slots (side panel, settings tab) live in their own
-	// files. Saving/loading is mouse-only through the Settings tab -- there
+	// Named save-panel slots (pause menu) live in their own
+	// files. Saving/loading is mouse-only from the Esc pause menu -- there
 	// is deliberately no keyboard-shortcut quicksave file alongside them.
 	slotPathFormat = "saves/panel_slot_%d.json"
 	slotCount      = 5
@@ -220,13 +222,15 @@ type Game struct {
 	demolitionMode bool
 	selection      ui.Selection
 	middlePanning  bool
+	leftPanning    bool
+	leftPanMoved   bool
 	lastMouseX     int
 	lastMouseY     int
 
-	// Settings tab save/load modal: dialog is DialogNone outside of the
+	// Esc pause menu save/load modal: dialog is DialogNone outside of the
 	// naming/overwrite flow, in which case dialogSlot/dialogText are unused.
 	// slotCache holds the five save-panel slots' names and occupancy, kept
-	// current so the settings tab can redraw it every frame without paying
+	// current so the Esc pause menu can redraw it every frame without paying
 	// the cost of reading and parsing five files every frame -- see
 	// refreshSlotCache.
 	dialog     ui.DialogKind
@@ -245,6 +249,11 @@ type Game struct {
 	autosaveTicks int
 
 	statusMsg string
+
+	// paused freezes every simulation tick and routes all input to the Esc
+	// menu. pauseHelp is the menu's embedded Markdown manual subpage.
+	paused    bool
+	pauseHelp bool
 
 	// screen is screenPlay during a running settlement. The other values use
 	// the same renderer for the title presentation, save picker and manual,
@@ -345,6 +354,15 @@ func (g *Game) Update() error {
 	}
 	if g.screen != screenPlay {
 		return g.updateFrontScreen()
+	}
+	if g.paused {
+		return g.updatePauseMenu()
+	}
+	// Esc always opens the pause menu before map input or the simulation can
+	// advance. Object-confirmation dialogs still own Esc and use it to cancel.
+	if g.dialog == ui.DialogNone && inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.openPauseMenu()
+		return nil
 	}
 	g.handleCameraPan()
 	g.handleCameraZoom()
@@ -476,14 +494,6 @@ func (g *Game) Update() error {
 		g.tickAutosave()
 	}
 
-	if g.dialog == ui.DialogNone && inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		if g.demolitionMode {
-			g.demolitionMode = false
-			g.statusMsg = ""
-			return nil
-		}
-		return ebiten.Termination
-	}
 	return nil
 }
 
@@ -772,65 +782,115 @@ func (g *Game) handleCameraPan() {
 	if ebiten.IsKeyPressed(ebiten.KeyDown) {
 		dy += panSpeed
 	}
+
+	mx, my := ebiten.CursorPosition()
+	mapRect := g.layout.MapRect()
+	mapPoint := image.Pt(mx, my)
+	// Moving the cursor to an edge scrolls only the playable map rectangle;
+	// side panels never trigger it. A fresh left click is excluded so selecting
+	// a border tile cannot nudge the target out from under the cursor.
+	if mapPoint.In(mapRect) && !ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle) && !g.leftPanning && !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		if mx-mapRect.Min.X < edgePanSize {
+			dx -= edgePanSpeed
+		} else if mapRect.Max.X-mx <= edgePanSize {
+			dx += edgePanSpeed
+		}
+		if my-mapRect.Min.Y < edgePanSize {
+			dy -= edgePanSpeed
+		} else if mapRect.Max.Y-my <= edgePanSize {
+			dy += edgePanSpeed
+		}
+	}
 	if dx != 0 || dy != 0 {
-		mapRect := g.layout.MapRect()
 		g.camera.Pan(dx, dy, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
 	}
 
-	mx, my := ebiten.CursorPosition()
-	mapPoint := image.Pt(mx, my)
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle) {
 		if !g.middlePanning {
-			if !mapPoint.In(g.layout.MapRect()) {
+			if !mapPoint.In(mapRect) {
 				return
 			}
 			g.middlePanning = true
 			g.lastMouseX, g.lastMouseY = mx, my
-		} else {
-			mapRect := g.layout.MapRect()
-			g.camera.Pan(float64(g.lastMouseX-mx), float64(g.lastMouseY-my), g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
-			g.lastMouseX, g.lastMouseY = mx, my
+			return
 		}
-	} else {
-		g.middlePanning = false
+		g.camera.Pan(float64(g.lastMouseX-mx), float64(g.lastMouseY-my), g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
+		g.lastMouseX, g.lastMouseY = mx, my
+		return
 	}
+	g.middlePanning = false
 }
 
-// handleCameraZoom accepts both the mouse wheel and keyboard shortcuts.
-// Zooming is limited to the map viewport so a wheel gesture over a side
-// panel never changes the inspector's apparent scale.
+// handleCameraZoom restores cursor-anchored wheel zoom for the map itself.
+// The pause menu intentionally has no duplicate zoom setting.
 func (g *Game) handleCameraZoom() {
 	mx, my := ebiten.CursorPosition()
 	if !image.Pt(mx, my).In(g.layout.MapRect()) {
 		return
 	}
 	_, wheelY := ebiten.Wheel()
-	delta := wheelY
-	if inpututil.IsKeyJustPressed(ebiten.KeyEqual) {
-		delta = 1
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyMinus) {
-		delta = -1
-	}
-	if delta != 0 {
-		mapRect := g.layout.MapRect()
-		g.camera.ZoomAt(delta, mx, my, g.grid.Width, g.grid.Height)
-		g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
+	if wheelY != 0 {
+		g.camera.ZoomAt(wheelY, mx, my, g.grid.Width, g.grid.Height)
 	}
 }
-
 func (g *Game) handleMouse() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
 		g.buildMode = false
 		g.demolitionMode = false
+		g.leftPanning = false
 		g.selection.Clear()
 		g.statusMsg = ""
 		return
 	}
-	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+
+	mx, my := ebiten.CursorPosition()
+	if g.handleLeftMapDrag(mx, my) {
 		return
 	}
-	mx, my := ebiten.CursorPosition()
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		g.handleLeftClick(mx, my)
+	}
+}
+
+// handleLeftMapDrag delays a map click until release. A short press remains a
+// normal select/build click; once the pointer travels beyond the dead zone,
+// holding the left button pans the camera and never changes selection.
+func (g *Game) handleLeftMapDrag(mx, my int) bool {
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		if !image.Pt(mx, my).In(g.layout.MapRect()) {
+			return false
+		}
+		g.leftPanning = true
+		g.leftPanMoved = false
+		g.lastMouseX, g.lastMouseY = mx, my
+		return true
+	}
+	if !g.leftPanning {
+		return false
+	}
+	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
+		dx, dy := g.lastMouseX-mx, g.lastMouseY-my
+		if !g.leftPanMoved && dx*dx+dy*dy < 25 {
+			return true
+		}
+		if dx != 0 || dy != 0 {
+			g.leftPanMoved = true
+			mapRect := g.layout.MapRect()
+			g.camera.Pan(float64(dx), float64(dy), g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
+			g.lastMouseX, g.lastMouseY = mx, my
+		}
+		return true
+	}
+
+	wasDrag := g.leftPanMoved
+	g.leftPanning = false
+	g.leftPanMoved = false
+	if !wasDrag {
+		g.handleLeftClick(mx, my)
+	}
+	return true
+}
+func (g *Game) handleLeftClick(mx, my int) {
 	if tab, ok := g.layout.MenuTabAt(mx, my); ok {
 		g.leftTab = tab
 		g.buildMode = false
@@ -845,31 +905,6 @@ func (g *Game) handleMouse() {
 			if index < len(options) && options[index].Available {
 				g.hireFromTab(options[index].Kind)
 			}
-			return
-		}
-	case ui.SettingsTab:
-		if lang, ok := g.layout.SettingsLangAt(mx, my); ok {
-			i18n.SetLang(lang)
-			return
-		}
-		if speed, ok := g.layout.SettingsSpeedAt(mx, my); ok {
-			g.sim.SetSpeed(speed)
-			return
-		}
-		if index, ok := g.layout.SettingsZoomAt(mx, my); ok {
-			g.camera.SetZoom(ui.ZoomPresets[index], g.grid.Width, g.grid.Height)
-			return
-		}
-		if g.layout.SettingsNewGameAt(mx, my) {
-			g.dialog = ui.DialogConfirmNewGame
-			return
-		}
-		if slot, ok := g.layout.SettingsSlotAutosaveAt(mx, my); ok {
-			g.toggleAutosaveSlot(slot)
-			return
-		}
-		if slot, action, ok := g.layout.SettingsSlotActionAt(mx, my); ok {
-			g.handleSettingsSlotAction(slot, action)
 			return
 		}
 	default:
@@ -917,16 +952,18 @@ func (g *Game) handleMouse() {
 		}
 		return
 	}
-	if selected := g.selectionAt(mx, my); selected.Kind != ui.SelectionNone {
+	if g.buildMode {
+		// Construction owns map clicks while a palette item is selected. A unit
+		// walking across the target tile must never steal the click from a road
+		// or other planned building.
+		g.selection.Clear()
+	} else if selected := g.selectionAt(mx, my); selected.Kind != ui.SelectionNone {
 		g.selection = selected
-		g.buildMode = false
+		return
+	} else {
+		g.selection.Clear()
 		return
 	}
-	g.selection.Clear()
-	if !g.buildMode {
-		return
-	}
-
 	tx, ty := g.camera.ScreenToTile(mx, my)
 
 	kind := g.palette.SelectedKind()
@@ -1389,7 +1426,7 @@ func slotPath(n int) string {
 
 // refreshSlotCache re-reads every save-panel slot's name and occupancy. It
 // is not called every frame -- only on startup and right after a save-panel
-// save -- so drawing the settings tab never has to touch disk.
+// save -- so drawing the Esc pause menu never has to touch disk.
 func (g *Game) refreshSlotCache() {
 	infos := make([]ui.SaveSlotInfo, slotCount)
 	for i := 0; i < slotCount; i++ {
@@ -1400,7 +1437,7 @@ func (g *Game) refreshSlotCache() {
 }
 
 // toggleAutosaveSlot designates slot as the periodic-autosave target, or
-// turns autosave off if that slot is already the target -- a settings-tab
+// turns autosave off if that slot is already the target -- a pause-menu
 // preference like language/speed, so it's deliberately not reset by New
 // Game or Load, and not written to any save file (a fresh launch always
 // starts with autosave off, same as every other live-only preference).
@@ -1458,18 +1495,18 @@ func (g *Game) autosave() {
 	g.refreshSlotCache()
 }
 
-// handleSettingsSlotAction executes a click on a save-panel slot's Save or
+// handleSaveSlotAction executes a click on a save-panel slot's Save or
 // Load button. Saving into an occupied slot opens a confirmation dialog
 // instead of overwriting immediately; saving into an empty slot goes
 // straight to naming. Loading an empty slot does nothing -- its Load button
 // is drawn muted for the same reason.
-func (g *Game) handleSettingsSlotAction(slot int, action ui.SettingsSlotAction) {
+func (g *Game) handleSaveSlotAction(slot int, action ui.SaveSlotAction) {
 	if slot < 1 || slot > slotCount {
 		return
 	}
 	info := g.slotCache[slot-1]
 	switch action {
-	case ui.SettingsSlotSave:
+	case ui.SaveSlotSave:
 		g.dialogSlot = slot
 		if info.Occupied {
 			g.dialog = ui.DialogConfirmOverwrite
@@ -1478,7 +1515,7 @@ func (g *Game) handleSettingsSlotAction(slot int, action ui.SettingsSlotAction) 
 			g.dialog = ui.DialogNaming
 			g.dialogText = ""
 		}
-	case ui.SettingsSlotLoad:
+	case ui.SaveSlotLoad:
 		if !info.Occupied {
 			return
 		}
@@ -1487,15 +1524,9 @@ func (g *Game) handleSettingsSlotAction(slot int, action ui.SettingsSlotAction) 
 }
 
 // handleDialogInput runs instead of the normal input handlers while a
-// settings-tab save/load modal is open (see Update).
+// pause-menu save/load modal is open (see Update).
 func (g *Game) handleDialogInput() {
 	switch g.dialog {
-	case ui.DialogConfirmOverwrite:
-		g.handleConfirmOverwriteInput()
-	case ui.DialogNaming:
-		g.handleNamingInput()
-	case ui.DialogConfirmNewGame:
-		g.handleConfirmNewGameInput()
 	case ui.DialogConfirmRemoval:
 		g.handleConfirmRemovalInput()
 	case ui.DialogConfirmDemolitionMode:
@@ -1556,34 +1587,8 @@ func (g *Game) handleConfirmDemolitionModeInput() {
 	}
 }
 
-// handleConfirmNewGameInput runs while the Settings tab's "New Game" confirm
-// dialog is open. Unlike the save-slot overwrite dialog (whose Enter/left
-// button just advances to a second, naming step), this one is a plain
-// confirm/cancel: Enter or the left button commit the reset immediately.
-func (g *Game) handleConfirmNewGameInput() {
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		g.dialog = ui.DialogNone
-		return
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
-		g.resetToNewGame()
-		return
-	}
-	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		return
-	}
-	mx, my := ebiten.CursorPosition()
-	if left, ok := g.layout.SettingsDialogButtonAt(mx, my); ok {
-		if left {
-			g.resetToNewGame()
-		} else {
-			g.dialog = ui.DialogNone
-		}
-	}
-}
-
 // resetToNewGame discards the running town and replaces it with a fresh one
-// -- the Settings tab's "New Game" button. The active language is a
+// -- the Esc pause menu's "New Game" button. The active language is a
 // package-level display preference (internal/i18n), not Game state, so it
 // survives the reset untouched. The current window layout is carried over
 // (and the fresh camera's viewport re-fitted to it) so the reset doesn't
@@ -1597,73 +1602,6 @@ func (g *Game) resetToNewGame() {
 	fresh.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
 	*g = *fresh
 	g.statusMsg = i18n.T().NewGameStarted
-}
-
-func (g *Game) handleConfirmOverwriteInput() {
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		g.dialog = ui.DialogNone
-		return
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
-		g.dialog = ui.DialogNaming
-		return
-	}
-	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		return
-	}
-	mx, my := ebiten.CursorPosition()
-	if left, ok := g.layout.SettingsDialogButtonAt(mx, my); ok {
-		if left {
-			g.dialog = ui.DialogNaming
-		} else {
-			g.dialog = ui.DialogNone
-		}
-	}
-}
-
-// handleNamingInput builds up g.dialogText from typed characters (capped at
-// maxSlotNameLen runes, so a Cyrillic name still counts letters and not
-// UTF-8 bytes), then commits or cancels the save on Enter/Escape or a click
-// on the dialog's buttons.
-func (g *Game) handleNamingInput() {
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		g.dialog = ui.DialogNone
-		return
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
-		if r := []rune(g.dialogText); len(r) > 0 {
-			g.dialogText = string(r[:len(r)-1])
-		}
-	}
-	for _, ch := range ebiten.AppendInputChars(nil) {
-		if ch < ' ' {
-			continue
-		}
-		if len([]rune(g.dialogText)) >= maxSlotNameLen {
-			break
-		}
-		g.dialogText += string(ch)
-	}
-
-	commit := inpututil.IsKeyJustPressed(ebiten.KeyEnter)
-	cancel := false
-	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		mx, my := ebiten.CursorPosition()
-		if left, ok := g.layout.SettingsDialogButtonAt(mx, my); ok {
-			if left {
-				commit = true
-			} else {
-				cancel = true
-			}
-		}
-	}
-	if cancel {
-		g.dialog = ui.DialogNone
-		return
-	}
-	if commit {
-		g.commitDialogSave()
-	}
 }
 
 // commitDialogSave saves the current game into g.dialogSlot under the typed
@@ -1720,7 +1658,7 @@ func (g *Game) saveGame(path, name string) error {
 
 // loadGame reads and restores a full game snapshot from path, replacing
 // every controller, the grid, and the stockpile in place. Used by both the
-// S/L quicksave keys and the settings tab's per-slot Load button.
+// S/L quicksave keys and the Esc pause menu's per-slot Load button.
 func (g *Game) loadGame(path string) error {
 	state, err := save.Load(path)
 	if err != nil {
@@ -1771,10 +1709,19 @@ func (g *Game) loadGame(path string) error {
 		// keep the newly migrated grove visible after the first load too.
 		g.camera.X = float64(4 * render.TileSize)
 	}
-	g.camera.Scale = state.CameraZoom
-	if g.camera.Scale <= 0 {
-		g.camera.Scale = 1
+	// Preserve the camera scale from a save. Zoom is a player-view preference,
+	// not simulation state, but restoring it keeps the saved camera position
+	// meaningful and makes wheel zoom feel consistent after loading.
+	scale := state.CameraZoom
+	if scale <= 0 {
+		scale = 1
 	}
+	if scale < 0.60 {
+		scale = 0.60
+	} else if scale > 2.50 {
+		scale = 2.50
+	}
+	g.camera.Scale = scale
 	mapRect := g.layout.MapRect()
 	g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
 	g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
@@ -1845,7 +1792,7 @@ func (g *Game) loadGame(path string) error {
 var errNoWarehouseInSave = errors.New("no warehouse in save")
 
 // loadAndReport calls loadGame and sets statusMsg to describe the outcome,
-// exactly like the S/L quicksave keys and the settings tab's per-slot Load
+// exactly like the S/L quicksave keys and the Esc pause menu's per-slot Load
 // button both need.
 func (g *Game) loadAndReport(path string) {
 	switch err := g.loadGame(path); {
@@ -3245,7 +3192,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.drawFrontScreen(screen)
 		return
 	}
-	render.Tick()
+	if !g.paused {
+		render.Tick()
+	}
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
 	// visibleConnectivity feeds both the building tint below and the
@@ -3311,11 +3260,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			priorityLevel = g.logi.Priority(g.selection.Building.Kind)
 		}
 	}
-	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts(), g.sim.Speed(), g.camera.Scale, g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts())
 	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog)
 
 	if g.statusMsg != "" {
 		ui.DrawText(screen, g.statusMsg, float64(g.layout.LeftWidth+12), 10)
+	}
+	if g.paused {
+		g.drawPauseMenu(screen)
 	}
 }
 
@@ -3331,6 +3283,7 @@ func main() {
 	i18n.SetLang(i18n.RU)
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
+	ebiten.SetFullscreen(true)
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetWindowTitle(i18n.T().WindowTitle)
 	if err := ebiten.RunGame(NewApplication()); err != nil {

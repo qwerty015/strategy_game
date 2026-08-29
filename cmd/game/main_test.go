@@ -971,7 +971,7 @@ func TestFinishConstructionDoesNotAutoSpawnAWorker(t *testing.T) {
 	}
 }
 
-// TestResetToNewGameDiscardsProgress covers the Settings tab's "New Game"
+// TestResetToNewGameDiscardsProgress covers the Esc pause menu's "New Game"
 // button: it must throw away every bit of the running town's mutable state
 // -- spent gold, deaths, the active selection, an open dialog -- and land
 // back on a game indistinguishable from a fresh NewGame().
@@ -1004,7 +1004,7 @@ func TestResetToNewGameDiscardsProgress(t *testing.T) {
 }
 
 // TestToggleAutosaveSlot_TogglesOnAndOff covers the pure state transitions
-// behind the settings tab's per-slot autosave toggle: picking a slot turns
+// behind the Esc pause menu's per-slot autosave toggle: picking a slot turns
 // it on, picking the *same* slot again turns it off, and picking a
 // *different* slot just switches the target directly without needing to
 // be turned off first.
@@ -1091,5 +1091,52 @@ func TestScaledDepositCellsUseResourceSpecificDensity(t *testing.T) {
 	}
 	if got, want := scaledDepositCells(area, percent), 700; got != want {
 		t.Fatalf("ore cells=%d, want %d (70%% of prior density)", got, want)
+	}
+}
+
+func TestBuildModePlacesRoadUnderWalkingUnitInsteadOfSelectingIt(t *testing.T) {
+	game := NewGame()
+	roadIndex := -1
+	for index, kind := range game.palette.Kinds {
+		if kind == building.Road {
+			roadIndex = index
+			break
+		}
+	}
+	if roadIndex < 0 || len(game.logi.Serfs) == 0 {
+		t.Fatal("test setup lacks a road palette item or serf")
+	}
+
+	mapRect := game.layout.MapRect()
+	targetX, targetY := -1, -1
+	for y := 0; y < game.grid.Height && targetX < 0; y++ {
+		for x := 0; x < game.grid.Width; x++ {
+			if !building.CanPlace(game.grid, game.buildings, building.Road, x, y) {
+				continue
+			}
+			sx, sy := game.camera.TileToScreen(x, y)
+			if sx >= float64(mapRect.Min.X) && sx < float64(mapRect.Max.X) && sy >= float64(mapRect.Min.Y) && sy < float64(mapRect.Max.Y) {
+				targetX, targetY = x, y
+				break
+			}
+		}
+	}
+	if targetX < 0 {
+		t.Fatal("no visible buildable road tile found")
+	}
+
+	serf := game.logi.Serfs[0]
+	serf.X, serf.Y = targetX, targetY
+	game.palette.Select(roadIndex)
+	game.buildMode = true
+	before := len(game.buildings)
+	sx, sy := game.camera.TileToScreen(targetX, targetY)
+	game.handleLeftClick(int(sx)+1, int(sy)+1)
+
+	if got := len(game.buildings); got != before+1 {
+		t.Fatalf("building count after road click = %d, want %d", got, before+1)
+	}
+	if game.selection.Kind != ui.SelectionNone {
+		t.Fatalf("selection after road click = %v, want none", game.selection.Kind)
 	}
 }

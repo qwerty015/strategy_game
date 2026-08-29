@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"strategy_game/internal/building"
+	"strategy_game/internal/render"
+)
 
 func TestParseHelpMarkdownSplitsPagesAndAssets(t *testing.T) {
 	pages := parseHelpMarkdown(`# Document title
@@ -50,5 +55,62 @@ func TestTitleActionAt(t *testing.T) {
 	}
 	if _, ok := titleActionAt(0, 0, 1280, 720); ok {
 		t.Fatal("empty point unexpectedly has an action")
+	}
+}
+
+func TestTitleShowcaseIsSelfContainedAndCoversAllDistricts(t *testing.T) {
+	game := &Game{}
+	game.populateTitleTown()
+	if game.grid == nil || game.grid.Width != titleMapWidth || game.grid.Height != titleMapHeight {
+		t.Fatalf("showcase grid = %#v, want %dx%d", game.grid, titleMapWidth, titleMapHeight)
+	}
+	counts := make(map[building.Kind]int)
+	for _, current := range game.buildings {
+		counts[current.Kind]++
+	}
+	for _, kind := range []building.Kind{
+		building.Farm, building.Winery, building.Warehouse, building.Tavern,
+		building.LumberjackHut, building.QuarryHut, building.MinerHut,
+		building.Smeltery, building.FisherHut, building.Road,
+	} {
+		if counts[kind] == 0 {
+			t.Fatalf("showcase lacks %v", kind)
+		}
+	}
+}
+
+func TestTitleShowcaseOpensOnBuildingsWithVisibleWorkers(t *testing.T) {
+	game := newGameWithSize(titleMapWidth, titleMapHeight)
+	game.populateTitleTown()
+	game.camera.Scale = titleMapZoom
+	game.camera.SetViewport(0, 0, screenWidth, screenHeight)
+	game.positionTitleCamera()
+
+	visible := game.camera.VisibleTileBounds(1)
+	standing := 0
+	for _, current := range game.buildings {
+		if current.Kind != building.Road && visible.Intersects(current.X, current.Y, building.Types[current.Kind].Footprint) {
+			standing++
+		}
+	}
+	if standing == 0 {
+		t.Fatal("opening title camera sees no standing buildings")
+	}
+	if len(game.vills.Villagers) == 0 || len(game.logi.Serfs) == 0 {
+		t.Fatalf("title workers: villagers=%d serfs=%d; want both groups visible", len(game.vills.Villagers), len(game.logi.Serfs))
+	}
+}
+func TestTitleCameraAxisPingPongsInsideMap(t *testing.T) {
+	worldPixels := float64(titleMapWidth * render.TileSize)
+	viewPixels := 960.0
+	left := titleCameraAxis(0, worldPixels, viewPixels, 0)
+	right := titleCameraAxis(titleCameraPeriod/2, worldPixels, viewPixels, 0)
+	back := titleCameraAxis(titleCameraPeriod, worldPixels, viewPixels, 0)
+	maximum := worldPixels - viewPixels - float64(titleCameraMarginTiles*render.TileSize)
+	if left < 0 || right > maximum || right <= left {
+		t.Fatalf("camera sweep = left %.1f, right %.1f, maximum %.1f", left, right, maximum)
+	}
+	if back != left {
+		t.Fatalf("camera after a full cycle = %.1f, want %.1f", back, left)
 	}
 }

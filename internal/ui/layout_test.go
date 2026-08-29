@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
-	"strategy_game/internal/economy"
-	"strategy_game/internal/i18n"
 )
 
 func TestLayoutKeepsPanelsAtWindowEdges(t *testing.T) {
@@ -124,8 +122,8 @@ func TestPriorityLevelAtCoversAllFiveSegments(t *testing.T) {
 	}
 }
 
-// TestMenuTabAtCoversAllThreeTabs checks the tab bar resolves a click in the
-// middle of each of the three tab buttons (Build, Hire, Settings) to that
+// TestMenuTabAtCoversVisibleTabs checks the tab bar resolves a click in the
+// middle of each visible tab button (Build and Hire) to that
 // tab, with no gaps between them wide enough to swallow a click.
 // TestInspectorRemoveButtonMovesAbovePriority keeps the selected object's
 // removal action clickable without covering the priority label or segments.
@@ -149,7 +147,7 @@ func TestInspectorRemoveButtonMovesAbovePriority(t *testing.T) {
 	}
 }
 
-func TestMenuTabAtCoversAllThreeTabs(t *testing.T) {
+func TestMenuTabAtCoversVisibleTabs(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	for i := 0; i < tabCount; i++ {
 		x, w := layout.tabRect(i)
@@ -163,117 +161,6 @@ func TestMenuTabAtCoversAllThreeTabs(t *testing.T) {
 	}
 	if _, ok := layout.MenuTabAt(20, leftTabY-5); ok {
 		t.Fatal("a click above the tab row resolved to a tab, want false")
-	}
-}
-
-// TestSettingsSlotActionAtCoversAllFiveSlots checks every slot's Save and
-// Load buttons resolve to the right 1-indexed slot and action, matching how
-// drawSettingsContent lays the row out (see settings* constants in layout.go).
-func TestSettingsSlotActionAtCoversAllFiveSlots(t *testing.T) {
-	layout := NewLayout(1024, 768)
-	startX := 12
-	w := layout.LeftWidth - 24
-	half := w / 2
-
-	for i := 0; i < settingsSlotCount; i++ {
-		rowY := settingsSlotsStartY + i*settingsSlotStride
-		btnY := rowY + settingsSlotNameH + settingsSlotButtonH/2
-
-		slot, action, ok := layout.SettingsSlotActionAt(startX+half/2, btnY)
-		if !ok || slot != i+1 || action != SettingsSlotSave {
-			t.Fatalf("slot %d save-half resolved to slot=%d action=%v ok=%v; want slot=%d action=Save ok=true", i+1, slot, action, ok, i+1)
-		}
-
-		slot, action, ok = layout.SettingsSlotActionAt(startX+half+half/2, btnY)
-		if !ok || slot != i+1 || action != SettingsSlotLoad {
-			t.Fatalf("slot %d load-half resolved to slot=%d action=%v ok=%v; want slot=%d action=Load ok=true", i+1, slot, action, ok, i+1)
-		}
-	}
-
-	if _, _, ok := layout.SettingsSlotActionAt(startX+half/2, settingsSlotsStartY); ok {
-		t.Fatal("a click on the name line (above the button row) resolved to an action, want false")
-	}
-}
-
-// TestSettingsSpeedAtCoversAllSevenSpeeds verifies every Option-tab speed
-// segment, including the highest 16x setting.
-func TestSettingsSpeedAtCoversAllSevenSpeeds(t *testing.T) {
-	layout := NewLayout(1024, 768)
-	startX := 12
-	w := layout.LeftWidth - 24
-	segW := w / 7
-
-	for i := 0; i <= int(economy.Sixteenfold); i++ {
-		got, ok := layout.SettingsSpeedAt(startX+i*segW+segW/2, settingsSpeedRowY+settingsSpeedRowH/2)
-		if !ok || got != economy.Speed(i) {
-			t.Fatalf("speed segment %d resolved to %v, %v; want %v, true", i, got, ok, economy.Speed(i))
-		}
-	}
-	if _, ok := layout.SettingsSpeedAt(startX, settingsSpeedRowY-5); ok {
-		t.Fatal("a click above the settings speed row resolved to a speed, want false")
-	}
-}
-
-// TestSettingsLangAtTogglesBothLanguages checks both halves of the
-// settings tab's language row resolve to the language they're labeled with.
-func TestSettingsLangAtTogglesBothLanguages(t *testing.T) {
-	layout := NewLayout(1024, 768)
-	startX := 12
-	w := layout.LeftWidth - 24
-	half := w / 2
-
-	got, ok := layout.SettingsLangAt(startX+half/2, settingsLangRowY+settingsLangRowH/2)
-	if !ok || got != i18n.RU {
-		t.Fatalf("left language button resolved to %v, %v; want %v, true", got, ok, i18n.RU)
-	}
-	got, ok = layout.SettingsLangAt(startX+half+half/2, settingsLangRowY+settingsLangRowH/2)
-	if !ok || got != i18n.EN {
-		t.Fatalf("right language button resolved to %v, %v; want %v, true", got, ok, i18n.EN)
-	}
-}
-
-// TestSettingsNewGameAtCoversItsRowOnly checks the "New Game" button's row
-// resolves to true only within its own bounds, and doesn't bleed into the
-// speed row above it or the save-slot list below it.
-func TestSettingsNewGameAtCoversItsRowOnly(t *testing.T) {
-	layout := NewLayout(1024, 768)
-	startX := 12
-	w := layout.LeftWidth - 24
-
-	if !layout.SettingsNewGameAt(startX+w/2, settingsNewGameRowY+settingsNewGameRowH/2) {
-		t.Fatal("a click in the middle of the New Game row resolved to false, want true")
-	}
-	if layout.SettingsNewGameAt(startX+w/2, settingsNewGameRowY-5) {
-		t.Fatal("a click above the New Game row resolved to true, want false")
-	}
-	if layout.SettingsNewGameAt(startX+w/2, settingsNewGameRowY+settingsNewGameRowH+5) {
-		t.Fatal("a click below the New Game row resolved to true, want false")
-	}
-	if layout.SettingsNewGameAt(startX-5, settingsNewGameRowY+settingsNewGameRowH/2) {
-		t.Fatal("a click left of the New Game row resolved to true, want false")
-	}
-}
-
-// TestSettingsDialogButtonAtCoversBothButtons checks the shared modal
-// button row (naming and overwrite-confirmation both use it) resolves left
-// vs right correctly, since a wrong read here would let a player who means
-// to cancel accidentally overwrite a slot instead.
-func TestSettingsDialogButtonAtCoversBothButtons(t *testing.T) {
-	layout := NewLayout(1024, 768)
-	startX := 12
-	w := layout.LeftWidth - 24
-	half := w / 2
-
-	left, ok := layout.SettingsDialogButtonAt(startX+half/2, settingsDialogButtonY+settingsDialogButtonH/2)
-	if !ok || !left {
-		t.Fatalf("left dialog button resolved to left=%v ok=%v; want left=true ok=true", left, ok)
-	}
-	left, ok = layout.SettingsDialogButtonAt(startX+half+half/2, settingsDialogButtonY+settingsDialogButtonH/2)
-	if !ok || left {
-		t.Fatalf("right dialog button resolved to left=%v ok=%v; want left=false ok=true", left, ok)
-	}
-	if _, ok := layout.SettingsDialogButtonAt(startX, settingsDialogButtonY-5); ok {
-		t.Fatal("a click above the dialog button row resolved to a button, want false")
 	}
 }
 

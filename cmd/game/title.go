@@ -16,15 +16,18 @@ import (
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/render"
 	"strategy_game/internal/ui"
+	"strategy_game/internal/villagers"
+	"strategy_game/internal/world"
 )
 
 const (
-	titleMapWidth  = 128
-	titleMapHeight = 96
-	titleMapZoom   = 2.00
-
-	gameTitleRU = "Земли ремесла"
-	gameTitleEN = "Lands of Craft"
+	// The title map is intentionally much wider than a typical window at 200%.
+	// The camera sweeps across it and reverses before either map edge is shown.
+	titleMapWidth          = 168
+	titleMapHeight         = 74
+	titleMapZoom           = 2.00
+	titleCameraPeriod      = 5400 // 90 seconds at 60 fps, left → right → left
+	titleCameraMarginTiles = 5
 )
 
 type appScreen uint8
@@ -54,14 +57,14 @@ type titleCopy struct {
 func activeTitleCopy() titleCopy {
 	if i18n.Current() == i18n.EN {
 		return titleCopy{
-			title: gameTitleEN, subtitle: "Build a living settlement",
+			title: i18n.T().WindowTitle, subtitle: "Build a living settlement",
 			newGame: "New game", load: "Load game", help: "Help",
 			back: "Back", previous: "Previous", next: "Next",
 			loadTitle: "Load a save", noSaves: "No saved games yet",
 		}
 	}
 	return titleCopy{
-		title: gameTitleRU, subtitle: "Постройте живое поселение",
+		title: i18n.T().WindowTitle, subtitle: "Постройте живое поселение",
 		newGame: "Новая игра", load: "Загрузить игру", help: "Справка",
 		back: "Назад", previous: "Назад", next: "Далее",
 		loadTitle: "Загрузить сохранение", noSaves: "Сохранений пока нет",
@@ -87,8 +90,10 @@ type helpPage struct {
 	lines []helpLine
 }
 
-// NewApplication creates a non-simulating presentation map first. NewGame
-// remains the gameplay factory used by tests and the in-game reset button.
+// NewApplication creates a non-simulating, self-contained presentation map.
+// It never reads, writes or reserves a player save slot: the title town is a
+// hand-authored showcase inspired by the first demo settlement's food,
+// workshop and mining districts. NewGame remains the normal gameplay factory.
 func NewApplication() *Game {
 	game := newGameWithSize(titleMapWidth, titleMapHeight)
 	game.screen = screenTitle
@@ -96,8 +101,7 @@ func NewApplication() *Game {
 	game.populateTitleTown()
 	game.camera.Scale = titleMapZoom
 	game.camera.SetViewport(0, 0, screenWidth, screenHeight)
-	game.camera.X = float64(8 * render.TileSize)
-	game.camera.Y = float64(6 * render.TileSize)
+	game.positionTitleCamera()
 	return game
 }
 
@@ -210,20 +214,48 @@ func (g *Game) advanceTitleCamera() {
 	if g.grid == nil || g.camera.Scale <= 0 {
 		return
 	}
-	// The presentation map stays at 200%; its movement wraps through a much
-	// larger demo world instead of reaching the edge and freezing.
-	g.camera.X += 0.16
-	g.camera.Y += math.Sin(float64(g.titleFrame)/240) * 0.012
-	visibleWidth := float64(g.layout.Width) / g.camera.Scale
-	visibleHeight := float64(g.layout.Height) / g.camera.Scale
-	maxX := float64(g.grid.Width*render.TileSize) - visibleWidth
-	maxY := float64(g.grid.Height*render.TileSize) - visibleHeight
-	if maxX > 0 && g.camera.X > maxX {
-		g.camera.X = 0
+	g.positionTitleCamera()
+}
+
+// positionTitleCamera moves through the wide showcase in a smooth ping-pong
+// cycle. It is intentionally not connected to map input or save-state camera
+// data, so the presentation cannot expose an edge or alter a player's save.
+func (g *Game) positionTitleCamera() {
+	if g.grid == nil || g.camera.Scale <= 0 {
+		return
 	}
-	if maxY > 0 && g.camera.Y > maxY {
-		g.camera.Y = 0
+	viewWidth := float64(g.layout.Width) / g.camera.Scale
+	viewHeight := float64(g.layout.Height) / g.camera.Scale
+	worldWidth := float64(g.grid.Width * render.TileSize)
+	worldHeight := float64(g.grid.Height * render.TileSize)
+	g.camera.X = titleCameraAxis(g.titleFrame, worldWidth, viewWidth, 0)
+	// Keep the showcase on the settlement band. The former independent vertical
+	// sweep often travelled over a road-only row while the actual town was just
+	// above or below it, which made the title screen look empty.
+	showcaseY := float64(20 * render.TileSize)
+	maxY := worldHeight - viewHeight
+	if maxY < 0 {
+		g.camera.Y = maxY / 2
+	} else if showcaseY > maxY {
+		g.camera.Y = maxY
+	} else {
+		g.camera.Y = showcaseY
 	}
+}
+
+// titleCameraAxis returns an in-bounds coordinate that travels to the far
+// side of an axis and then back. The cosine easing removes a mechanical hard
+// turn at either end while retaining the requested endless left/right feel.
+func titleCameraAxis(frame int, worldPixels, viewPixels float64, phase int) float64 {
+	margin := float64(titleCameraMarginTiles * render.TileSize)
+	minimum := margin
+	maximum := worldPixels - viewPixels - margin
+	if maximum <= minimum {
+		return (worldPixels - viewPixels) / 2
+	}
+	cycle := float64((frame+phase)%titleCameraPeriod) / titleCameraPeriod
+	progress := (1 - math.Cos(cycle*2*math.Pi)) / 2
+	return minimum + (maximum-minimum)*progress
 }
 
 func (g *Game) startNewGameFromTitle() {
@@ -236,45 +268,159 @@ func (g *Game) startNewGameFromTitle() {
 	*g = *fresh
 }
 
+// populateTitleTown builds a deliberately authored demonstration settlement.
+// It is independent from saves: clearing slot 1, moving the saves directory or
+// starting on a new computer cannot change this map. Its layout echoes the
+// player's demo: several farms and vineyards, a busy central store, then wood,
+// stone and ore work further along the road, with fishing by the shoreline.
 func (g *Game) populateTitleTown() {
-	kinds := []building.Kind{
-		building.Farm, building.Farm, building.Winery, building.Mill, building.Bakery,
-		building.Tavern, building.Warehouse, building.LumberjackHut, building.FisherHut,
-		building.PigFarm, building.MeatWorkshop, building.CarpentryWorkshop,
-		building.QuarryHut, building.MinerHut, building.Smeltery,
-	}
-	seed := uint32(0x6d2b79f5)
-	for _, kind := range kinds {
-		for attempt := 0; attempt < 180; attempt++ {
-			seed = seed*1664525 + 1013904223
-			footprint := building.Types[kind].Footprint
-			x := 4 + int(seed%uint32(g.grid.Width-footprint-8))
-			seed = seed*1664525 + 1013904223
-			y := 4 + int(seed%uint32(g.grid.Height-footprint-8))
-			if !building.CanPlace(g.grid, g.buildings, kind, x, y) {
-				continue
-			}
-			b := &building.Building{Kind: kind, X: x, Y: y}
-			if recipe := building.Types[kind].Recipe; recipe.TicksToProduce > 0 {
-				b.ProgressTicks = recipe.TicksToProduce / 2
-			} else if len(building.Types[kind].AltRecipes) > 0 {
-				b.ProgressTicks = 1
-			}
-			g.buildings = append(g.buildings, b)
-			entry := b.AccessPoint()
-			if g.grid.InBounds(entry.X, entry.Y) && building.CanPlace(g.grid, g.buildings, building.Road, entry.X, entry.Y) {
-				g.buildings = append(g.buildings, &building.Building{Kind: building.Road, X: entry.X, Y: entry.Y})
-			}
-			break
+	g.grid = world.NewGrid(titleMapWidth, titleMapHeight)
+	g.buildings = nil
+
+	// A calm irregular coast frames the settlement without cutting through it.
+	for x := 0; x < g.grid.Width; x++ {
+		shore := 61 + (x*7+x/9)%3
+		for y := shore; y < g.grid.Height; y++ {
+			g.grid.Set(x, y, world.Tile{Terrain: world.Water})
 		}
 	}
+
+	roads := make(map[titlePoint]struct{}, 256)
+	road := func(x, y int) {
+		point := titlePoint{x: x, y: y}
+		if !g.grid.InBounds(x, y) || g.grid.At(x, y).Terrain == world.Water {
+			return
+		}
+		if _, exists := roads[point]; exists {
+			return
+		}
+		roads[point] = struct{}{}
+		g.buildings = append(g.buildings, &building.Building{Kind: building.Road, X: x, Y: y})
+	}
+	hRoad := func(y, from, to int) {
+		for x := from; x <= to; x++ {
+			road(x, y)
+		}
+	}
+	vRoad := func(x, from, to int) {
+		for y := from; y <= to; y++ {
+			road(x, y)
+		}
+	}
+
+	// The long central spine lets the camera discover a new district as it
+	// travels, rather than showing one noisy random pile of buildings.
+	hRoad(35, 4, 163)
+	hRoad(57, 4, 163)
+	for _, x := range []int{10, 18, 29, 39, 51, 70, 86, 103, 118, 132, 146, 158} {
+		vRoad(x, 8, 57)
+	}
+	hRoad(9, 10, 70)
+	hRoad(20, 10, 70)
+	hRoad(47, 4, 158)
+
+	add := func(kind building.Kind, x, y int) *building.Building {
+		b := &building.Building{Kind: kind, X: x, Y: y}
+		if recipe := building.Types[kind].Recipe; recipe.TicksToProduce > 0 {
+			// Mature fields and active furnaces make the title town look lived-in
+			// even though its economy is intentionally frozen.
+			b.ProgressTicks = recipe.TicksToProduce * 4 / 5
+		}
+		g.buildings = append(g.buildings, b)
+		return b
+	}
+	addTree := func(x, y int) {
+		tree := building.NewTree(x, y)
+		tree.GrowthTicks = tree.GrowthTargetTicks
+		g.buildings = append(g.buildings, tree)
+	}
+	addOre := func(kind building.Kind, x, y int) {
+		g.buildings = append(g.buildings, building.NewOreDeposit(kind, x, y))
+	}
+
+	// Food district: wheat, wine, milling, baking and a pig farm as in the
+	// reference settlement, laid out as readable blocks instead of a copy of
+	// the save itself.
+	farmHomes := make([]*building.Building, 0, 3)
+	for _, point := range []titlePoint{{12, 23}, {21, 23}, {12, 27}} {
+		farmHomes = append(farmHomes, add(building.Farm, point.x, point.y))
+	}
+	wineryHomes := make([]*building.Building, 0, 3)
+	for _, point := range []titlePoint{{42, 23}, {53, 23}, {42, 27}} {
+		wineryHomes = append(wineryHomes, add(building.Winery, point.x, point.y))
+	}
+	add(building.Mill, 64, 31)
+	add(building.Bakery, 68, 31)
+	add(building.PigFarm, 74, 31)
+	add(building.MeatWorkshop, 79, 31)
+
+	// Central exchange: warehouse/tavern pair, plus a second processing row.
+	add(building.Warehouse, 76, 31)
+	add(building.Tavern, 82, 31)
+	add(building.Mill, 88, 31)
+	add(building.Bakery, 92, 31)
+	add(building.PigFarm, 97, 31)
+	add(building.MeatWorkshop, 101, 31)
+
+	// Workshops and raw materials form the final third of the tour.
+	add(building.LumberjackHut, 108, 31)
+	add(building.CarpentryWorkshop, 113, 31)
+	add(building.QuarryHut, 124, 31)
+	add(building.MinerHut, 138, 31)
+	add(building.Smeltery, 143, 31)
+	for _, point := range []titlePoint{{105, 16}, {110, 18}, {114, 14}, {118, 20}, {121, 16}, {116, 25}, {111, 28}} {
+		addTree(point.x, point.y)
+	}
+	for _, point := range []titlePoint{{126, 18}, {129, 19}, {132, 17}, {127, 22}, {131, 23}} {
+		g.buildings = append(g.buildings, building.NewStoneDeposit(point.x, point.y))
+	}
+	for _, point := range []titlePoint{{145, 18}, {148, 18}, {150, 21}, {154, 20}} {
+		addOre(building.CoalDeposit, point.x, point.y)
+	}
+	for _, point := range []titlePoint{{151, 25}, {155, 26}} {
+		addOre(building.IronOreDeposit, point.x, point.y)
+	}
+	addOre(building.GoldOreDeposit, 158, 22)
+
+	// Fisher huts look out over the water while the road remains on land.
+	for _, x := range []int{16, 45, 92, 119, 151} {
+		shore := 61 + (x*7+x/9)%3
+		add(building.FisherHut, x, shore-1)
+	}
+	// Title workers are real renderable units, but the title never advances the
+	// economy. Farmers and winemakers animate among the mature fields while
+	// serfs stand along the road, making the showcase read as a living town.
+	if g.vills != nil {
+		for _, home := range farmHomes {
+			g.vills.Spawn(villagers.Farmer, home)
+		}
+		for _, home := range wineryHomes {
+			g.vills.Spawn(villagers.Winemaker, home)
+		}
+	}
+	if g.logi != nil {
+		serfPositions := []titlePoint{{30, 35}, {58, 35}, {72, 35}, {90, 35}, {116, 35}, {136, 35}, {153, 35}}
+		for index, serf := range g.logi.Serfs {
+			point := serfPositions[index%len(serfPositions)]
+			serf.X, serf.Y = point.x, point.y
+		}
+	}
+	for _, point := range []titlePoint{{24, 65}, {33, 67}, {54, 64}, {97, 66}, {123, 67}, {140, 65}} {
+		fish := building.NewFish(point.x, point.y)
+		fish.GrowthTicks = fish.GrowthTargetTicks * 2 / 3
+		g.buildings = append(g.buildings, fish)
+	}
 }
+
+type titlePoint struct{ x, y int }
 
 func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
 	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
 	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, map[*building.Building]bool{}, map[*building.Building]bool{})
+	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
+	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
 	render.DrawAmbientSkyLife(screen, g.grid, g.camera)
 	render.DrawAtmosphericOverlay(screen, g.grid, g.camera)
 	vector.FillRect(screen, 0, 0, float32(g.layout.Width), float32(g.layout.Height), color.RGBA{R: 19, G: 20, B: 23, A: 124}, false)

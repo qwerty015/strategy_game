@@ -163,5 +163,13 @@ func init() {
 		NewGameConfirmPrompt: "Start over? All current progress will be lost.",
 		NewGameConfirmButton: "Start over",
 		NewGameStarted:       "New game started.",
+
+		PauseMenuTitle:    "Game paused",
+		ResumeButton:      "Resume",
+		HelpButton:        "Help",
+		ExitButton:        "Exit game",
+		ExitConfirmPrompt: "Exit the game? Unsaved progress will be lost.",
+		ExitConfirmButton: "Exit",
+		LanguageLabel:     "Language",
 	})
 }

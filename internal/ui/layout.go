@@ -2,17 +2,7 @@ package ui
 
 import (
 	"image"
-
-	"strategy_game/internal/economy"
-	"strategy_game/internal/i18n"
 )
-
-// ZoomPresets are the discrete zoom levels offered by the Settings tab's
-// zoom row -- the two ends deliberately match render's own minZoom/maxZoom
-// exactly, so the leftmost/rightmost buttons really do reach the same
-// limits the mouse wheel's ZoomAt is clamped to, not an arbitrary near
-// value.
-var ZoomPresets = [...]float64{0.60, 1.00, 1.50, 2.00, 2.50}
 
 // Layout defines the screen regions shared by drawing and mouse hit-testing.
 // Keeping these rectangles in one place prevents the UI from drifting away
@@ -125,7 +115,7 @@ func (l Layout) MapRect() image.Rectangle {
 }
 
 const (
-	tabCount = 3 // Build, Hire, Settings
+	tabCount = 2 // Build, Hire; game options live in the Esc pause menu.
 	tabGap   = 4
 )
 
@@ -287,176 +277,4 @@ func (l Layout) PriorityLevelAt(x, y int) (int, bool) {
 		return 0, false
 	}
 	return index - 2, true
-}
-
-// Settings tab layout: a language row, the game's only speed-control row, a
-// save-slot list, and -- in place of the slot list while a modal is open -- a naming
-// or overwrite-confirmation dialog. Every offset here is shared between
-// drawing (see drawSettingsContent/drawSettingsDialog) and hit-testing
-// below, so the two can never disagree about where a button is.
-const (
-	settingsLangRowY = leftCardsStartY // 82
-	settingsLangRowH = 26
-
-	settingsSpeedRowY = settingsLangRowY + settingsLangRowH + 10
-	settingsSpeedRowH = 30
-
-	// settingsZoomRowY/H is a row of preset zoom buttons (see ZoomPresets),
-	// docked right under the speed row -- a keyboard/mouse-click way to set
-	// camera zoom, alongside the pre-existing mouse-wheel ZoomAt.
-	settingsZoomRowY = settingsSpeedRowY + settingsSpeedRowH + 10
-	settingsZoomRowH = 26
-
-	// settingsNewGameRowY/H is the full-width "New Game" button, docked
-	// between the zoom row and the save-slot list -- always visible (like
-	// the language/speed/zoom rows), unlike the slot list which the confirm
-	// dialog below temporarily replaces.
-	settingsNewGameRowY = settingsZoomRowY + settingsZoomRowH + 14
-	settingsNewGameRowH = 28
-
-	settingsSlotsLabelY = settingsNewGameRowY + settingsNewGameRowH + 20
-	settingsSlotsStartY = settingsSlotsLabelY + 18
-	settingsSlotNameH   = 20
-	settingsSlotButtonH = 26
-	settingsSlotStride  = 58
-	settingsSlotCount   = 5
-	// settingsSlotAutoW is the small on/off toggle docked at the right
-	// edge of each slot's name row -- "напротив слота", designating that
-	// slot as the periodic autosave target (see Game.autosave).
-	settingsSlotAutoW = 46
-
-	settingsDialogFieldY  = settingsSlotsLabelY + 20
-	settingsDialogFieldH  = 28
-	settingsDialogButtonY = settingsDialogFieldY + settingsDialogFieldH + 14
-	settingsDialogButtonH = 30
-)
-
-// SettingsLangAt returns the language button under the cursor, in the
-// settings tab's own language row.
-func (l Layout) SettingsLangAt(x, y int) (i18n.Lang, bool) {
-	if y < settingsLangRowY || y >= settingsLangRowY+settingsLangRowH {
-		return i18n.RU, false
-	}
-	startX := 12
-	w := l.LeftWidth - 24
-	segW := w / 2
-	if segW <= 0 || x < startX || x >= startX+w {
-		return i18n.RU, false
-	}
-	if x < startX+segW {
-		return i18n.RU, true
-	}
-	return i18n.EN, true
-}
-
-// SettingsSpeedAt returns the speed button under the cursor within the
-// settings tab's speed row. Speed is intentionally configured only here.
-func (l Layout) SettingsSpeedAt(x, y int) (economy.Speed, bool) {
-	if y < settingsSpeedRowY || y >= settingsSpeedRowY+settingsSpeedRowH {
-		return economy.Normal, false
-	}
-	startX := 12
-	w := l.LeftWidth - 24
-	segW := w / (int(economy.Sixteenfold) + 1)
-	if segW <= 0 || x < startX {
-		return economy.Normal, false
-	}
-	index := (x - startX) / segW
-	if index < 0 || index > int(economy.Sixteenfold) || x >= startX+(index+1)*segW {
-		return economy.Normal, false
-	}
-	return economy.Speed(index), true
-}
-
-// SettingsZoomAt returns the index into ZoomPresets under the cursor
-// within the settings tab's zoom row.
-func (l Layout) SettingsZoomAt(x, y int) (int, bool) {
-	if y < settingsZoomRowY || y >= settingsZoomRowY+settingsZoomRowH {
-		return 0, false
-	}
-	startX := 12
-	w := l.LeftWidth - 24
-	segW := w / len(ZoomPresets)
-	if segW <= 0 || x < startX {
-		return 0, false
-	}
-	index := (x - startX) / segW
-	if index < 0 || index >= len(ZoomPresets) || x >= startX+(index+1)*segW {
-		return 0, false
-	}
-	return index, true
-}
-
-// SettingsNewGameAt reports whether the cursor is over the settings tab's
-// "New Game" button. Callers must also check that no dialog is currently
-// open (see Update's dialog branch), the same way every other settings-tab
-// hit-test already implicitly relies on handleMouse not running then.
-func (l Layout) SettingsNewGameAt(x, y int) bool {
-	if y < settingsNewGameRowY || y >= settingsNewGameRowY+settingsNewGameRowH {
-		return false
-	}
-	startX := 12
-	w := l.LeftWidth - 24
-	return x >= startX && x < startX+w
-}
-
-// SettingsSlotActionAt returns which save-slot button (1-5) the cursor is
-// over, and whether it's the Save or Load half of that slot's row. Slots
-// are 1-indexed to match the on-screen numbering the player names against.
-func (l Layout) SettingsSlotActionAt(x, y int) (int, SettingsSlotAction, bool) {
-	startX := 12
-	w := l.LeftWidth - 24
-	for i := 0; i < settingsSlotCount; i++ {
-		rowY := settingsSlotsStartY + i*settingsSlotStride
-		btnY := rowY + settingsSlotNameH
-		if y < btnY || y >= btnY+settingsSlotButtonH {
-			continue
-		}
-		if x < startX || x >= startX+w {
-			return 0, SettingsSlotNone, false
-		}
-		half := w / 2
-		if x < startX+half {
-			return i + 1, SettingsSlotSave, true
-		}
-		return i + 1, SettingsSlotLoad, true
-	}
-	return 0, SettingsSlotNone, false
-}
-
-// SettingsSlotAutosaveAt returns which save-slot's autosave toggle (1-5)
-// the cursor is over -- a small button docked at the right edge of the
-// slot's *name* row, not the Save/Load button row below it, so it doesn't
-// need to shrink either of those two existing buttons.
-func (l Layout) SettingsSlotAutosaveAt(x, y int) (int, bool) {
-	startX := 12
-	w := l.LeftWidth - 24
-	autoX := startX + w - settingsSlotAutoW
-	for i := 0; i < settingsSlotCount; i++ {
-		rowY := settingsSlotsStartY + i*settingsSlotStride
-		if y < rowY || y >= rowY+settingsSlotNameH {
-			continue
-		}
-		if x < autoX || x >= startX+w {
-			return 0, false
-		}
-		return i + 1, true
-	}
-	return 0, false
-}
-
-// SettingsDialogButtonAt returns which half of the settings tab's modal
-// button row the cursor is over: true for the left (confirm) button, false
-// for the right (cancel) button. The row sits at a fixed offset shared by
-// both the naming and overwrite-confirmation dialogs.
-func (l Layout) SettingsDialogButtonAt(x, y int) (bool, bool) {
-	if y < settingsDialogButtonY || y >= settingsDialogButtonY+settingsDialogButtonH {
-		return false, false
-	}
-	startX := 12
-	w := l.LeftWidth - 24
-	if x < startX || x >= startX+w {
-		return false, false
-	}
-	return x < startX+w/2, true
 }

@@ -21,8 +21,8 @@ const (
 )
 
 // DrawAtmosphericOverlay paints a small, bounded finishing layer over the map:
-// slow cloud shadows, occasional rain, rain ripples and a restrained evening
-// tint. It never walks the full grid or draws over the fixed UI side panels.
+// slow cloud shadows, occasional rain, rain ripples and a restrained warm evening
+// darkening. It never walks the full grid or draws over the fixed UI side panels.
 func DrawAtmosphericOverlay(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 	viewX, viewY, viewWidth, viewHeight := cam.Viewport()
 	if viewWidth <= 0 || viewHeight <= 0 {
@@ -56,7 +56,7 @@ func atmosphericRain() (raining bool, phase int) {
 func drawRain(screen *ebiten.Image, cam *Camera, viewX, viewY, viewWidth, viewHeight, phase int) {
 	tilePixels := cam.TilePixels()
 	cycle := animFrame / atmosphereWeatherCycleFrames
-	lineColor := color.RGBA{R: 171, G: 205, B: 218, A: 156}
+	lineColor := color.RGBA{R: 196, G: 197, B: 182, A: 156}
 	for index := 0; index < 120; index++ {
 		seed := ambientHash(uint32(cycle)*668265263 + uint32(index)*374761393)
 		x := float64(viewX) + float64(seed%uint32(viewWidth))
@@ -87,22 +87,22 @@ func drawRainRipples(screen *ebiten.Image, g *world.Grid, cam *Camera, phase int
 		cx := float32(sx + tilePixels*(0.24+0.54*float64((seed>>7)&0xff)/255))
 		cy := float32(sy + tilePixels*(0.27+0.46*float64((seed>>18)&0xff)/255))
 		radius := float32(tilePixels * (0.10 + 0.035*float64(index%3)))
-		vector.StrokeCircle(screen, cx, cy, radius, maxPixel(tilePixels*0.030), color.RGBA{R: 184, G: 214, B: 223, A: 150}, true)
+		vector.StrokeCircle(screen, cx, cy, radius, maxPixel(tilePixels*0.030), color.RGBA{R: 203, G: 204, B: 188, A: 150}, true)
 	}
 }
 
 func drawRainShade(screen *ebiten.Image, viewX, viewY, viewWidth, viewHeight int) {
-	// A cool, low-alpha wash gives rain a cloudy, wet atmosphere while
-	// preserving the clarity of roads, buildings and selection markers.
-	vector.FillRect(screen, float32(viewX), float32(viewY), float32(viewWidth), float32(viewHeight), color.RGBA{R: 39, G: 61, B: 74, A: 31}, false)
+	// A neutral warm wash gives rain a cloudy, wet atmosphere without turning
+	// the entire settlement blue.
+	vector.FillRect(screen, float32(viewX), float32(viewY), float32(viewWidth), float32(viewHeight), color.RGBA{R: 66, G: 58, B: 45, A: 24}, false)
 }
 func drawEveningTint(screen *ebiten.Image, viewX, viewY, viewWidth, viewHeight int) {
 	twilight := atmosphericTwilight()
 	if twilight <= 0 {
 		return
 	}
-	// At its darkest the overlay is still translucent enough to keep road
-	// connections and resource icons legible on the map.
-	alpha := uint8(16 + int(twilight*38))
-	vector.FillRect(screen, float32(viewX), float32(viewY), float32(viewWidth), float32(viewHeight), color.RGBA{R: 61, G: 43, B: 81, A: alpha}, false)
+	// The darkening stays amber and restrained; the former blue-violet wash
+	// made the entire map look like an opaque cold screen.
+	alpha := uint8(10 + int(twilight*28))
+	vector.FillRect(screen, float32(viewX), float32(viewY), float32(viewWidth), float32(viewHeight), color.RGBA{R: 104, G: 63, B: 31, A: alpha}, false)
 }

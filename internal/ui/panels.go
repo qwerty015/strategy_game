@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"image/color"
-	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -42,20 +41,16 @@ func drawPanel(screen *ebiten.Image, r imageRect, title string) {
 // from image.Rectangle arithmetic and make the intended pixel layout clear.
 type imageRect struct{ x, y, w, h int }
 
-// DrawBuildPanel renders construction, NPC hiring and settings in the same
-// left panel. A professional card is muted when every matching workplace
-// already has a resident, making the one-worker-per-building limit visible.
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int, speed economy.Speed, zoom float64, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
+// DrawBuildPanel renders the two always-available world actions: construction
+// and NPC hiring. Pause/options, saves and speed live behind Esc, so map input
+// remains focused on the settlement itself.
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
 	drawMenuTabs(screen, layout, tab)
-	switch tab {
-	case HireTab:
+	if tab == HireTab {
 		drawHireCards(screen, layout, options)
-		return
-	case SettingsTab:
-		drawSettingsContent(screen, layout, speed, zoom, slots, dialog, dialogSlot, dialogText)
 		return
 	}
 	drawDemolitionModeButton(screen, layout, demolitionMode)
@@ -84,21 +79,8 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 	}
 }
 
-// closestZoomPreset returns the index of the ZoomPresets entry nearest to
-// zoom, for highlighting a button even when the actual camera scale (set
-// by the mouse wheel, or landing between two presets after clamping) is
-// not an exact match.
-func closestZoomPreset(zoom float64) int {
-	best, bestDist := 0, math.MaxFloat64
-	for i, preset := range ZoomPresets {
-		dist := math.Abs(preset - zoom)
-		if dist < bestDist {
-			best, bestDist = i, dist
-		}
-	}
-	return best
-}
-
+// drawDemolitionModeButton arms or disarms continuous removal from the
+// construction panel. One confirmation still happens before this state is set.
 func drawDemolitionModeButton(screen *ebiten.Image, layout Layout, active bool) {
 	r := layout.DemolitionModeRect()
 	fill := panelInnerColor
@@ -111,8 +93,11 @@ func drawDemolitionModeButton(screen *ebiten.Image, layout Layout, active bool) 
 	vector.FillRect(screen, float32(r.Min.X), float32(r.Max.Y-3), float32(r.Dx()), 3, panelEdgeColor, false)
 	DrawMenuText(screen, label, float64(r.Min.X+8), float64(r.Min.Y+8))
 }
+
+// drawMenuTabs renders only the two world-action tabs. Settings, saves and
+// speed deliberately live in the centered Esc pause menu rather than here.
 func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
-	labels := []string{i18n.T().BuildTab, i18n.T().HireTab, i18n.T().SettingsTab}
+	labels := []string{i18n.T().BuildTab, i18n.T().HireTab}
 	for i, label := range labels {
 		x, w := layout.tabRect(i)
 		fill := panelInnerColor
@@ -123,133 +108,6 @@ func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
 		DrawMenuText(screen, label, float64(x+4), float64(leftTabY+9))
 	}
 }
-
-// drawSettingsContent renders the settings tab: a live language switch, the
-// game's single speed-control row, and the five named save slots -- or, while
-// a modal is open, the naming/overwrite dialog in place of the slot list. See
-// Layout's settings* constants for the shared geometry.
-func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Speed, zoom float64, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
-	t := i18n.T()
-	x := 12
-	w := layout.LeftWidth - 24
-
-	langs := []struct {
-		lang  i18n.Lang
-		label string
-	}{{i18n.RU, "Русский"}, {i18n.EN, "English"}}
-	langSegW := w / 2
-	for i, entry := range langs {
-		bx := x + i*langSegW
-		fill := panelInnerColor
-		if i18n.Current() == entry.lang {
-			fill = selectedColor
-		}
-		vector.FillRect(screen, float32(bx), float32(settingsLangRowY), float32(langSegW-2), float32(settingsLangRowH), fill, false)
-		DrawMenuText(screen, entry.label, float64(bx+6), float64(settingsLangRowY+5))
-	}
-
-	speedLabels := []string{t.SpeedPaused, t.SpeedHalf, t.SpeedNormal, t.SpeedDouble, t.SpeedQuadruple, t.SpeedOctuple, t.SpeedSixteenfold}
-	speedSegW := w / len(speedLabels)
-	for i, label := range speedLabels {
-		bx := x + i*speedSegW
-		fill := panelInnerColor
-		if economy.Speed(i) == speed {
-			fill = selectedColor
-		}
-		vector.FillRect(screen, float32(bx), float32(settingsSpeedRowY), float32(speedSegW-2), float32(settingsSpeedRowH), fill, false)
-		DrawCompactMenuText(screen, label, float64(bx+4), float64(settingsSpeedRowY+8))
-	}
-
-	zoomSegW := w / len(ZoomPresets)
-	for i, preset := range ZoomPresets {
-		bx := x + i*zoomSegW
-		fill := panelInnerColor
-		// The active button is whichever preset the current zoom is
-		// closest to, not an exact match -- the player can still reach
-		// in-between levels with the mouse wheel, and that shouldn't
-		// leave the row looking like nothing is selected at all.
-		if i == closestZoomPreset(zoom) {
-			fill = selectedColor
-		}
-		vector.FillRect(screen, float32(bx), float32(settingsZoomRowY), float32(zoomSegW-2), float32(settingsZoomRowH), fill, false)
-		DrawCompactMenuText(screen, fmt.Sprintf("%d%%", int(preset*100)), float64(bx+4), float64(settingsZoomRowY+7))
-	}
-
-	vector.FillRect(screen, float32(x), float32(settingsNewGameRowY), float32(w), float32(settingsNewGameRowH), panelInnerColor, false)
-	DrawMenuText(screen, t.NewGameButton, float64(x+8), float64(settingsNewGameRowY+6))
-
-	if IsSettingsDialog(dialog) {
-		drawSettingsDialog(screen, layout, dialog, dialogSlot, dialogText)
-		return
-	}
-
-	DrawMenuText(screen, t.SaveSlotsLabel, float64(x), float64(settingsSlotsLabelY))
-	for i := 0; i < len(slots) && i < settingsSlotCount; i++ {
-		slot := slots[i]
-		rowY := settingsSlotsStartY + i*settingsSlotStride
-		name := slot.Name
-		if !slot.Occupied {
-			name = t.SlotEmptyLabel
-		}
-		DrawMenuText(screen, fmt.Sprintf("%d. %s", i+1, name), float64(x), float64(rowY))
-
-		autoX := x + w - settingsSlotAutoW
-		autoFill := panelInnerColor
-		if slot.Autosave {
-			autoFill = selectedColor
-		}
-		vector.FillRect(screen, float32(autoX), float32(rowY), float32(settingsSlotAutoW-2), float32(settingsSlotNameH-2), autoFill, false)
-		DrawCompactMenuText(screen, t.AutosaveToggle, float64(autoX+4), float64(rowY+4))
-
-		btnY := rowY + settingsSlotNameH
-		halfW := w / 2
-		vector.FillRect(screen, float32(x), float32(btnY), float32(halfW-2), float32(settingsSlotButtonH), panelInnerColor, false)
-		DrawMenuText(screen, t.SlotSaveButton, float64(x+4), float64(btnY+5))
-
-		loadFill := panelInnerColor
-		if !slot.Occupied {
-			loadFill = color.RGBA{R: 69, G: 50, B: 48, A: 245}
-		}
-		vector.FillRect(screen, float32(x+halfW), float32(btnY), float32(halfW-2), float32(settingsSlotButtonH), loadFill, false)
-		DrawMenuText(screen, t.SlotLoadButton, float64(x+halfW+4), float64(btnY+5))
-	}
-}
-
-// drawSettingsDialog renders the modal that replaces the slot list while
-// the player is naming a slot or confirming an overwrite. Both dialog kinds
-// share the same button row geometry (see SettingsDialogButtonAt) -- only
-// the title text and the presence of the text field differ.
-func drawSettingsDialog(screen *ebiten.Image, layout Layout, dialog DialogKind, slot int, text string) {
-	t := i18n.T()
-	x := 12
-	w := layout.LeftWidth - 24
-
-	if dialog == DialogConfirmOverwrite {
-		DrawMenuText(screen, fmt.Sprintf(t.SlotOverwritePrompt, slot, text), float64(x), float64(settingsSlotsLabelY))
-		drawDialogButtons(screen, x, w, t.SlotOverwriteButton, t.SlotCancelButton)
-		return
-	}
-
-	if dialog == DialogConfirmNewGame {
-		DrawMenuText(screen, t.NewGameConfirmPrompt, float64(x), float64(settingsSlotsLabelY))
-		drawDialogButtons(screen, x, w, t.NewGameConfirmButton, t.SlotCancelButton)
-		return
-	}
-
-	DrawMenuText(screen, fmt.Sprintf(t.SlotNamePrompt, slot), float64(x), float64(settingsSlotsLabelY))
-	vector.FillRect(screen, float32(x), float32(settingsDialogFieldY), float32(w), float32(settingsDialogFieldH), panelInnerColor, false)
-	DrawMenuText(screen, text+"_", float64(x+6), float64(settingsDialogFieldY+7))
-	drawDialogButtons(screen, x, w, t.SlotSaveButton, t.SlotCancelButton)
-}
-
-func drawDialogButtons(screen *ebiten.Image, x, w int, leftLabel, rightLabel string) {
-	halfW := w / 2
-	vector.FillRect(screen, float32(x), float32(settingsDialogButtonY), float32(halfW-2), float32(settingsDialogButtonH), selectedColor, false)
-	DrawMenuText(screen, leftLabel, float64(x+8), float64(settingsDialogButtonY+7))
-	vector.FillRect(screen, float32(x+halfW), float32(settingsDialogButtonY), float32(halfW-2), float32(settingsDialogButtonH), panelInnerColor, false)
-	DrawMenuText(screen, rightLabel, float64(x+halfW+8), float64(settingsDialogButtonY+7))
-}
-
 func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {
 	stride, cardH := layout.cardGeometry(len(options))
 	for i, option := range options {

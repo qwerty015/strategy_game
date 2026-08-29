@@ -1,7 +1,6 @@
 package ui
 
-// SaveSlotInfo is the read-only display state of one save-panel slot, as
-// shown in the settings tab's slot list.
+// SaveSlotInfo is the read-only display state of one Esc pause-menu slot.
 type SaveSlotInfo struct {
 	Name     string
 	Occupied bool
@@ -10,19 +9,17 @@ type SaveSlotInfo struct {
 	Autosave bool
 }
 
-// SettingsSlotAction identifies which half of a save-slot row the cursor is
-// over: its Save button or its Load button.
-type SettingsSlotAction int
+// SaveSlotAction identifies the save or load request for a pause-menu slot.
+type SaveSlotAction int
 
 const (
-	SettingsSlotNone SettingsSlotAction = iota
-	SettingsSlotSave
-	SettingsSlotLoad
+	SaveSlotNone SaveSlotAction = iota
+	SaveSlotSave
+	SaveSlotLoad
 )
 
-// DialogKind is the active side-panel modal: the settings tab owns save/load
-// dialogs, while the inspector owns the generic confirmation before any
-// removable unit or building is changed.
+// DialogKind identifies the active confirmation or save dialog. The pause menu
+// owns save/load flow; the inspector owns removal confirmation.
 type DialogKind int
 
 const (
@@ -32,16 +29,5 @@ const (
 	DialogConfirmNewGame
 	DialogConfirmRemoval
 	DialogConfirmDemolitionMode
+	DialogConfirmExit
 )
-
-// IsSettingsDialog reports whether dialog belongs in the Settings-tab slot
-// area. Inspector confirmation deliberately remains visible over the object
-// that is about to be removed.
-func IsSettingsDialog(dialog DialogKind) bool {
-	switch dialog {
-	case DialogNaming, DialogConfirmOverwrite, DialogConfirmNewGame:
-		return true
-	default:
-		return false
-	}
-}

@@ -163,5 +163,13 @@ func init() {
 		NewGameConfirmPrompt: "Начать заново? Весь текущий прогресс будет потерян.",
 		NewGameConfirmButton: "Начать заново",
 		NewGameStarted:       "Новая игра начата.",
+
+		PauseMenuTitle:    "Игра на паузе",
+		ResumeButton:      "Продолжить",
+		HelpButton:        "Справка",
+		ExitButton:        "Выйти из игры",
+		ExitConfirmPrompt: "Выйти из игры? Несохранённый прогресс будет потерян.",
+		ExitConfirmButton: "Выйти",
+		LanguageLabel:     "Язык",
 	})
 }

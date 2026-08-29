@@ -140,6 +140,14 @@ type Catalog struct {
 	NewGameConfirmPrompt string
 	NewGameConfirmButton string
 	NewGameStarted       string
+
+	PauseMenuTitle    string
+	ResumeButton      string
+	HelpButton        string
+	ExitButton        string
+	ExitConfirmPrompt string
+	ExitConfirmButton string
+	LanguageLabel     string
 }
 
 var catalogs = map[Lang]Catalog{}
