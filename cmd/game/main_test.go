@@ -391,6 +391,83 @@ func TestSeedThicketsAddsTreesBeyondTheUniformScatter(t *testing.T) {
 	}
 }
 
+// TestSeedThicketsNeverStrandsATree is a regression guard for a real bug
+// the user reported in-game ("дерево вырастает внутри и к нему невозможно
+// подойти"): thicket generation used to only check whether a tree's own
+// cell was free (building.CanPlace), never whether a worker could actually
+// reach it -- a tree could end up fully boxed in by its own neighbours,
+// permanently unreachable to a lumberjack. Every tree in a generated
+// thicket must have at least one of its 8 neighbouring cells free of
+// anything but a Road, matching pathfind.FindLandPath's exact walkability
+// rule.
+func TestSeedThicketsNeverStrandsATree(t *testing.T) {
+	grid := generateGrid(60, 45, 0x1b873593)
+	var buildings []*building.Building
+	buildings = seedThickets(grid, buildings, 0x27d4eb2f)
+
+	trees := 0
+	for _, b := range buildings {
+		if b.Kind != building.Tree {
+			continue
+		}
+		trees++
+		if !treeCellHasOpenNeighbor(grid, buildings, b.X, b.Y, -1, -1) {
+			t.Fatalf("tree at (%d,%d) has no walkable neighbor -- unreachable", b.X, b.Y)
+		}
+	}
+	if trees == 0 {
+		t.Fatal("no trees were planted at all -- test isn't exercising anything")
+	}
+}
+
+// TestTreePlacementKeepsEveryoneReachable exercises the check function
+// directly: a cell surrounded on all 8 sides must be rejected, and a
+// placement that would seal off an existing neighbouring tree's only open
+// side must also be rejected, even though the new cell itself still has
+// other open neighbours.
+func TestTreePlacementKeepsEveryoneReachable(t *testing.T) {
+	grid := world.NewGrid(5, 5)
+
+	t.Run("fully surrounded candidate is rejected", func(t *testing.T) {
+		var buildings []*building.Building
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				if dx == 0 && dy == 0 {
+					continue
+				}
+				buildings = append(buildings, building.NewTree(2+dx, 2+dy))
+			}
+		}
+		if treePlacementKeepsEveryoneReachable(grid, buildings, 2, 2) {
+			t.Fatal("a cell surrounded on all 8 sides was accepted")
+		}
+	})
+
+	t.Run("placement that would seal off a neighbor is rejected", func(t *testing.T) {
+		// A tree at (2,2) whose only open side is (3,2). Planting a new
+		// tree at (3,2) would strand it, even though (3,2) itself has
+		// other open neighbours.
+		buildings := []*building.Building{building.NewTree(2, 2)}
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				if dx == 0 && dy == 0 || (dx == 1 && dy == 0) {
+					continue
+				}
+				buildings = append(buildings, building.NewTree(2+dx, 2+dy))
+			}
+		}
+		if treePlacementKeepsEveryoneReachable(grid, buildings, 3, 2) {
+			t.Fatal("a placement that strands an existing neighbor tree was accepted")
+		}
+	})
+
+	t.Run("ordinary open placement is accepted", func(t *testing.T) {
+		if !treePlacementKeepsEveryoneReachable(grid, nil, 2, 2) {
+			t.Fatal("an ordinary placement with no neighbours at all was rejected")
+		}
+	})
+}
+
 func TestFishRegrowthRespectsBodyCap(t *testing.T) {
 	grid := world.NewGrid(3, 1)
 	for x := 0; x < grid.Width; x++ {

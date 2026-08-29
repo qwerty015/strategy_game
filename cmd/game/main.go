@@ -2416,7 +2416,9 @@ func growThicketZone(grid *world.Grid, buildings []*building.Building, target in
 		frontier = append(frontier[:bestIdx], frontier[bestIdx+1:]...)
 		visited++
 
-		if (thicketScatterScore(p.x, p.y)^seed)%100 < thicketDensityPercent && building.CanPlace(grid, buildings, building.Tree, p.x, p.y) {
+		if (thicketScatterScore(p.x, p.y)^seed)%100 < thicketDensityPercent &&
+			building.CanPlace(grid, buildings, building.Tree, p.x, p.y) &&
+			treePlacementKeepsEveryoneReachable(grid, buildings, p.x, p.y) {
 			buildings = append(buildings, building.NewTree(p.x, p.y))
 		}
 
@@ -2454,6 +2456,87 @@ func thicketScatterScore(x, y int) uint32 {
 	return uint32(x)*374761393 ^ uint32(y)*668265263 ^ 0x27d4eb2f
 }
 
+// treeCellHasOpenNeighbor reports whether at least one of the 8 tiles
+// around (x, y) is land a worker could actually stand on -- matching
+// pathfind.FindLandPath's occupancy rules exactly: a Road tile is walkable
+// (not an obstacle), every other building (including another Tree) blocks.
+// ignoreX/ignoreY lets a caller ask "would this still hold if that other
+// cell were also occupied" -- pass an out-of-bounds point (e.g. -1, -1) to
+// skip the exclusion.
+func treeCellHasOpenNeighbor(g *world.Grid, existing []*building.Building, x, y, ignoreX, ignoreY int) bool {
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			nx, ny := x+dx, y+dy
+			if nx == ignoreX && ny == ignoreY {
+				continue
+			}
+			if !g.InBounds(nx, ny) || !g.At(nx, ny).Buildable() {
+				continue
+			}
+			if !nonRoadOccupied(existing, nx, ny) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func nonRoadOccupied(existing []*building.Building, x, y int) bool {
+	for _, b := range existing {
+		if b == nil || b.Kind == building.Road {
+			continue
+		}
+		size := building.Types[b.Kind].Footprint
+		if x >= b.X && x < b.X+size && y >= b.Y && y < b.Y+size {
+			return true
+		}
+	}
+	return false
+}
+
+func treeAt(existing []*building.Building, x, y int) bool {
+	for _, b := range existing {
+		if b != nil && b.Kind == building.Tree && b.X == x && b.Y == y {
+			return true
+		}
+	}
+	return false
+}
+
+// treePlacementKeepsEveryoneReachable is the full check used before
+// planting a new tree at (x, y). Real bug the user reported ("дерево
+// вырастает внутри и к нему невозможно подойти"): thicket generation and
+// regrowth previously only checked whether the tree's own cell was free
+// (via building.CanPlace), never whether anything could actually reach it.
+// pathfind.FindLandPath does allow walking onto the goal tile itself even
+// if it's normally an obstacle -- that's how a lumberjack reaches a tree at
+// all -- but every tile leading up to it still has to be ordinary walkable
+// land, and a tree fully boxed in by its neighbours (routine inside a dense
+// thicket) has none. This checks both that the new tree itself has an open
+// neighbor, AND that planting it doesn't seal off an existing tree already
+// standing next to it -- occupying a neighbour's last open side would just
+// move this exact bug onto that other tree instead of preventing it.
+func treePlacementKeepsEveryoneReachable(g *world.Grid, existing []*building.Building, x, y int) bool {
+	if !treeCellHasOpenNeighbor(g, existing, x, y, -1, -1) {
+		return false
+	}
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			nx, ny := x+dx, y+dy
+			if treeAt(existing, nx, ny) && !treeCellHasOpenNeighbor(g, existing, nx, ny, x, y) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // seedTrees adds no more than one percent of the map area in trees. Candidate
 // cells are ordered by a stable coordinate hash, so the selection looks
 // scattered while old-save migration remains reproducible. CanPlace also
@@ -2487,6 +2570,9 @@ func seedTrees(grid *world.Grid, buildings []*building.Building) []*building.Bui
 			break
 		}
 		if !building.CanPlace(grid, buildings, building.Tree, c.x, c.y) {
+			continue
+		}
+		if !treePlacementKeepsEveryoneReachable(grid, buildings, c.x, c.y) {
 			continue
 		}
 		buildings = append(buildings, building.NewTree(c.x, c.y))
@@ -3201,6 +3287,9 @@ func (g *Game) findTreeSpawnCell(seed uint32, origin gridPoint, radius int) (int
 				continue
 			}
 			if !g.grid.At(x, y).Buildable() || !building.CanPlace(g.grid, g.buildings, building.Tree, x, y) {
+				continue
+			}
+			if !treePlacementKeepsEveryoneReachable(g.grid, g.buildings, x, y) {
 				continue
 			}
 			score := treeScatterScore(x, y) ^ seed
