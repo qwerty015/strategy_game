@@ -96,16 +96,30 @@ const (
 	// Ore-family abundance ranges (percent of map area), per the game
 	// design: Coal is the most common -- both Smeltery recipes consume it
 	// -- Gold ore the rarest, since it smelts directly into the hiring
-	// currency.
-	coalMinPercent, coalMaxPercent       = 4, 8
-	ironOreMinPercent, ironOreMaxPercent = 2, 4
-	goldOreMinPercent, goldOreMaxPercent = 1, 2
+	// currency. Iron and Gold are deliberately fixed at a single value
+	// (min == max), not a range: with each deposit already holding far
+	// more Reserve than any realistic session can exhaust (see
+	// building.OreDepositReserve's doc comment), the range's only real
+	// effect was cosmetic seed-to-seed variety, and the user asked for a
+	// specific, predictable density instead.
+	//
+	// These replace the old two-layer scheme (a wider raw percent times a
+	// separate oreDepositGenerationPercent/stoneDepositGenerationPercent
+	// scaling knob) with one direct number per the user's explicit request
+	// ("камень я бы сделал 3-4%, уголь 2-3%, железная руда 1% и золото
+	// 1%") -- see scaledDepositCells/scaledStoneDepositCells below, which
+	// now apply a percentage straight to the map area with no hidden
+	// second multiplier.
+	coalMinPercent, coalMaxPercent       = 2, 3
+	ironOreMinPercent, ironOreMaxPercent = 1, 1
+	goldOreMinPercent, goldOreMaxPercent = 1, 1
 
-	// Ore deposits keep 70% of their former density. Stone is intentionally
-	// scarcer (40% of the former density), so quarry placement remains a real
-	// expansion decision instead of blanketing a fresh map.
-	oreDepositGenerationPercent   = 70
-	stoneDepositGenerationPercent = 40
+	// stoneMinPercent/stoneMaxPercent: see the ore ranges' doc comment
+	// above for why these are a direct percent of map area now, with no
+	// separate scaling layer on top. Fixed at a single 2% (min == max,
+	// same convention as Iron/Gold above), per the user's follow-up
+	// ("камень 2%") lowering it from the initial 3-4% range.
+	stoneMinPercent, stoneMaxPercent = 2, 2
 
 	// seaMinPercent/seaMaxPercent bound the one sea's share of the map's
 	// area. Per the roadmap ("водоёмы генерируются у края карты, а не где
@@ -663,7 +677,7 @@ func (g *Game) hireOptions() []ui.HireOption {
 		return ui.HireOption{Kind: kind, Current: current, Limit: limit, Available: current < limit && afford}
 	}
 	return []ui.HireOption{
-		{Kind: ui.HireSerf, Current: len(g.logi.Serfs), Limit: 0, Available: afford},
+		{Kind: ui.HireSerf, Current: len(g.logi.Serfs), Limit: 0, Available: afford, Recommended: g.recommendedServeCount()},
 		limited(ui.HireFarmer, building.Farm, countProfession(villagers.Farmer)),
 		limited(ui.HireBaker, building.Bakery, countProfession(villagers.Baker)),
 		limited(ui.HireWinemaker, building.Winery, countProfession(villagers.Winemaker)),
@@ -2587,21 +2601,24 @@ func treeScatterScore(x, y int) uint32 {
 	return uint32(x)*73856093 ^ uint32(y)*19349663 ^ 0x85ebca6b
 }
 
-// scaledDepositCells keeps coal and ores at 70% of their former density on
-// new maps. Stone deliberately uses the separate helper below.
+// scaledDepositCells applies an ore percentage directly to the map area --
+// see coalMinPercent's doc comment for why there's no separate scaling
+// layer on top any more.
 func scaledDepositCells(area, percent int) int {
-	return area * percent * oreDepositGenerationPercent / 10000
+	return area * percent / 100
 }
 
-// scaledStoneDepositCells leaves 40% of the former stone-deposit count. The
-// value only participates in fresh generation (and old-save migration that
-// had no seeded stone yet); it never removes deposits from an existing map.
+// scaledStoneDepositCells applies a stone percentage directly to the map
+// area -- see stoneMinPercent's doc comment for why there's no separate
+// scaling layer on top any more. The value only participates in fresh
+// generation (and old-save migration that had no seeded stone yet); it
+// never removes deposits from an existing map.
 func scaledStoneDepositCells(area, percent int) int {
-	return area * percent * stoneDepositGenerationPercent / 10000
+	return area * percent / 100
 }
 
-// seedStoneDeposits splits a random 3.5-7% of the map's area (per the game
-// design) across 2-5 separate regions, rather than one single patch, so the
+// seedStoneDeposits splits stoneMinPercent-stoneMaxPercent of the map's
+// area across 2-5 separate regions, rather than one single patch, so the
 // player has more than one spot worth building a Quarry Hut near. Each
 // deposit cell holds a full building.StoneDepositReserve. Unlike trees and
 // fish, this only ever runs once per world -- see save.GameState.StoneSeeded
@@ -2612,7 +2629,11 @@ func scaledStoneDepositCells(area, percent int) int {
 // percentage from the distance rule.
 func seedStoneDeposits(grid *world.Grid, buildings []*building.Building, seed uint32, avoid gridPoint, minDistance int) []*building.Building {
 	area := grid.Width * grid.Height
-	percent := 5 + int(seed%6) // 5..10 inclusive, total share of the map
+	span := stoneMaxPercent - stoneMinPercent + 1
+	percent := stoneMinPercent
+	if span > 0 {
+		percent += int(seed % uint32(span))
+	}
 	total := scaledStoneDepositCells(area, percent)
 	if total <= 0 {
 		return buildings

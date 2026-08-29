@@ -46,7 +46,8 @@ func TestSeedFishLimitsEveryConnectedWaterBody(t *testing.T) {
 
 // TestSeedStoneDepositsSplitsAcrossMultipleRegions covers "раздели камень
 // на 2-5 областей": deposits must not form one single patch, and their
-// total count must land in the reduced 3.5-7% of the map's area.
+// total count must land in the stoneMinPercent-stoneMaxPercent range of the
+// map's area.
 func TestSeedStoneDepositsSplitsAcrossMultipleRegions(t *testing.T) {
 	grid := world.NewGrid(40, 30)
 	// No keep-away point exercised here -- this test is only about the
@@ -55,9 +56,9 @@ func TestSeedStoneDepositsSplitsAcrossMultipleRegions(t *testing.T) {
 	buildings := seedStoneDeposits(grid, nil, 0x1b873593, gridPoint{}, 0)
 
 	area := grid.Width * grid.Height
-	minCells, maxCells := scaledStoneDepositCells(area, 5), scaledStoneDepositCells(area, 10)
+	minCells, maxCells := scaledStoneDepositCells(area, stoneMinPercent), scaledStoneDepositCells(area, stoneMaxPercent)
 	if len(buildings) < minCells || len(buildings) > maxCells {
-		t.Fatalf("placed %d stone-deposit cells, want between %d and %d (reduced 5-10%% target of %d)", len(buildings), minCells, maxCells, area)
+		t.Fatalf("placed %d stone-deposit cells, want between %d and %d (%d-%d%% target of %d)", len(buildings), minCells, maxCells, stoneMinPercent, stoneMaxPercent, area)
 	}
 
 	regions := countStoneRegions(buildings)
@@ -142,7 +143,10 @@ func TestEnsureStoneDepositsSeedsAnUnmigratedSave(t *testing.T) {
 // TestSeedOreDepositsRespectsDesignedAbundance covers "угля должно быть
 // больше чем золотой и железной руды": each ore kind's seeded cell count
 // must land within its own designed percentage range of the map's area,
-// and Coal's range sits strictly above Iron's and Gold's.
+// and Coal's range sits strictly above Iron's and Gold's. Iron and Gold
+// themselves are equal by design now (both a fixed 1%, see
+// ironOreMinPercent's doc comment) -- the user explicitly asked for them
+// to match, dropping Iron's old edge over Gold.
 func TestSeedOreDepositsRespectsDesignedAbundance(t *testing.T) {
 	grid := world.NewGrid(40, 30)
 	area := grid.Width * grid.Height
@@ -172,9 +176,13 @@ func TestSeedOreDepositsRespectsDesignedAbundance(t *testing.T) {
 			}
 		}
 	}
-	if coalMaxPercent <= ironOreMaxPercent || ironOreMaxPercent <= goldOreMaxPercent {
-		t.Fatalf("designed abundance ordering broken: coal(%d-%d) should exceed iron(%d-%d) should exceed gold(%d-%d)",
-			coalMinPercent, coalMaxPercent, ironOreMinPercent, ironOreMaxPercent, goldOreMinPercent, goldOreMaxPercent)
+	if coalMaxPercent <= ironOreMaxPercent {
+		t.Fatalf("designed abundance ordering broken: coal(%d-%d) should exceed iron(%d-%d)",
+			coalMinPercent, coalMaxPercent, ironOreMinPercent, ironOreMaxPercent)
+	}
+	if ironOreMinPercent != goldOreMinPercent || ironOreMaxPercent != goldOreMaxPercent {
+		t.Fatalf("iron(%d-%d) and gold(%d-%d) should match by design",
+			ironOreMinPercent, ironOreMaxPercent, goldOreMinPercent, goldOreMaxPercent)
 	}
 }
 
@@ -1161,13 +1169,21 @@ func findHireOption(t *testing.T, options []ui.HireOption, kind ui.HireKind) ui.
 	return ui.HireOption{}
 }
 
-func TestScaledDepositCellsUseResourceSpecificDensity(t *testing.T) {
+// TestScaledDepositCellsApplyPercentDirectly locks in the current
+// generation formula per the user's explicit request ("камень я бы сделал
+// 3-4%, уголь 2-3%, железная руда 1% и золото 1%"): both stone and ore
+// apply their percentage straight to the map area, with no separate
+// scaling knob layered underneath it any more (there used to be one --
+// oreDepositGenerationPercent/stoneDepositGenerationPercent -- now
+// removed as redundant once the percentages themselves were retuned
+// directly).
+func TestScaledDepositCellsApplyPercentDirectly(t *testing.T) {
 	const area, percent = 10000, 10
-	if got, want := scaledStoneDepositCells(area, percent), 400; got != want {
-		t.Fatalf("stone cells=%d, want %d (40%% of prior density)", got, want)
+	if got, want := scaledStoneDepositCells(area, percent), 1000; got != want {
+		t.Fatalf("stone cells=%d, want %d (10%% of %d)", got, want, area)
 	}
-	if got, want := scaledDepositCells(area, percent), 700; got != want {
-		t.Fatalf("ore cells=%d, want %d (70%% of prior density)", got, want)
+	if got, want := scaledDepositCells(area, percent), 1000; got != want {
+		t.Fatalf("ore cells=%d, want %d (10%% of %d)", got, want, area)
 	}
 }
 

@@ -433,9 +433,13 @@ func NewFish(x, y int) *Building {
 }
 
 // StoneDepositReserve is the fixed starting Reserve of a freshly placed
-// stone deposit cell, per the game design: one cell equals ten thousand
-// stone.
-const StoneDepositReserve = 10000
+// stone deposit cell, per the game design. Raised from 10000 to 15000 per
+// the user's explicit request ("поместим в 1 клетку не 10к, а 15к
+// ресурсов, это позволит нам сократить общее количество клеток"): fewer
+// deposit cells on the generated map (see cmd/game's stoneMinPercent etc.),
+// each holding more, keeps the total mineable amount roughly the same
+// while reducing visual clutter.
+const StoneDepositReserve = 15000
 
 // NewStoneDeposit creates a stone deposit at full reserve.
 func NewStoneDeposit(x, y int) *Building {
@@ -448,10 +452,11 @@ func NewStoneDeposit(x, y int) *Building {
 }
 
 // OreDepositReserve is the fixed starting Reserve of a freshly placed
-// coal/gold ore/iron ore deposit cell -- the same 10000-per-cell convention
-// as stone, kept as its own constant so the two can be tuned independently
-// later without ambiguity about which deposits a change affects.
-const OreDepositReserve = 10000
+// coal/gold ore/iron ore deposit cell -- the same 15000-per-cell convention
+// as stone (see StoneDepositReserve's doc comment), kept as its own
+// constant so the two can be tuned independently later without ambiguity
+// about which deposits a change affects.
+const OreDepositReserve = 15000
 
 // NewOreDeposit creates a CoalDeposit/GoldOreDeposit/IronOreDeposit at full
 // reserve. kind must be one of those three; any other value still returns a
