@@ -39,10 +39,12 @@ func drawGroundDecor(screen *ebiten.Image, g *world.Grid, terrain world.TerrainT
 			return // a shore tile keeps its pebbles; no rock/flower clutter on top
 		}
 		drawGrassDecor(screen, sx, sy, tx, ty, tilePixels)
+		drawVegetationTuft(screen, sx, sy, tx, ty, tilePixels)
 	case world.Water:
 		if shoreEdge, ok := findShoreEdge(g, tx, ty, world.Grass); ok {
 			drawReeds(screen, sx, sy, tx, ty, tilePixels, shoreEdge)
 		}
+		drawWaterSplash(screen, sx, sy, tx, ty, tilePixels)
 	}
 }
 
@@ -85,8 +87,10 @@ var (
 	stumpColor         = color.RGBA{R: 107, G: 74, B: 46, A: 255}
 	stumpRingColor     = color.RGBA{R: 79, G: 53, B: 31, A: 255}
 	bushColor          = color.RGBA{R: 58, G: 102, B: 44, A: 255}
+	tallGrassColor     = color.RGBA{R: 75, G: 139, B: 53, A: 185}
+	tallGrassLight     = color.RGBA{R: 132, G: 177, B: 76, A: 165}
 	flowerStemColor    = color.RGBA{R: 79, G: 122, B: 56, A: 255}
-	reedColor          = color.RGBA{R: 121, G: 168, B: 77, A: 255}
+	reedColor          = color.RGBA{R: 69, G: 109, B: 61, A: 185}
 	pebbleColor        = color.RGBA{R: 186, G: 182, B: 168, A: 255}
 )
 
@@ -208,26 +212,69 @@ func drawGrassDecor(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePixels
 	}
 }
 
-// drawReeds marks roughly 1 in 3 water tiles that border grass with a
-// couple of thin reed strokes near the shore edge.
+// drawVegetationTuft adds a denser but quieter layer of living grass between
+// the rarer flowers, rocks and bushes. It is coordinate-stable and uses a
+// two-frame lean, so open meadow tiles no longer read as a flat green carpet.
+func drawVegetationTuft(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePixels float64) {
+	hash := tileHash(tx, ty, 40503, 2654435761)
+	if hash%9 != 0 {
+		return
+	}
+	cx := float32(sx + tilePixels*(0.24+0.50*float64((hash>>8)&0xff)/255))
+	cy := float32(sy + tilePixels*(0.48+0.30*float64((hash>>16)&0xff)/255))
+	width := float32(maxPixel(tilePixels * 0.028))
+	height := float32(tilePixels * (0.16 + 0.08*float64(hash&3)))
+	lean := float32((animFrame/12+int(hash>>24))&1) * width
+	for index, offset := range []float32{-0.11, 0, 0.11} {
+		color := tallGrassColor
+		if index == 1 {
+			color = tallGrassLight
+		}
+		vector.StrokeLine(screen, cx+offset*float32(tilePixels), cy, cx+offset*float32(tilePixels)+lean-width/2, cy-height, width, color, true)
+	}
+}
+
+// drawWaterSplash creates a very rare, quiet ripple on open water. It is
+// intentionally darker and smaller than the old white rings, so it reads as
+// a fish movement rather than a UI marker.
+func drawWaterSplash(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePixels float64) {
+	hash := tileHash(tx, ty, 668265263, 2246822519)
+	phase := (animFrame/10 + int(hash%180)) % 180
+	if phase > 1 {
+		return
+	}
+	cx := float32(sx + tilePixels*(0.28+0.42*float64((hash>>8)&0xff)/255))
+	cy := float32(sy + tilePixels*(0.34+0.30*float64((hash>>16)&0xff)/255))
+	radius := float32(tilePixels * (0.035 + 0.020*float64(phase)))
+	stroke := float32(maxPixel(tilePixels * 0.014))
+	waterLight := color.RGBA{R: 121, G: 177, B: 181, A: uint8(125 - phase*42)}
+	vector.StrokeCircle(screen, cx, cy, radius, stroke, waterLight, true)
+	if phase == 0 {
+		vector.FillCircle(screen, cx+radius*0.25, cy-radius*0.35, stroke, waterLight, true)
+	}
+}
+
+// drawReeds puts a pair of short, muted stems on a small fraction of shore
+// tiles. They support the coast texture without drawing a bright fence along
+// every water cell.
 func drawReeds(screen *ebiten.Image, sx, sy float64, tx, ty int, tilePixels float64, edge edgeSide) {
 	hash := tileHash(tx, ty, 374761393, 668265263)
-	if hash%3 != 0 {
+	if hash%8 != 0 {
 		return
 	}
 	ax, ay := edgeAnchor(sx, sy, tilePixels, edge)
 	tp := float32(tilePixels)
-	for i, offset := range [...]float32{-0.22 * tp, 0, 0.22 * tp} {
-		lean := 0.08 * tp * float32(i-1)
+	for i, offset := range [...]float32{-0.10 * tp, 0.10 * tp} {
+		lean := 0.045 * tp * float32(i*2-1)
 		var x0, y0, x1, y1 float32
 		if edge == edgeN || edge == edgeS {
-			x0, y0 = float32(ax)+offset, float32(ay)+0.14*tp
-			x1, y1 = x0+lean, y0-0.4*tp
+			x0, y0 = float32(ax)+offset, float32(ay)+0.06*tp
+			x1, y1 = x0+lean, y0-0.20*tp
 		} else {
-			x0, y0 = float32(ax)+0.14*tp, float32(ay)+offset
-			x1, y1 = x0-0.4*tp, y0+lean
+			x0, y0 = float32(ax)+0.06*tp, float32(ay)+offset
+			x1, y1 = x0-0.20*tp, y0+lean
 		}
-		vector.StrokeLine(screen, x0, y0, x1, y1, 0.07*tp, reedColor, true)
+		vector.StrokeLine(screen, x0, y0, x1, y1, 0.026*tp, reedColor, true)
 	}
 }
 

@@ -2,6 +2,7 @@ package render
 
 import (
 	"image/color"
+	"sort"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -78,6 +79,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 	// still simulated; they simply submit no draw calls this frame.
 	visible := cam.VisibleTileBounds(2)
 	roads := finishedRoadPositions(buildings)
+	entranceRoads := buildingEntranceRoadPositions(buildings, roads)
 	// Ground is drawn before this function. Roads and stone deposits are
 	// both flat, terrain-scale ground decoration rather than standing
 	// objects, so both render in this same bottom pass -- otherwise a
@@ -95,8 +97,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			// cobblestone texture here would visually claim otherwise.
 			drawConstructionSite(screen, b, 1, sx, sy, tilePixels)
 		case b.Kind == building.Road:
-			drawStandingAtScale(screen, assets.Road, sx, sy, 1, tilePixels)
-			drawRoadConnections(screen, roads, b.X, b.Y, sx, sy, tilePixels)
+			drawOrganicRoad(screen, roads, entranceRoads, b.X, b.Y, sx, sy, tilePixels)
 		case b.Kind == building.StoneDeposit:
 			drawStoneDeposit(screen, sx, sy, tilePixels, b.Reserve)
 		case b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit:
@@ -104,15 +105,30 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		}
 	}
 
+	// Tall sprites are depth-sorted by the bottom of their footprint instead
+	// of construction/save order. This prevents a building behind another one
+	// from being painted over its roof or field when the map grows large.
+	standingBuildings := make([]*building.Building, 0, len(buildings))
 	for _, b := range buildings {
-		if b.Kind == building.Road || b.Kind == building.StoneDeposit ||
+		if b == nil || b.Kind == building.Road || b.Kind == building.StoneDeposit ||
 			b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit {
 			continue
 		}
-		bt := building.Types[b.Kind]
-		if !visible.Intersects(b.X, b.Y, bt.Footprint) {
-			continue
+		if visible.Intersects(b.X, b.Y, building.Types[b.Kind].Footprint) {
+			standingBuildings = append(standingBuildings, b)
 		}
+	}
+	sort.SliceStable(standingBuildings, func(i, j int) bool {
+		a, b := standingBuildings[i], standingBuildings[j]
+		aBottom := a.Y + building.Types[a.Kind].Footprint
+		bBottom := b.Y + building.Types[b.Kind].Footprint
+		if aBottom != bBottom {
+			return aBottom < bBottom
+		}
+		return a.X < b.X
+	})
+	for _, b := range standingBuildings {
+		bt := building.Types[b.Kind]
 		sx, sy := cam.TileToScreen(b.X, b.Y)
 
 		if b.ConstructionStage != building.ConstructionNone {
@@ -357,6 +373,28 @@ type roadTile struct{ x, y int }
 // instead of a linear scan per tile. A road still under construction does
 // not count -- see the ConstructionStage check in the caller's switch,
 // it isn't drawn as a real road yet either.
+// buildingEntranceRoadPositions finds exactly one finished road at each
+// building's marked access point. The preference order mirrors FoundationRoad
+// so the rounded visual threshold always agrees with the starter road created
+// during placement.
+func buildingEntranceRoadPositions(buildings []*building.Building, roads map[roadTile]bool) map[roadTile]bool {
+	entrances := make(map[roadTile]bool)
+	for _, b := range buildings {
+		if b == nil || b.Kind == building.Road || b.Kind == building.Tree || b.Kind == building.Fish ||
+			b.Kind == building.StoneDeposit || b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit {
+			continue
+		}
+		access := b.AccessPoint()
+		for _, d := range [...]roadTile{{x: 0, y: 1}, {x: 1, y: 0}, {x: 0, y: -1}, {x: -1, y: 0}} {
+			tile := roadTile{x: access.X + d.x, y: access.Y + d.y}
+			if roads[tile] {
+				entrances[tile] = true
+				break
+			}
+		}
+	}
+	return entrances
+}
 func finishedRoadPositions(buildings []*building.Building) map[roadTile]bool {
 	roads := make(map[roadTile]bool)
 	for _, b := range buildings {

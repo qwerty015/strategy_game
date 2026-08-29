@@ -48,3 +48,7 @@ generated with the built-in OpenAI image generation tool on 2026-08-28 for
 the ore-and-smelting chain. They are transparent original project art: each
 ore type has its own deposit silhouette, and the two buildings and professions
 are visually distinct from the quarry and carpentry chain.
+`ambient_hare_run.png` was generated with the built-in OpenAI image generation tool on 2026-08-29. It is a three-frame transparent running-hare atlas, sliced at startup for the ambient visual layer. It is original project art and does not represent or derive from a specific commercial game asset.
+
+
+building_warehouse_v2.png was generated with the built-in OpenAI image generation tool on 2026-08-29 as a distinct warehouse sprite for this prototype. It is original project art and does not derive from a specific commercial game asset.

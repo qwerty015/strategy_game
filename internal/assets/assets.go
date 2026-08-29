@@ -40,8 +40,9 @@ var (
 	// The water export has the same bright top-edge fringe as several ground
 	// tiles. Load it through the one-time repair pass so zoomed ponds stay
 	// seamless instead of gaining horizontal white stripes.
-	Water = mustLoadGround("generated/terrain_water.png")
-	Road  = mustLoad("generated/terrain_road_stone.png") // cobblestone path
+	Water        = mustLoadGround("generated/terrain_water.png")
+	Road         = mustLoad("generated/terrain_road_stone.png") // cobblestone path
+	RoadEntrance = mustLoadRoundedRoadEntrance("generated/terrain_road_stone.png")
 
 	// MillFrames are flattened once on the CPU from the mill body and three
 	// blade positions. The base is the older, more detailed mill sprite; its
@@ -54,9 +55,9 @@ var (
 	}
 
 	Bakery            = mustLoad("generated/building_bakery.png")
-	Warehouse         = mustLoad("generated/building_warehouse.png")
+	Warehouse         = mustLoad("generated/building_warehouse_v2.png")
 	FarmHouse         = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
-	Tavern            = mustLoad("generated/building_tavern.png")
+	Tavern            = mustLoadWithoutDetachedFragments("generated/building_tavern.png", 120)
 	LumberjackHut     = mustLoad("generated/building_lumberjack_hut.png")
 	Winery            = mustLoad("generated/building_winery.png")
 	PigFarm           = mustLoad("generated/building_pig_farm.png")
@@ -91,19 +92,22 @@ var (
 	// There is one purpose-built silhouette per profession for now. The
 	// renderer still exposes frame arrays so directional/walking variants can
 	// be added without changing the simulation packages.
-	Serf        = staticFrames("generated/unit_serf.png")
-	Farmer      = staticFrames("generated/unit_farmer.png")
-	Baker       = staticFrames("generated/unit_baker.png")
-	Lumberjack  = staticFrames("generated/unit_lumberjack.png")
-	Winemaker   = staticFrames("generated/unit_winemaker.png")
-	Fisherman   = staticFrames("generated/unit_fisherman.png")
-	Swineherd   = staticFrames("generated/unit_swineherd.png")
-	Butcher     = staticFrames("generated/unit_butcher.png")
-	Carpenter   = staticFrames("generated/unit_carpenter.png")
-	Quarryman   = staticFrames("generated/unit_quarryman.png")
-	Builder     = staticFrames("generated/unit_builder.png")
-	Miner       = staticFrames("generated/unit_miner.png")
-	Smelter     = staticFrames("generated/unit_smelter.png")
+	Serf       = staticFrames("generated/unit_serf.png")
+	Farmer     = staticFrames("generated/unit_farmer.png")
+	Baker      = staticFrames("generated/unit_baker.png")
+	Lumberjack = staticFrames("generated/unit_lumberjack.png")
+	Winemaker  = staticFrames("generated/unit_winemaker.png")
+	Fisherman  = staticFrames("generated/unit_fisherman.png")
+	Swineherd  = staticFrames("generated/unit_swineherd.png")
+	Butcher    = staticFrames("generated/unit_butcher.png")
+	Carpenter  = staticFrames("generated/unit_carpenter.png")
+	Quarryman  = staticFrames("generated/unit_quarryman.png")
+	Builder    = staticFrames("generated/unit_builder.png")
+	Miner      = staticFrames("generated/unit_miner.png")
+	Smelter    = staticFrames("generated/unit_smelter.png")
+	// HareFrames is a transparent three-frame running loop for the ambient
+	// visual layer. Hares are not simulation units and are never saved.
+	HareFrames  = mustLoadAtlasFrames("generated/ambient_hare_run.png")
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
 )
 
@@ -121,6 +125,63 @@ func mustDecode(name string) image.Image {
 
 func mustLoad(name string) *ebiten.Image {
 	return ebiten.NewImageFromImage(normalizeSprite(mustDecode(name)))
+}
+
+// mustLoadWithoutDetachedFragments removes tiny opaque islands detached from
+// a sprite's main silhouette. The tavern PNG has one such export artefact at
+// its far right; filtering it at startup keeps the source asset intact while
+// ensuring it can never appear in-game.
+func mustLoadWithoutDetachedFragments(name string, minimumPixels int) *ebiten.Image {
+	base := normalizeSprite(mustDecode(name))
+	bounds := base.Bounds()
+	out := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	draw.Draw(out, out.Bounds(), base, bounds.Min, draw.Src)
+	removeDetachedAlphaComponents(out, minimumPixels)
+	return ebiten.NewImageFromImage(out)
+}
+
+func removeDetachedAlphaComponents(img *image.NRGBA, minimumPixels int) {
+	if minimumPixels <= 1 {
+		return
+	}
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	seen := make([]bool, width*height)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			start := y*width + x
+			if seen[start] || img.Pix[start*4+3] <= 8 {
+				continue
+			}
+			seen[start] = true
+			queue := []int{start}
+			component := make([]int, 0, minimumPixels)
+			for head := 0; head < len(queue); head++ {
+				point := queue[head]
+				component = append(component, point)
+				px, py := point%width, point/width
+				for _, delta := range [...]struct{ x, y int }{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+					nx, ny := px+delta.x, py+delta.y
+					if nx < 0 || ny < 0 || nx >= width || ny >= height {
+						continue
+					}
+					next := ny*width + nx
+					if seen[next] || img.Pix[next*4+3] <= 8 {
+						continue
+					}
+					seen[next] = true
+					queue = append(queue, next)
+				}
+			}
+			if len(component) >= minimumPixels {
+				continue
+			}
+			for _, point := range component {
+				offset := point * 4
+				img.Pix[offset], img.Pix[offset+1], img.Pix[offset+2], img.Pix[offset+3] = 0, 0, 0, 0
+			}
+		}
+	}
 }
 
 // staticFrames returns three references to one image while a profession has

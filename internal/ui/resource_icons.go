@@ -116,7 +116,16 @@ func fillIconRect(screen *ebiten.Image, x, y, width, height int, c color.Color) 
 	vector.FillRect(screen, float32(x), float32(y), float32(width), float32(height), c, false)
 }
 
-func drawWarehouseResourceRow(screen *ebiten.Image, x, y int, kind resource.Type, amount int) {
+// drawResourceRow draws a resource icon followed by arbitrary inspector
+// text at the usual indent -- the same layout drawWarehouseResourceRow
+// already used just for the Warehouse, generalized to any caller-supplied
+// text so every other building's "name: current/max" buffer line can use
+// it too, not just the Warehouse's plain "name: amount".
+func drawResourceRow(screen *ebiten.Image, x, y int, kind resource.Type, text string) {
 	drawResourceIcon(screen, kind, x, y+1)
-	DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().ResourceName[kind], amount), float64(x+resourceIconSize+6), float64(y))
+	DrawInspectorText(screen, text, float64(x+resourceIconSize+6), float64(y))
+}
+
+func drawWarehouseResourceRow(screen *ebiten.Image, x, y int, kind resource.Type, amount int) {
+	drawResourceRow(screen, x, y, kind, fmt.Sprintf("%s: %d", i18n.T().ResourceName[kind], amount))
 }

@@ -99,6 +99,10 @@ const (
 	ironOreMinPercent, ironOreMaxPercent = 2, 4
 	goldOreMinPercent, goldOreMaxPercent = 1, 2
 
+	// depositGenerationPercent applies the same 30% reduction to every
+	// non-regrowing map deposit while preserving each resource's balance.
+	depositGenerationPercent = 70
+
 	// seaMinPercent/seaMaxPercent bound the one sea's share of the map's
 	// area. Per the roadmap ("водоёмы генерируются у края карты, а не где
 	// придётся") the sea always grows inward from a random map edge rather
@@ -206,15 +210,16 @@ type Game struct {
 	// changes the road/building topology, never every render frame.
 	connectionCache map[*building.Building]bool
 
-	camera        *render.Camera
-	palette       *ui.Palette
-	layout        ui.Layout
-	leftTab       ui.LeftTab
-	buildMode     bool
-	selection     ui.Selection
-	middlePanning bool
-	lastMouseX    int
-	lastMouseY    int
+	camera         *render.Camera
+	palette        *ui.Palette
+	layout         ui.Layout
+	leftTab        ui.LeftTab
+	buildMode      bool
+	demolitionMode bool
+	selection      ui.Selection
+	middlePanning  bool
+	lastMouseX     int
+	lastMouseY     int
 
 	// Settings tab save/load modal: dialog is DialogNone outside of the
 	// naming/overwrite flow, in which case dialogSlot/dialogText are unused.
@@ -453,6 +458,11 @@ func (g *Game) Update() error {
 	}
 
 	if g.dialog == ui.DialogNone && inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		if g.demolitionMode {
+			g.demolitionMode = false
+			g.statusMsg = ""
+			return nil
+		}
 		return ebiten.Termination
 	}
 	return nil
@@ -789,6 +799,7 @@ func (g *Game) handleCameraZoom() {
 func (g *Game) handleMouse() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
 		g.buildMode = false
+		g.demolitionMode = false
 		g.selection.Clear()
 		g.statusMsg = ""
 		return
@@ -799,6 +810,8 @@ func (g *Game) handleMouse() {
 	mx, my := ebiten.CursorPosition()
 	if tab, ok := g.layout.MenuTabAt(mx, my); ok {
 		g.leftTab = tab
+		g.buildMode = false
+		g.demolitionMode = false
 		g.statusMsg = ""
 		return
 	}
@@ -837,6 +850,17 @@ func (g *Game) handleMouse() {
 			return
 		}
 	default:
+		if g.layout.DemolitionModeAt(mx, my) {
+			g.buildMode = false
+			g.selection.Clear()
+			if g.demolitionMode {
+				g.demolitionMode = false
+			} else {
+				g.dialog = ui.DialogConfirmDemolitionMode
+			}
+			g.statusMsg = ""
+			return
+		}
 		if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds)); ok {
 			g.palette.Select(index)
 			g.buildMode = true
@@ -859,6 +883,15 @@ func (g *Game) handleMouse() {
 	point := image.Pt(mx, my)
 	if point.In(g.layout.LeftPanel()) ||
 		point.In(g.layout.RightPanel()) {
+		return
+	}
+	if g.demolitionMode {
+		// In continuous demolition, a road must win over a unit standing on it:
+		// the mode only removes map construction and never dismisses citizens.
+		g.selection = g.buildingSelectionAt(mx, my)
+		if g.selection.Kind == ui.SelectionBuilding {
+			g.deleteSelectedBuilding()
+		}
 		return
 	}
 	if selected := g.selectionAt(mx, my); selected.Kind != ui.SelectionNone {
@@ -1096,6 +1129,23 @@ func (g *Game) clearMissingUnitSelection() {
 // persistent death/removal history shown in the empty inspector panel.
 func (g *Game) refreshPopulation() {
 	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners)
+}
+
+// buildingSelectionAt resolves only a building, including a Road. It is used
+// by continuous demolition so a passer-by never intercepts a road click.
+func (g *Game) buildingSelectionAt(mx, my int) ui.Selection {
+	tx, ty := g.camera.ScreenToTile(mx, my)
+	for i := len(g.buildings) - 1; i >= 0; i-- {
+		b := g.buildings[i]
+		if b == nil {
+			continue
+		}
+		footprint := building.Types[b.Kind].Footprint
+		if tx >= b.X && tx < b.X+footprint && ty >= b.Y && ty < b.Y+footprint {
+			return ui.Selection{Kind: ui.SelectionBuilding, Building: b}
+		}
+	}
+	return ui.Selection{}
 }
 
 // selectionAt resolves map coordinates to a live game object. A building
@@ -1425,6 +1475,8 @@ func (g *Game) handleDialogInput() {
 		g.handleConfirmNewGameInput()
 	case ui.DialogConfirmRemoval:
 		g.handleConfirmRemovalInput()
+	case ui.DialogConfirmDemolitionMode:
+		g.handleConfirmDemolitionModeInput()
 	}
 }
 
@@ -1450,6 +1502,34 @@ func (g *Game) handleConfirmRemovalInput() {
 	if confirm {
 		g.dialog = ui.DialogNone
 		g.removeSelected()
+	}
+}
+
+// handleConfirmDemolitionModeInput is the one confirmation before a sequence
+// of destructive map clicks. Escape/cancel leaves the map unchanged; once
+// enabled, Escape or the same left-panel button exits the mode.
+func (g *Game) handleConfirmDemolitionModeInput() {
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.dialog = ui.DialogNone
+		return
+	}
+	confirm := inpututil.IsKeyJustPressed(ebiten.KeyEnter)
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		mx, my := ebiten.CursorPosition()
+		if selected, ok := g.layout.InspectorConfirmRemoveAt(mx, my); ok {
+			if !selected {
+				g.dialog = ui.DialogNone
+				return
+			}
+			confirm = true
+		}
+	}
+	if confirm {
+		g.dialog = ui.DialogNone
+		g.demolitionMode = true
+		g.buildMode = false
+		g.selection.Clear()
+		g.statusMsg = ""
 	}
 }
 
@@ -2367,7 +2447,13 @@ func treeScatterScore(x, y int) uint32 {
 	return uint32(x)*73856093 ^ uint32(y)*19349663 ^ 0x85ebca6b
 }
 
-// seedStoneDeposits splits a random 5-10% of the map's area (per the game
+// scaledDepositCells reduces the original percentage target by 30%. Kept in
+// one helper so stone, coal and both ores always scale identically.
+func scaledDepositCells(area, percent int) int {
+	return area * percent * depositGenerationPercent / 10000
+}
+
+// seedStoneDeposits splits a random 3.5-7% of the map's area (per the game
 // design) across 2-5 separate regions, rather than one single patch, so the
 // player has more than one spot worth building a Quarry Hut near. Each
 // deposit cell holds a full building.StoneDepositReserve. Unlike trees and
@@ -2380,7 +2466,7 @@ func treeScatterScore(x, y int) uint32 {
 func seedStoneDeposits(grid *world.Grid, buildings []*building.Building, seed uint32, avoid gridPoint, minDistance int) []*building.Building {
 	area := grid.Width * grid.Height
 	percent := 5 + int(seed%6) // 5..10 inclusive, total share of the map
-	total := area * percent / 100
+	total := scaledDepositCells(area, percent)
 	if total <= 0 {
 		return buildings
 	}
@@ -2522,7 +2608,7 @@ func seedOreDeposits(grid *world.Grid, buildings []*building.Building, kind buil
 	if span > 0 {
 		percent += int(seed % uint32(span))
 	}
-	total := area * percent / 100
+	total := scaledDepositCells(area, percent)
 	if total <= 0 {
 		return buildings
 	}
@@ -3127,6 +3213,7 @@ func restoreTreeRegrowth(states []save.TreeRegrowthState) []treeRegrowth {
 func (g *Game) Draw(screen *ebiten.Image) {
 	render.Tick()
 	render.DrawGrid(screen, g.grid, g.camera)
+	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
 	// visibleConnectivity feeds both the building tint below and the
 	// access-point dot further down -- each buildingConnected call is a
 	// full pathfind BFS, so computing it once per visible building here
@@ -3155,6 +3242,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera)
 	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera)
 	render.DrawBuilders(screen, g.builders.Builders, g.camera)
+	render.DrawAmbientSkyLife(screen, g.grid, g.camera)
 	render.DrawMiners(screen, g.miners.Miners, g.camera)
 
 	mx, my := ebiten.CursorPosition()
@@ -3188,7 +3276,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			priorityLevel = g.logi.Priority(g.selection.Building.Kind)
 		}
 	}
-	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions(), g.finishedBuildingCounts(), g.sim.Speed(), g.camera.Scale, g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts(), g.sim.Speed(), g.camera.Scale, g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
 	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog)
 
 	if g.statusMsg != "" {

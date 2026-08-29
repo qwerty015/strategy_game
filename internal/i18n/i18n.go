@@ -30,19 +30,20 @@ type Catalog struct {
 	ResourceName map[resource.Type]string
 	BuildingName map[building.Kind]string
 
-	BuildMenuTitle string
-	BuildTab       string
-	HireTab        string
-	SettingsTab    string
-	InspectorTitle string
-	InspectorHint  string
-	SpeedTitle     string
-	SpeedPaused    string
-	SpeedHalf      string
-	SpeedNormal    string
-	SpeedDouble    string
-	SpeedQuadruple string
-	SpeedOctuple   string
+	BuildMenuTitle   string
+	BuildTab         string
+	HireTab          string
+	SettingsTab      string
+	InspectorTitle   string
+	InspectorHint    string
+	SpeedTitle       string
+	SpeedPaused      string
+	SpeedHalf        string
+	SpeedNormal      string
+	SpeedDouble      string
+	SpeedQuadruple   string
+	SpeedOctuple     string
+	SpeedSixteenfold string
 
 	StateLabel                  string
 	CargoLabel                  string
@@ -101,6 +102,10 @@ type Catalog struct {
 	HireSerf                    string
 	RemoveSelected              string
 	DismissSerf                 string
+	DemolitionMode              string
+	DemolitionModeActive        string
+	ConfirmDemolitionModePrompt string
+	ConfirmDemolitionModeButton string
 	ConfirmRemovalPrompt        string // formatted with the selected object name
 	ConfirmRemovalButton        string
 	Deleted                     string

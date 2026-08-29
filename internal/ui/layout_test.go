@@ -32,9 +32,9 @@ func TestLayoutKeepsPanelsAtWindowEdges(t *testing.T) {
 func TestBuildPaletteKeepsEveryCardClickable(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	palette := NewPalette()
-	stride, _ := layout.cardGeometry(len(palette.Kinds))
+	stride, _ := layout.buildCardGeometry(len(palette.Kinds))
 	for i := range palette.Kinds {
-		x, y := 20, leftCardsStartY+4+i*stride
+		x, y := 20, leftBuildCardsStartY+4+i*stride
 		got, ok := layout.BuildIndexAt(x, y, len(palette.Kinds))
 		if !ok || got != i {
 			t.Fatalf("card %d at (%d,%d) resolved to %d, %v", i, x, y, got, ok)
@@ -195,15 +195,15 @@ func TestSettingsSlotActionAtCoversAllFiveSlots(t *testing.T) {
 	}
 }
 
-// TestSettingsSpeedAtCoversAllSixSpeeds verifies every Option-tab speed
-// segment, including the highest 8x setting.
-func TestSettingsSpeedAtCoversAllSixSpeeds(t *testing.T) {
+// TestSettingsSpeedAtCoversAllSevenSpeeds verifies every Option-tab speed
+// segment, including the highest 16x setting.
+func TestSettingsSpeedAtCoversAllSevenSpeeds(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	startX := 12
 	w := layout.LeftWidth - 24
-	segW := w / 6
+	segW := w / 7
 
-	for i := 0; i <= int(economy.Octuple); i++ {
+	for i := 0; i <= int(economy.Sixteenfold); i++ {
 		got, ok := layout.SettingsSpeedAt(startX+i*segW+segW/2, settingsSpeedRowY+settingsSpeedRowH/2)
 		if !ok || got != economy.Speed(i) {
 			t.Fatalf("speed segment %d resolved to %v, %v; want %v, true", i, got, ok, economy.Speed(i))
@@ -274,5 +274,16 @@ func TestSettingsDialogButtonAtCoversBothButtons(t *testing.T) {
 	}
 	if _, ok := layout.SettingsDialogButtonAt(startX, settingsDialogButtonY-5); ok {
 		t.Fatal("a click above the dialog button row resolved to a button, want false")
+	}
+}
+
+func TestDemolitionModeHitAreaMatchesItsRectangle(t *testing.T) {
+	layout := NewLayout(1024, 768)
+	r := layout.DemolitionModeRect()
+	if !layout.DemolitionModeAt(r.Min.X+r.Dx()/2, r.Min.Y+r.Dy()/2) {
+		t.Fatal("centre of demolition button is not clickable")
+	}
+	if layout.DemolitionModeAt(r.Max.X, r.Min.Y+r.Dy()/2) {
+		t.Fatal("point outside demolition button is clickable")
 	}
 }

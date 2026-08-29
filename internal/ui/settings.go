@@ -31,6 +31,7 @@ const (
 	DialogConfirmOverwrite
 	DialogConfirmNewGame
 	DialogConfirmRemoval
+	DialogConfirmDemolitionMode
 )
 
 // IsSettingsDialog reports whether dialog belongs in the Settings-tab slot

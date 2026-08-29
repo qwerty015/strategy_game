@@ -14,6 +14,7 @@ func TestSimulator_AdvanceRespectsSpeed(t *testing.T) {
 		{name: "double", speed: Double, want: 2},
 		{name: "quadruple", speed: Quadruple, want: 4},
 		{name: "octuple", speed: Octuple, want: 8},
+		{name: "sixteenfold", speed: Sixteenfold, want: 16},
 	}
 
 	for _, tc := range tests {

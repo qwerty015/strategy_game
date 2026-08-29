@@ -46,7 +46,7 @@ func TestSeedFishLimitsEveryConnectedWaterBody(t *testing.T) {
 
 // TestSeedStoneDepositsSplitsAcrossMultipleRegions covers "раздели камень
 // на 2-5 областей": deposits must not form one single patch, and their
-// total count must land in the designed 5-10% of the map's area.
+// total count must land in the reduced 3.5-7% of the map's area.
 func TestSeedStoneDepositsSplitsAcrossMultipleRegions(t *testing.T) {
 	grid := world.NewGrid(40, 30)
 	// No keep-away point exercised here -- this test is only about the
@@ -55,9 +55,9 @@ func TestSeedStoneDepositsSplitsAcrossMultipleRegions(t *testing.T) {
 	buildings := seedStoneDeposits(grid, nil, 0x1b873593, gridPoint{}, 0)
 
 	area := grid.Width * grid.Height
-	minCells, maxCells := area*5/100, area*10/100
+	minCells, maxCells := scaledDepositCells(area, 5), scaledDepositCells(area, 10)
 	if len(buildings) < minCells || len(buildings) > maxCells {
-		t.Fatalf("placed %d stone-deposit cells, want between %d and %d (5-10%% of %d)", len(buildings), minCells, maxCells, area)
+		t.Fatalf("placed %d stone-deposit cells, want between %d and %d (reduced 5-10%% target of %d)", len(buildings), minCells, maxCells, area)
 	}
 
 	regions := countStoneRegions(buildings)
@@ -162,9 +162,9 @@ func TestSeedOreDepositsRespectsDesignedAbundance(t *testing.T) {
 		// abundance percentages; TestSeedDepositsKeepAllKindsAwayFromWarehouse
 		// covers the distance constraint on its own.
 		buildings := seedOreDeposits(grid, nil, c.kind, c.minPercent, c.maxPercent, c.seed, gridPoint{}, 0)
-		minCells, maxCells := area*c.minPercent/100, area*c.maxPercent/100
+		minCells, maxCells := scaledDepositCells(area, c.minPercent), scaledDepositCells(area, c.maxPercent)
 		if len(buildings) < minCells || len(buildings) > maxCells {
-			t.Fatalf("%s: placed %d cells, want between %d and %d (%d-%d%% of %d)", c.name, len(buildings), minCells, maxCells, c.minPercent, c.maxPercent, area)
+			t.Fatalf("%s: placed %d cells, want between %d and %d (reduced %d-%d%% target of %d)", c.name, len(buildings), minCells, maxCells, c.minPercent, c.maxPercent, area)
 		}
 		for _, b := range buildings {
 			if b.Kind != c.kind || b.Reserve != building.OreDepositReserve {
@@ -260,7 +260,7 @@ func TestGenerateGridCarvesASeaAlongTheWholeEdgeWithinTargetPercent(t *testing.T
 	}
 	minCells, maxCells := area*seaMinPercent/100, area*seaMaxPercent/100
 	if water < minCells || water > maxCells {
-		t.Fatalf("sea has %d water cells, want between %d and %d (%d-%d%% of %d)", water, minCells, maxCells, seaMinPercent, seaMaxPercent, area)
+		t.Fatalf("sea has %d water cells, want between %d and %d (reduced %d-%d%% target of %d)", water, minCells, maxCells, seaMinPercent, seaMaxPercent, area)
 	}
 
 	edgeWater := func(x, y int) bool { return grid.At(x, y).Terrain == world.Water }
@@ -572,6 +572,20 @@ func TestSelectionAt_SerfOnRoadWinsOverTheRoad(t *testing.T) {
 	got = game.selectionAt(int(sx)+1, int(sy)+1)
 	if got.Kind != ui.SelectionBuilding || got.Building != road {
 		t.Fatalf("selection with nobody on the tile = %+v, want the road itself", got)
+	}
+}
+
+// TestBuildingSelectionAtReturnsRoad ensures continuous demolition targets the
+// road itself even though regular selection intentionally gives a traveller
+// standing there priority (see TestSelectionAt_SerfOnRoadWinsOverTheRoad).
+func TestBuildingSelectionAtReturnsRoad(t *testing.T) {
+	road := &building.Building{Kind: building.Road, X: 3, Y: 0}
+	game := &Game{buildings: []*building.Building{road}, camera: render.NewCamera()}
+
+	sx, sy := game.camera.TileToScreen(road.X, road.Y)
+	got := game.buildingSelectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionBuilding || got.Building != road {
+		t.Fatalf("demolition selection = %+v, want the road", got)
 	}
 }
 

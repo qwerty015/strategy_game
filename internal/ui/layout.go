@@ -25,11 +25,14 @@ type Layout struct {
 }
 
 const (
-	leftTabY        = 44
-	leftTabHeight   = 30
-	leftCardsStartY = 82
-	leftCardHeight  = 40
-	leftCardStride  = 44
+	leftTabY             = 44
+	leftTabHeight        = 30
+	leftCardsStartY      = 82
+	leftDemolitionY      = leftCardsStartY
+	leftDemolitionHeight = 30
+	leftBuildCardsStartY = leftDemolitionY + leftDemolitionHeight + 8
+	leftCardHeight       = 40
+	leftCardStride       = 44
 
 	// leftCardMinStride/leftCardMinHeight bound how far cardGeometry will
 	// shrink a long list. A list that would need to go below these is a
@@ -38,20 +41,23 @@ const (
 	leftCardMinHeight = 28
 )
 
-// cardGeometry returns the vertical stride and height to draw/hit-test count
-// cards in the left panel's card list (the Build palette or the Hire tab).
-// The list keeps its normal leftCardStride/leftCardHeight as long as it
-// fits inside the left panel; a longer list -- the Build palette gains a
-// new card with almost every new building kind -- is compressed just
-// enough to keep every card clickable instead of running beyond the left
-// panel. Shared by drawing and hit-testing so the two never disagree about
-// where a card actually is.
+// cardGeometry returns the vertical stride and height for a normal left-panel
+// card list (Hire). Build has a compact demolition control above its cards,
+// therefore it starts at a separate y-coordinate below.
 func (l Layout) cardGeometry(count int) (stride, height int) {
+	return l.cardGeometryFrom(leftCardsStartY, count)
+}
+
+func (l Layout) buildCardGeometry(count int) (stride, height int) {
+	return l.cardGeometryFrom(leftBuildCardsStartY, count)
+}
+
+func (l Layout) cardGeometryFrom(startY, count int) (stride, height int) {
 	stride, height = leftCardStride, leftCardHeight
 	if count <= 0 {
 		return
 	}
-	available := l.Height - leftCardsStartY
+	available := l.Height - startY
 	if available <= 0 || stride*count <= available {
 		return
 	}
@@ -148,17 +154,28 @@ func (l Layout) MenuTabAt(x, y int) (LeftTab, bool) {
 
 // BuildIndexAt returns the building palette card under the cursor.
 func (l Layout) BuildIndexAt(x, y int, count int) (int, bool) {
-	return l.menuIndexAt(x, y, count)
+	stride, height := l.buildCardGeometry(count)
+	return l.menuIndexAtFrom(x, y, count, leftBuildCardsStartY, stride, height)
+}
+
+// DemolitionModeRect is the Build-tab switch for continuous removal. Keeping
+// its rectangle in Layout gives input and rendering exactly the same bounds.
+func (l Layout) DemolitionModeRect() image.Rectangle {
+	return image.Rect(12, leftDemolitionY, l.LeftWidth-12, leftDemolitionY+leftDemolitionHeight)
+}
+
+func (l Layout) DemolitionModeAt(x, y int) bool {
+	return image.Pt(x, y).In(l.DemolitionModeRect())
 }
 
 // HireIndexAt returns the hire-menu card under the cursor.
 func (l Layout) HireIndexAt(x, y int, count int) (int, bool) {
-	return l.menuIndexAt(x, y, count)
+	stride, height := l.cardGeometry(count)
+	return l.menuIndexAtFrom(x, y, count, leftCardsStartY, stride, height)
 }
 
-func (l Layout) menuIndexAt(x, y int, count int) (int, bool) {
-	stride, height := l.cardGeometry(count)
-	card := image.Rect(12, leftCardsStartY, l.LeftWidth-12, leftCardsStartY+height)
+func (l Layout) menuIndexAtFrom(x, y, count, startY, stride, height int) (int, bool) {
+	card := image.Rect(12, startY, l.LeftWidth-12, startY+height)
 	for i := 0; i < count; i++ {
 		r := card.Add(image.Pt(0, i*stride))
 		if image.Pt(x, y).In(r) {
@@ -340,12 +357,12 @@ func (l Layout) SettingsSpeedAt(x, y int) (economy.Speed, bool) {
 	}
 	startX := 12
 	w := l.LeftWidth - 24
-	segW := w / 6
+	segW := w / (int(economy.Sixteenfold) + 1)
 	if segW <= 0 || x < startX {
 		return economy.Normal, false
 	}
 	index := (x - startX) / segW
-	if index < 0 || index > int(economy.Octuple) || x >= startX+(index+1)*segW {
+	if index < 0 || index > int(economy.Sixteenfold) || x >= startX+(index+1)*segW {
 		return economy.Normal, false
 	}
 	return economy.Speed(index), true

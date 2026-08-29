@@ -25,7 +25,7 @@ func DrawGrid(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 			}
 			sx, sy := cam.TileToScreen(tx, ty)
 			terrain := g.At(tx, ty).Terrain
-			drawGround(screen, terrainImage(terrain), sx, sy, tilePixels)
+			drawGround(screen, terrainImage(terrain), sx, sy, tilePixels, terrain == world.Water)
 			if terrain == world.Grass {
 				drawGrassSway(screen, sx, sy, tx, ty, tilePixels)
 			}
@@ -72,11 +72,69 @@ func blendTerrainEdges(screen *ebiten.Image, g *world.Grid, terrain world.Terrai
 		if neighborTerrain == terrain {
 			continue
 		}
+		if terrain == world.Water || neighborTerrain == world.Water {
+			drawWaterShoreEdge(screen, terrain, tx, ty, sx, sy, tilePixels, d.edge)
+			continue
+		}
 		neighborImg := terrainImage(neighborTerrain)
 		for _, band := range terrainEdgeBands {
 			drawEdgeStrip(screen, neighborImg, sx, sy, tilePixels, d.edge, band.depthFraction*assets.TileSize, band.alpha)
 		}
 	}
+}
+
+// drawWaterShoreEdge adds a restrained dark shallow-water band. Water and
+// grass remain clearly different, but there is no bright cyan frame or wide
+// artificial border around every shoreline tile.
+func drawWaterShoreEdge(screen *ebiten.Image, terrain world.TerrainType, tx, ty int, sx, sy, tilePixels float64, edge edgeSide) {
+	if terrain == world.Water {
+		fillEdgeBand(screen, sx, sy, tilePixels, edge, 0.14, color.RGBA{R: 38, G: 104, B: 112, A: 86})
+		fillEdgeBand(screen, sx, sy, tilePixels, edge, 0.055, color.RGBA{R: 67, G: 128, B: 126, A: 52})
+		if (tileHash(tx, ty, 374761393, 668265263)+uint32(animFrame/30))%17 == 0 {
+			drawShoreFoam(screen, sx, sy, tilePixels, edge)
+		}
+		return
+	}
+	fillEdgeBand(screen, sx, sy, tilePixels, edge, 0.075, color.RGBA{R: 55, G: 105, B: 63, A: 58})
+}
+
+func fillEdgeBand(screen *ebiten.Image, sx, sy, tilePixels float64, edge edgeSide, fraction float64, tint color.RGBA) {
+	depth := tilePixels * fraction
+	x, y, width, height := sx, sy, tilePixels, depth
+	switch edge {
+	case edgeN:
+		y = sy
+	case edgeS:
+		y = sy + tilePixels - depth
+	case edgeW:
+		width, height = depth, tilePixels
+	case edgeE:
+		x, width, height = sx+tilePixels-depth, depth, tilePixels
+	}
+	vector.FillRect(screen, float32(x), float32(y), float32(width), float32(height), tint, false)
+}
+
+// drawShoreFoam is intentionally sparse and low-contrast: it is a fleeting
+// water glint, not a continuous white line drawn around the whole coast.
+func drawShoreFoam(screen *ebiten.Image, sx, sy, tilePixels float64, edge edgeSide) {
+	length := float32(tilePixels * 0.13)
+	width := float32(maxPixel(tilePixels * 0.014))
+	foam := color.RGBA{R: 150, G: 187, B: 172, A: 95}
+	if edge == edgeN || edge == edgeS {
+		y := float32(sy + tilePixels*0.07)
+		if edge == edgeS {
+			y = float32(sy + tilePixels*0.93)
+		}
+		x := float32(sx + tilePixels*0.52)
+		vector.StrokeLine(screen, x-length/2, y, x+length/2, y, width, foam, true)
+		return
+	}
+	x := float32(sx + tilePixels*0.07)
+	if edge == edgeE {
+		x = float32(sx + tilePixels*0.93)
+	}
+	y := float32(sy + tilePixels*0.52)
+	vector.StrokeLine(screen, x, y-length/2, x, y+length/2, width, foam, true)
 }
 
 // edgeSide names which of a tile's 4 sides an edge-strip effect (a road
@@ -145,10 +203,17 @@ func drawEdgeStrip(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels f
 }
 
 // drawGround uses integer destination edges and a tiny one-pixel overlap.
-// Fractional camera zoom otherwise lets independently scaled PNG tiles leave
-// bright hairline seams between them due to rounding/filtering.
-func drawGround(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels float64) {
+// Water additionally omits the outer source pixels: the legacy water tile has
+// pale edge pixels that otherwise become a visible white grid at high zoom.
+func drawGround(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels float64, trimSourceBorder bool) {
 	b := img.Bounds()
+	source := img
+	if trimSourceBorder && b.Dx() > 2 && b.Dy() > 2 {
+		trimmed := b.Inset(1)
+		if sub, ok := img.SubImage(trimmed).(*ebiten.Image); ok {
+			source, b = sub, trimmed
+		}
+	}
 	x0 := math.Floor(sx)
 	y0 := math.Floor(sy)
 	x1 := math.Ceil(sx+tilePixels) + 1
@@ -157,10 +222,11 @@ func drawGround(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels floa
 		return
 	}
 	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(-float64(b.Min.X), -float64(b.Min.Y))
 	op.GeoM.Scale((x1-x0)/float64(b.Dx()), (y1-y0)/float64(b.Dy()))
 	op.GeoM.Translate(x0, y0)
 	op.Blend = ebiten.BlendSourceOver
-	screen.DrawImage(img, op)
+	screen.DrawImage(source, op)
 }
 
 // drawGrassSway is a tiny two-frame ambient animation. Only a deterministic

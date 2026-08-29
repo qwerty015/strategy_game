@@ -45,7 +45,7 @@ type imageRect struct{ x, y, w, h int }
 // DrawBuildPanel renders construction, NPC hiring and settings in the same
 // left panel. A professional card is muted when every matching workplace
 // already has a resident, making the one-worker-per-building limit visible.
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, options []HireOption, builtCounts map[building.Kind]int, speed economy.Speed, zoom float64, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int, speed economy.Speed, zoom float64, slots []SaveSlotInfo, dialog DialogKind, dialogSlot int, dialogText string) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
@@ -58,9 +58,10 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		drawSettingsContent(screen, layout, speed, zoom, slots, dialog, dialogSlot, dialogText)
 		return
 	}
-	stride, cardH := layout.cardGeometry(len(p.Kinds))
+	drawDemolitionModeButton(screen, layout, demolitionMode)
+	stride, cardH := layout.buildCardGeometry(len(p.Kinds))
 	for i, kind := range p.Kinds {
-		x, y := 12, leftCardsStartY+i*stride
+		x, y := 12, leftBuildCardsStartY+i*stride
 		w, h := layout.LeftWidth-24, cardH
 		fill := panelInnerColor
 		if i == p.Selected {
@@ -98,6 +99,18 @@ func closestZoomPreset(zoom float64) int {
 	return best
 }
 
+func drawDemolitionModeButton(screen *ebiten.Image, layout Layout, active bool) {
+	r := layout.DemolitionModeRect()
+	fill := panelInnerColor
+	label := i18n.T().DemolitionMode
+	if active {
+		fill = color.RGBA{R: 126, G: 53, B: 45, A: 255}
+		label = i18n.T().DemolitionModeActive
+	}
+	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), fill, false)
+	vector.FillRect(screen, float32(r.Min.X), float32(r.Max.Y-3), float32(r.Dx()), 3, panelEdgeColor, false)
+	DrawMenuText(screen, label, float64(r.Min.X+8), float64(r.Min.Y+8))
+}
 func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
 	labels := []string{i18n.T().BuildTab, i18n.T().HireTab, i18n.T().SettingsTab}
 	for i, label := range labels {
@@ -135,7 +148,7 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 		DrawMenuText(screen, entry.label, float64(bx+6), float64(settingsLangRowY+5))
 	}
 
-	speedLabels := []string{t.SpeedPaused, t.SpeedHalf, t.SpeedNormal, t.SpeedDouble, t.SpeedQuadruple, t.SpeedOctuple}
+	speedLabels := []string{t.SpeedPaused, t.SpeedHalf, t.SpeedNormal, t.SpeedDouble, t.SpeedQuadruple, t.SpeedOctuple, t.SpeedSixteenfold}
 	speedSegW := w / len(speedLabels)
 	for i, label := range speedLabels {
 		bx := x + i*speedSegW
@@ -402,6 +415,9 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 			DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().DeathsLabel, pop.Deaths), x, 112)
 			DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().RemovedLabel, pop.Removed), x, 132)
 		}
+		if dialog == DialogConfirmDemolitionMode {
+			drawConfirmDemolitionModeDialog(screen, layout)
+		}
 		return
 	}
 
@@ -458,6 +474,22 @@ func drawConfirmRemovalDialog(screen *ebiten.Image, layout Layout, selection Sel
 	vector.FillRect(screen, float32(confirm.Min.X), float32(confirm.Min.Y), float32(confirm.Dx()), float32(confirm.Dy()), color.RGBA{R: 126, G: 53, B: 45, A: 255}, false)
 	vector.FillRect(screen, float32(cancel.Min.X), float32(cancel.Min.Y), float32(cancel.Dx()), float32(cancel.Dy()), panelColor, false)
 	DrawInspectorText(screen, i18n.T().ConfirmRemovalButton, float64(confirm.Min.X+8), float64(confirm.Min.Y+8))
+	DrawInspectorText(screen, i18n.T().SlotCancelButton, float64(cancel.Min.X+8), float64(cancel.Min.Y+8))
+}
+
+// drawConfirmDemolitionModeDialog asks once before continuous map removal is
+// armed. It deliberately appears in the empty inspector: no individual
+// object has been selected or changed yet.
+func drawConfirmDemolitionModeDialog(screen *ebiten.Image, layout Layout) {
+	r := layout.InspectorConfirmRemoveRect()
+	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), panelInnerColor, false)
+	vector.StrokeRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), 2, panelEdgeColor, false)
+	DrawInspectorText(screen, i18n.T().ConfirmDemolitionModePrompt, float64(r.Min.X+10), float64(r.Min.Y+12))
+
+	confirm, cancel := layout.InspectorConfirmRemoveButtons()
+	vector.FillRect(screen, float32(confirm.Min.X), float32(confirm.Min.Y), float32(confirm.Dx()), float32(confirm.Dy()), color.RGBA{R: 126, G: 53, B: 45, A: 255}, false)
+	vector.FillRect(screen, float32(cancel.Min.X), float32(cancel.Min.Y), float32(cancel.Dx()), float32(cancel.Dy()), panelColor, false)
+	DrawInspectorText(screen, i18n.T().ConfirmDemolitionModeButton, float64(confirm.Min.X+8), float64(confirm.Min.Y+8))
 	DrawInspectorText(screen, i18n.T().SlotCancelButton, float64(cancel.Min.X+8), float64(cancel.Min.Y+8))
 }
 
@@ -524,11 +556,11 @@ func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Build
 	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.ConstructionProgressLabel, int(b.ConstructionProgress()*100)), float64(x), float64(y))
 	y += 20
 	if bt.PlankCost > 0 {
-		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Plank], b.InputBuffer[resource.Plank], bt.PlankCost), float64(x), float64(y))
+		drawResourceRow(screen, x, y, resource.Plank, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Plank], b.InputBuffer[resource.Plank], bt.PlankCost))
 		y += 18
 	}
 	if bt.StoneCost > 0 {
-		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.InputBuffer[resource.StoneBlock], bt.StoneCost), float64(x), float64(y))
+		drawResourceRow(screen, x, y, resource.StoneBlock, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.InputBuffer[resource.StoneBlock], bt.StoneCost))
 	}
 }
 
@@ -574,7 +606,7 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	if b.Kind == building.LumberjackHut {
 		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
-		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Log], b.OutputBuffer[resource.Log], building.BufferCapacity), float64(x), float64(y))
+		drawResourceRow(screen, x, y, resource.Log, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Log], b.OutputBuffer[resource.Log], building.BufferCapacity))
 		y += 20
 		routeState := t.Disconnected
 		if connected {
@@ -586,7 +618,7 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	if b.Kind == building.FisherHut {
 		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
-		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Fish], b.OutputBuffer[resource.Fish], building.BufferCapacity), float64(x), float64(y))
+		drawResourceRow(screen, x, y, resource.Fish, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Fish], b.OutputBuffer[resource.Fish], building.BufferCapacity))
 		y += 20
 		routeState := t.Disconnected
 		if connected {
@@ -598,7 +630,7 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	if b.Kind == building.QuarryHut {
 		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
-		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.OutputBuffer[resource.StoneBlock], building.BufferCapacity), float64(x), float64(y))
+		drawResourceRow(screen, x, y, resource.StoneBlock, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.OutputBuffer[resource.StoneBlock], building.BufferCapacity))
 		y += 20
 		routeState := t.Disconnected
 		if connected {
@@ -611,7 +643,7 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
 		for _, rt := range []resource.Type{resource.Coal, resource.GoldOre, resource.IronOre} {
-			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], building.BufferCapacity), float64(x), float64(y))
+			drawResourceRow(screen, x, y, rt, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], building.BufferCapacity))
 			y += 18
 		}
 		routeState := t.Disconnected
@@ -634,13 +666,13 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		DrawInspectorText(screen, t.InputLabel+":", float64(x), float64(y))
 		y += 18
 		for _, rt := range []resource.Type{resource.GoldOre, resource.IronOre, resource.Coal} {
-			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity), float64(x+8), float64(y))
+			drawResourceRow(screen, x+8, y, rt, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity))
 			y += 18
 		}
 		DrawInspectorText(screen, t.OutputLabel+":", float64(x), float64(y))
 		y += 18
 		for _, rt := range []resource.Type{resource.Gold, resource.Iron} {
-			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], b.OutputLimit()), float64(x+8), float64(y))
+			drawResourceRow(screen, x+8, y, rt, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], b.OutputLimit()))
 			y += 18
 		}
 		roadState := t.Disconnected
@@ -670,14 +702,14 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		DrawInspectorText(screen, t.InputLabel+":", float64(x), float64(y))
 		y += 18
 		for _, rt := range inputTypes {
-			DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity), float64(x+8), float64(y))
+			drawResourceRow(screen, x+8, y, rt, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity))
 			y += 18
 		}
 	}
 	if bt.Recipe.TicksToProduce > 0 {
 		DrawInspectorText(screen, t.OutputLabel+":", float64(x), float64(y))
 		y += 18
-		DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.ResourceName[bt.Recipe.Output], b.OutputBuffer[bt.Recipe.Output], b.OutputLimit()), float64(x+8), float64(y))
+		drawResourceRow(screen, x+8, y, bt.Recipe.Output, fmt.Sprintf("%s: %d/%d", t.ResourceName[bt.Recipe.Output], b.OutputBuffer[bt.Recipe.Output], b.OutputLimit()))
 		y += 18
 	}
 	roadState := t.Disconnected

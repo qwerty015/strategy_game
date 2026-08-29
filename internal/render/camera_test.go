@@ -1,6 +1,9 @@
 package render
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // TestCamera_SetZoom_KeepsViewportCenterFixed is a regression guard for
 // the Settings tab's zoom buttons (see ui.SettingsZoomAt): unlike ZoomAt,
@@ -47,5 +50,19 @@ func TestCamera_SetZoom_ClampsToRange(t *testing.T) {
 	c.SetZoom(0.001, 200, 150)
 	if c.Scale != minZoom {
 		t.Errorf("Scale after requesting 0.001x = %.2f, want clamped to minZoom (%.2f)", c.Scale, minZoom)
+	}
+}
+
+func TestCamera_CentersMapSmallerThanViewport(t *testing.T) {
+	c := NewCamera()
+	c.Scale = 0.6
+	c.SetViewport(100, 40, 800, 600)
+	c.clamp(20, 10)
+
+	sx, sy := c.TileToScreen(0, 0)
+	wantX := 100 + (800-float64(20*TileSize)*c.Scale)/2
+	wantY := 40 + (600-float64(10*TileSize)*c.Scale)/2
+	if math.Abs(sx-wantX) > 0.001 || math.Abs(sy-wantY) > 0.001 {
+		t.Fatalf("map origin = (%.3f, %.3f), want centred (%.3f, %.3f)", sx, sy, wantX, wantY)
 	}
 }

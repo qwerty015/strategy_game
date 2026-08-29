@@ -142,16 +142,23 @@ func (c *Camera) clampWithViewport(gridWidth, gridHeight, screenWidth, screenHei
 	}
 	worldViewportWidth := float64(screenWidth) / c.Scale
 	worldViewportHeight := float64(screenHeight) / c.Scale
-	maxX := float64(gridWidth*TileSize) - worldViewportWidth
-	maxY := float64(gridHeight*TileSize) - worldViewportHeight
+	mapWidth := float64(gridWidth * TileSize)
+	mapHeight := float64(gridHeight * TileSize)
+	maxX := mapWidth - worldViewportWidth
+	maxY := mapHeight - worldViewportHeight
 	if maxX < 0 {
-		maxX = 0
+		// A negative world-space offset creates equal empty margins around a
+		// map that is smaller than its viewport. Keeping it at zero was what
+		// pinned a zoomed-out map to the upper-left corner.
+		c.X = maxX / 2
+	} else {
+		c.X = clamp(c.X, 0, maxX)
 	}
 	if maxY < 0 {
-		maxY = 0
+		c.Y = maxY / 2
+	} else {
+		c.Y = clamp(c.Y, 0, maxY)
 	}
-	c.X = clamp(c.X, 0, maxX)
-	c.Y = clamp(c.Y, 0, maxY)
 }
 
 func clamp(v, lo, hi float64) float64 {
