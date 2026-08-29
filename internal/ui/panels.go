@@ -265,7 +265,7 @@ const (
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation. A large centered portrait separates the selected object
 // from its data, while no selection becomes the compact town summary.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, occupants int, showPriority bool, priorityLevel int, dialog DialogKind) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -278,6 +278,9 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		}
 		if dialog == DialogConfirmDemolitionMode {
 			drawConfirmDemolitionModeDialog(screen, layout)
+		}
+		if dialog == DialogConfirmTrimServes {
+			drawConfirmTrimServesDialog(screen, layout, trimServesPrompt)
 		}
 		return
 	}
@@ -352,6 +355,26 @@ func drawConfirmDemolitionModeDialog(screen *ebiten.Image, layout Layout) {
 	vector.FillRect(screen, float32(cancel.Min.X), float32(cancel.Min.Y), float32(cancel.Dx()), float32(cancel.Dy()), panelColor, false)
 	DrawInspectorText(screen, i18n.T().ConfirmDemolitionModeButton, float64(confirm.Min.X+8), float64(confirm.Min.Y+8))
 	DrawInspectorText(screen, i18n.T().SlotCancelButton, float64(cancel.Min.X+8), float64(cancel.Min.Y+8))
+}
+
+// drawConfirmTrimServesDialog asks, on a right-click of the Serf card when
+// there are more serfs than recommended, whether to dismiss all the way
+// down to the recommendation in one go or just one -- see cmd/game's
+// handleConfirmTrimServesInput for what each button actually does. prompt
+// is pre-formatted by cmd/game (with the current/recommended numbers) so
+// this package stays as unaware of i18n formatting args as every other
+// dialog here.
+func drawConfirmTrimServesDialog(screen *ebiten.Image, layout Layout, prompt string) {
+	r := layout.InspectorConfirmRemoveRect()
+	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), panelInnerColor, false)
+	vector.StrokeRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), 2, panelEdgeColor, false)
+	DrawInspectorText(screen, prompt, float64(r.Min.X+10), float64(r.Min.Y+12))
+
+	yes, no := layout.InspectorConfirmRemoveButtons()
+	vector.FillRect(screen, float32(yes.Min.X), float32(yes.Min.Y), float32(yes.Dx()), float32(yes.Dy()), selectedColor, false)
+	vector.FillRect(screen, float32(no.Min.X), float32(no.Min.Y), float32(no.Dx()), float32(no.Dy()), panelColor, false)
+	DrawInspectorText(screen, i18n.T().ConfirmYesButton, float64(yes.Min.X+8), float64(yes.Min.Y+8))
+	DrawInspectorText(screen, i18n.T().ConfirmNoButton, float64(no.Min.X+8), float64(no.Min.Y+8))
 }
 
 // drawRemoveButton renders the selected object's removal action in the

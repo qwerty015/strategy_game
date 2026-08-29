@@ -13,6 +13,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"strategy_game/internal/advisor"
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
@@ -238,6 +239,31 @@ type Game struct {
 	// can only change when the road/building layout does. nil means "not
 	// computed yet for the current layout".
 	recommendedServeCountCache *int
+
+	// Advisor state (see internal/advisor and tickAdvisor/advisorTipText).
+	// Deliberately not part of save.GameState -- the same reasoning as
+	// weather/lighting (see AGENTS.md): not world state, so it just
+	// starts fresh after a load rather than adding save-format surface.
+	advisorCheckTicks int
+	// advisorIdleSince tracks, per unstaffed RequiresWorker building, the
+	// worldTicks value it first became unstaffed -- rebuilt fresh every
+	// tick from the current unstaffedWorkerBuildings() (see
+	// trackAdvisorIdleBuildings), so a restaffed or removed building's
+	// entry disappears on its own without separate pruning.
+	advisorIdleSince map[*building.Building]int
+	// advisorGatherStuckSince is advisorIdleSince's counterpart for a
+	// lumberjack/quarryman/miner that's staffed and searching but can't
+	// find any tree/stone deposit/ore deposit -- keyed by the worker's
+	// home hut, the tick it most recently entered its own package's
+	// StateIdle (see trackAdvisorGatherWorkers).
+	advisorGatherStuckSince map[*building.Building]int
+	// advisorCooldowns maps a tip Kind to the worldTicks value it may next
+	// be queued at, set when the player acknowledges it -- an ignored tip
+	// (never acknowledged) stays queued indefinitely instead of vanishing
+	// on its own.
+	advisorCooldowns map[advisor.Kind]int
+	advisorQueue     []advisor.Tip
+	advisorVisible   *advisor.Tip
 
 	camera         *render.Camera
 	palette        *ui.Palette
@@ -539,6 +565,7 @@ func (g *Game) Update() error {
 		g.clearMissingUnitSelection()
 		g.refreshPopulation()
 		g.tickAutosave()
+		g.tickAdvisor()
 	}
 
 	return nil
@@ -998,14 +1025,16 @@ func (g *Game) handleMouse() {
 }
 
 // handleHireCardDismissRightClick lets the player right-click the Serf or
-// Builder card in the Hire tab to dismiss one, the reverse of a left-click
-// there hiring one. Per the user's explicit request ("ПКМ по слуге в левом
-// меню во вкладке Юниты сокращает 1 слугу, ПКМ по строителю - сокращает
-// строителя"). Only Serf and Builder support this: every other profession
-// is tied 1:1 to a specific workplace building (see hireOptions), so
-// dismissing one of those from a flat headcount card wouldn't have an
-// unambiguous building to vacate -- removing the workplace itself, via the
-// inspector, is how those are let go.
+// Builder card in the Hire tab to dismiss some, the reverse of a
+// left-click there hiring one. Per the user's explicit requests ("ПКМ по
+// слуге в левом меню во вкладке Юниты сокращает 1 слугу, ПКМ по
+// строителю - сокращает строителя"; later, for Serf specifically, "чтобы
+// уменьшал автоматически до рекомендованного значения" -- see
+// trimSerfsToRecommended). Only Serf and Builder support this: every
+// other profession is tied 1:1 to a specific workplace building (see
+// hireOptions), so dismissing one of those from a flat headcount card
+// wouldn't have an unambiguous building to vacate -- removing the
+// workplace itself, via the inspector, is how those are let go.
 func (g *Game) handleHireCardDismissRightClick(mx, my int) bool {
 	if g.leftTab != ui.HireTab {
 		return false
@@ -1017,12 +1046,21 @@ func (g *Game) handleHireCardDismissRightClick(mx, my int) bool {
 	}
 	switch options[index].Kind {
 	case ui.HireSerf:
-		if len(g.logi.Serfs) == 0 {
+		// Per the user's follow-up: only ask when there's actually an
+		// excess to trim ("если количество слуг меньше чем рекомендовано
+		// то ПКМ так же как и раньше уменьшает на единицу") -- otherwise
+		// this behaves exactly like before, dismissing just one.
+		active := 0
+		for _, s := range g.logi.Serfs {
+			if !s.Dismissing() {
+				active++
+			}
+		}
+		if active <= options[index].Recommended {
+			g.dismissOneSerf()
 			return true
 		}
-		if g.logi.RequestDismissal(g.logi.Serfs[0]) {
-			g.statusMsg = i18n.T().SerfDismissRequested
-		}
+		g.dialog = ui.DialogConfirmTrimServes
 		return true
 	case ui.HireBuilder:
 		if len(g.builders.Builders) == 0 {
@@ -1034,6 +1072,61 @@ func (g *Game) handleHireCardDismissRightClick(mx, my int) bool {
 		return true
 	}
 	return false
+}
+
+// trimSerfsToRecommended dismisses however many serfs are above
+// recommended, all in one click, per the user's explicit request ("клик
+// по слуге правой кнопкой мышки во вкладке юниты, чтобы уменьшал
+// автоматически до рекомендованного значения. При этом слуги заканчивают
+// свои задания и удаляются"). Dismissal itself still goes through
+// logistics.Controller.RequestDismissal, the same safe mechanism a single
+// right-click always used -- a dismissed serf finishes whatever haul it's
+// currently on before actually leaving, nothing is dropped or lost.
+//
+// Counts against serfs not already dismissing (Serf.Dismissing()), not
+// the raw headcount: a repeated click before earlier dismissals have
+// actually left must not re-mark the same serfs and undercount, and must
+// not dismiss more than the excess actually still active.
+func (g *Game) trimSerfsToRecommended(recommended int) {
+	active := 0
+	for _, s := range g.logi.Serfs {
+		if !s.Dismissing() {
+			active++
+		}
+	}
+	if active <= recommended {
+		return
+	}
+	toDismiss := active - recommended
+	dismissed := 0
+	for _, s := range g.logi.Serfs {
+		if dismissed >= toDismiss {
+			break
+		}
+		if s.Dismissing() {
+			continue
+		}
+		if g.logi.RequestDismissal(s) {
+			dismissed++
+		}
+	}
+	if dismissed > 0 {
+		g.statusMsg = fmt.Sprintf(i18n.T().SerfsTrimmedToRecommended, dismissed, recommended)
+	}
+}
+
+// dismissOneSerf is the original, single-serf right-click behavior --
+// still used when there's no excess to trim (the current count is already
+// at or below recommended) and as the "Нет" answer in
+// handleConfirmTrimServesInput when the player would rather dismiss just
+// one instead of the whole excess at once.
+func (g *Game) dismissOneSerf() {
+	if len(g.logi.Serfs) == 0 {
+		return
+	}
+	if g.logi.RequestDismissal(g.logi.Serfs[0]) {
+		g.statusMsg = i18n.T().SerfDismissRequested
+	}
 }
 
 // handleLeftMapDrag delays a map click until release. A short press remains a
@@ -1075,6 +1168,15 @@ func (g *Game) handleLeftMapDrag(mx, my int) bool {
 	return true
 }
 func (g *Game) handleLeftClick(mx, my int) {
+	// The advisor toast floats over the map itself (see AGENTS.md) rather
+	// than blocking input like a modal dialog, so its button is checked
+	// first, ahead of even the minimap: it's drawn on top of everything
+	// else, so a click there should never fall through to whatever
+	// happens to be underneath it on the map.
+	if g.advisorVisible != nil && g.layout.AdvisorAcknowledgeAt(mx, my) {
+		g.acknowledgeAdvisorTip()
+		return
+	}
 	// The minimap centers the camera on the clicked point instead of
 	// selecting anything -- checked first so it always wins over whatever
 	// the inspector happens to show underneath it.
@@ -1648,6 +1750,172 @@ func (g *Game) toggleAutosaveSlot(slot int) {
 	g.refreshSlotCache()
 }
 
+// advisorCheckIntervalTicks/advisorCooldownTicks pace the advisor (see
+// internal/advisor): a full check every 300 ticks (2.5 minutes of played
+// time at Normal speed) is cheap enough not to matter -- the underlying
+// data is either already-cached (recommendedServeCount,
+// disconnectedBuildings) or a single cheap pass over buildings/units
+// (unstaffedWorkerBuildings, already paid every render frame for the
+// map's red tint) -- and frequent enough that a genuine crisis (food
+// running out) is caught with real warning, not discovered by hindsight.
+// The cooldown (10 real minutes of played time) is long enough that an
+// acknowledged tip doesn't immediately reappear the moment its condition
+// is still barely true, short enough that a real, ongoing problem gets
+// mentioned again rather than being silently forgotten forever.
+const (
+	advisorCheckIntervalTicks = 300
+	advisorCooldownTicks      = 1500
+)
+
+// trackAdvisorIdleBuildings updates advisorIdleSince from the current
+// unstaffedWorkerBuildings() every simulation tick (not just at the
+// advisor's own check interval, so idle duration is measured
+// continuously): rebuilt fresh each call rather than incrementally
+// patched, so a building that got staffed, or was removed entirely,
+// simply stops appearing -- no separate pruning pass needed.
+func (g *Game) trackAdvisorIdleBuildings() {
+	unstaffed := g.unstaffedWorkerBuildings()
+	next := make(map[*building.Building]int, len(g.advisorIdleSince))
+	for b, isUnstaffed := range unstaffed {
+		if !isUnstaffed {
+			continue
+		}
+		if since, ok := g.advisorIdleSince[b]; ok {
+			next[b] = since
+		} else {
+			next[b] = g.worldTicks
+		}
+	}
+	g.advisorIdleSince = next
+}
+
+// trackAdvisorGatherWorkers updates advisorGatherStuckSince from every
+// lumberjack/quarryman/miner's own State() == StateIdle -- keyed by home
+// hut, same "rebuilt fresh every tick" pattern as
+// trackAdvisorIdleBuildings and for the same reason: a worker that starts
+// moving again, or is removed, simply stops appearing, no separate
+// pruning needed. Each profession's StateIdle is its own package-level
+// type/constant (lumberjack.StateIdle, quarry.StateIdle, miner.StateIdle
+// -- unrelated types that happen to share a name), so they're compared
+// separately rather than through one shared interface.
+func (g *Game) trackAdvisorGatherWorkers() {
+	next := make(map[*building.Building]int, len(g.advisorGatherStuckSince))
+	keep := func(home *building.Building, idle bool) {
+		if !idle || home == nil {
+			return
+		}
+		if since, ok := g.advisorGatherStuckSince[home]; ok {
+			next[home] = since
+		} else {
+			next[home] = g.worldTicks
+		}
+	}
+	for _, j := range g.jacks.Lumberjacks {
+		keep(j.HomeBuilding(), j.State() == lumberjack.StateIdle)
+	}
+	for _, q := range g.quarry.Quarrymen {
+		keep(q.HomeBuilding(), q.State() == quarry.StateIdle)
+	}
+	for _, m := range g.miners.Miners {
+		keep(m.HomeBuilding(), m.State() == miner.StateIdle)
+	}
+	g.advisorGatherStuckSince = next
+}
+
+// tickAdvisor runs the heuristic advisor (see internal/advisor) once per
+// simulation tick: idle-building and gather-worker tracking every tick
+// (cheap, and duration needs continuous measurement), the full rule check
+// only every advisorCheckIntervalTicks. New tips join the display queue
+// unless their Kind is already queued/shown or still on cooldown from a
+// previous acknowledgement.
+func (g *Game) tickAdvisor() {
+	g.trackAdvisorIdleBuildings()
+	g.trackAdvisorGatherWorkers()
+
+	g.advisorCheckTicks++
+	if g.advisorCheckTicks < advisorCheckIntervalTicks {
+		return
+	}
+	g.advisorCheckTicks = 0
+
+	tips := advisor.Evaluate(g.buildings, g.stock, g.pop, g.disconnectedBuildings(), g.advisorIdleSince, g.advisorGatherStuckSince, g.worldTicks, g.recommendedServeCount(), len(g.logi.Serfs))
+
+	queued := map[advisor.Kind]bool{}
+	if g.advisorVisible != nil {
+		queued[g.advisorVisible.Kind] = true
+	}
+	for _, t := range g.advisorQueue {
+		queued[t.Kind] = true
+	}
+	for _, tip := range tips {
+		if queued[tip.Kind] {
+			continue
+		}
+		if readyAt, onCooldown := g.advisorCooldowns[tip.Kind]; onCooldown && g.worldTicks < readyAt {
+			continue
+		}
+		g.advisorQueue = append(g.advisorQueue, tip)
+		queued[tip.Kind] = true
+	}
+	g.advisorPumpQueue()
+}
+
+// advisorPumpQueue promotes the next queued tip to advisorVisible once the
+// slot is free. A no-op if something is already showing or the queue is
+// empty.
+func (g *Game) advisorPumpQueue() {
+	if g.advisorVisible != nil || len(g.advisorQueue) == 0 {
+		return
+	}
+	tip := g.advisorQueue[0]
+	g.advisorQueue = g.advisorQueue[1:]
+	g.advisorVisible = &tip
+}
+
+// acknowledgeAdvisorTip handles a click on the toast's "Ознакомлен"
+// button: puts the just-shown tip's Kind on cooldown and shows the next
+// queued one, if any.
+func (g *Game) acknowledgeAdvisorTip() {
+	if g.advisorVisible == nil {
+		return
+	}
+	if g.advisorCooldowns == nil {
+		g.advisorCooldowns = make(map[advisor.Kind]int)
+	}
+	g.advisorCooldowns[g.advisorVisible.Kind] = g.worldTicks + advisorCooldownTicks
+	g.advisorVisible = nil
+	g.advisorPumpQueue()
+}
+
+// advisorTipText turns a Tip into its already-localized, single-line
+// display string. Kept in cmd/game (not internal/advisor or internal/ui)
+// deliberately: advisor.Tip carries only raw numbers, so neither package
+// needs to know about i18n or about each other -- this is the one place
+// that bridges "what's true" (advisor) to "what it says" (ui).
+func advisorTipText(tip advisor.Tip) string {
+	t := i18n.T()
+	exampleX, exampleY := 0, 0
+	if tip.Building != nil {
+		exampleX, exampleY = tip.Building.X, tip.Building.Y
+	}
+	switch tip.Kind {
+	case advisor.KindFoodRunningOut:
+		return fmt.Sprintf(t.AdvisorTipFoodRunningOut, tip.TicksLeft)
+	case advisor.KindIdleBuilding:
+		return fmt.Sprintf(t.AdvisorTipIdleBuilding, tip.Count, exampleX, exampleY)
+	case advisor.KindDisconnectedBuilding:
+		return fmt.Sprintf(t.AdvisorTipDisconnectedBuilding, tip.Count, exampleX, exampleY)
+	case advisor.KindServeCountLow:
+		return fmt.Sprintf(t.AdvisorTipServeCountLow, tip.Current, tip.Recommended)
+	case advisor.KindServeCountHigh:
+		return fmt.Sprintf(t.AdvisorTipServeCountHigh, tip.Current, tip.Recommended)
+	case advisor.KindGatherWorkerStuck:
+		return fmt.Sprintf(t.AdvisorTipGatherWorkerStuck, tip.Count, exampleX, exampleY)
+	default:
+		return ""
+	}
+}
+
 // tickAutosave advances the autosave countdown by one simulation tick
 // (see autosaveIntervalTicks) and triggers a silent save once it fires.
 // Called once per simulation tick, not once per render frame, so autosave
@@ -1723,6 +1991,8 @@ func (g *Game) handleDialogInput() {
 		g.handleConfirmRemovalInput()
 	case ui.DialogConfirmDemolitionMode:
 		g.handleConfirmDemolitionModeInput()
+	case ui.DialogConfirmTrimServes:
+		g.handleConfirmTrimServesInput()
 	}
 }
 
@@ -1776,6 +2046,38 @@ func (g *Game) handleConfirmDemolitionModeInput() {
 		g.buildMode = false
 		g.selection.Clear()
 		g.statusMsg = ""
+	}
+}
+
+// handleConfirmTrimServesInput answers the "trim all the way to
+// recommended, or just one?" question a right-click on the Serf card asks
+// when there's an excess (see trimSerfsToRecommended's doc comment). Both
+// answers are real actions, not a cancel: Enter or clicking "Да" trims the
+// whole excess in one go, clicking "Нет" dismisses just one (the original
+// single-serf behavior). Escape alone leaves both untouched, matching
+// every other dialog's cancel behavior.
+func (g *Game) handleConfirmTrimServesInput() {
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.dialog = ui.DialogNone
+		return
+	}
+	yes := inpututil.IsKeyJustPressed(ebiten.KeyEnter)
+	answered := yes
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		mx, my := ebiten.CursorPosition()
+		if selected, ok := g.layout.InspectorConfirmRemoveAt(mx, my); ok {
+			yes = selected
+			answered = true
+		}
+	}
+	if !answered {
+		return
+	}
+	g.dialog = ui.DialogNone
+	if yes {
+		g.trimSerfsToRecommended(g.recommendedServeCount())
+	} else {
+		g.dismissOneSerf()
 	}
 }
 
@@ -3563,11 +3865,18 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts())
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog)
+	trimServesPrompt := ""
+	if g.dialog == ui.DialogConfirmTrimServes {
+		trimServesPrompt = fmt.Sprintf(i18n.T().TrimServesConfirmPrompt, len(g.logi.Serfs), g.recommendedServeCount())
+	}
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt)
 	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
 
 	if g.statusMsg != "" {
 		ui.DrawText(screen, g.statusMsg, float64(g.layout.LeftWidth+12), 10)
+	}
+	if g.advisorVisible != nil {
+		ui.DrawAdvisorToast(screen, g.layout, advisorTipText(*g.advisorVisible))
 	}
 	if g.paused {
 		g.drawPauseMenu(screen)

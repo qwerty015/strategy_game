@@ -30,4 +30,5 @@ const (
 	DialogConfirmRemoval
 	DialogConfirmDemolitionMode
 	DialogConfirmExit
+	DialogConfirmTrimServes
 )

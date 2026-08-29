@@ -110,13 +110,29 @@ type Catalog struct {
 	ConfirmRemovalButton        string
 	Deleted                     string
 	SerfDismissRequested        string
+	SerfsTrimmedToRecommended   string // formatted with (dismissed count, recommended headcount)
+	TrimServesConfirmPrompt     string // formatted with (current count, recommended headcount)
+	ConfirmYesButton            string
+	ConfirmNoButton             string
 	BuilderDismissRequested     string
 	RecommendedServeCountLabel  string // formatted with the recommended headcount, e.g. "реком. %d"
-	CannotDeleteWarehouse       string
-	CannotDeleteTree            string
-	CannotDeleteFish            string
-	CannotDeleteStoneDeposit    string
-	CatchableLabel              string
+
+	// Advisor toast (see internal/advisor and cmd/game's advisorTipText).
+	// Every AdvisorTip* string is formatted with that tip's own numbers
+	// (ticks left, building counts, serf counts) -- see advisorTipText
+	// for the exact argument order per kind.
+	AdvisorAcknowledgeButton       string
+	AdvisorTipFoodRunningOut       string // %d ticks left
+	AdvisorTipIdleBuilding         string // %d idle buildings, %d,%d one example's coordinates
+	AdvisorTipDisconnectedBuilding string // %d disconnected buildings, %d,%d one example's coordinates
+	AdvisorTipServeCountLow        string // %d current, %d recommended
+	AdvisorTipServeCountHigh       string // %d current, %d recommended
+	AdvisorTipGatherWorkerStuck    string // %d workers stuck, %d,%d one example's coordinates
+	CannotDeleteWarehouse          string
+	CannotDeleteTree               string
+	CannotDeleteFish               string
+	CannotDeleteStoneDeposit       string
+	CatchableLabel                 string
 
 	CantBuildHere         string
 	NotEnoughGold         string

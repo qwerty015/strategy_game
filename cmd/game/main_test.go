@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"strategy_game/internal/advisor"
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
@@ -975,6 +976,204 @@ func TestRecommendedServeCountGrowsWithDistanceAndProducerCount(t *testing.T) {
 
 	if got := (&Game{buildings: []*building.Building{{Kind: building.Warehouse, X: 0, Y: 0}}}).recommendedServeCount(); got != 1 {
 		t.Fatalf("empty settlement (just a Warehouse) recommends %d, want 1 (the flat baseline)", got)
+	}
+}
+
+// TestTickAdvisorQueuesAndCoolsDownTips exercises the queue/cooldown
+// policy tickAdvisor owns (see internal/advisor for the rule logic
+// itself, tested separately): a tip appears once its check interval
+// elapses, acknowledging it clears the toast and starts its cooldown, it
+// does not reappear during that cooldown even though the underlying
+// condition is still true, and it becomes eligible again once the
+// cooldown elapses.
+// TestTrimSerfsToRecommendedDismissesExactlyTheExcess covers the user's
+// explicit request: right-clicking the Serf card should dismiss however
+// many serfs are above the recommendation in one go, using the same safe
+// RequestDismissal mechanism a single dismiss always used (a serf
+// finishes its current haul before actually leaving, nothing is dropped).
+func TestTrimSerfsToRecommendedDismissesExactlyTheExcess(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+
+	t.Run("dismisses exactly the excess", func(t *testing.T) {
+		game := &Game{logi: logistics.NewController(warehouse, 10)}
+		game.trimSerfsToRecommended(6)
+
+		dismissing := 0
+		for _, s := range game.logi.Serfs {
+			if s.Dismissing() {
+				dismissing++
+			}
+		}
+		if dismissing != 4 {
+			t.Fatalf("dismissing = %d, want 4 (10 serfs - 6 recommended)", dismissing)
+		}
+	})
+
+	t.Run("already at or below recommended is a no-op", func(t *testing.T) {
+		game := &Game{logi: logistics.NewController(warehouse, 5)}
+		game.trimSerfsToRecommended(5)
+		for _, s := range game.logi.Serfs {
+			if s.Dismissing() {
+				t.Fatal("a serf was dismissed even though the count already matched the recommendation")
+			}
+		}
+
+		game.trimSerfsToRecommended(20)
+		for _, s := range game.logi.Serfs {
+			if s.Dismissing() {
+				t.Fatal("a serf was dismissed even though the count was already below the recommendation")
+			}
+		}
+	})
+
+	t.Run("a repeated click does not re-mark already-dismissing serfs or over-dismiss", func(t *testing.T) {
+		game := &Game{logi: logistics.NewController(warehouse, 10)}
+		game.trimSerfsToRecommended(6) // marks 4 dismissing
+		game.trimSerfsToRecommended(6) // must be a no-op: 6 active remain, matches recommended
+
+		dismissing := 0
+		for _, s := range game.logi.Serfs {
+			if s.Dismissing() {
+				dismissing++
+			}
+		}
+		if dismissing != 4 {
+			t.Fatalf("dismissing = %d, want still 4 after a repeated click at the same recommendation", dismissing)
+		}
+	})
+}
+
+// hireOptionIndex returns kind's position in options -- the slice index
+// HireIndexAt resolves clicks to, which is not necessarily the same as
+// the HireKind enum's own numeric value.
+func hireOptionIndex(t *testing.T, options []ui.HireOption, kind ui.HireKind) int {
+	t.Helper()
+	for i, o := range options {
+		if o.Kind == kind {
+			return i
+		}
+	}
+	t.Fatalf("no hire option for kind %v", kind)
+	return -1
+}
+
+// findHireCardPoint scans for a screen point HireIndexAt resolves to the
+// given card index, so tests can simulate a click without hardcoding the
+// left panel's internal geometry constants.
+func findHireCardPoint(t *testing.T, layout ui.Layout, optionCount, wantIndex int) (int, int) {
+	t.Helper()
+	for y := 0; y < layout.Height; y++ {
+		if index, ok := layout.HireIndexAt(20, y, optionCount); ok && index == wantIndex {
+			return 20, y
+		}
+	}
+	t.Fatalf("no point resolved to hire card index %d", wantIndex)
+	return 0, 0
+}
+
+// TestHireCardServeRightClickOpensDialogOnlyWhenThereIsExcess covers the
+// user's explicit refinement: right-clicking the Serf card dismisses just
+// one, as before, when the count is already at or below recommended --
+// the confirm dialog (trim-all vs. dismiss-one) only appears when there's
+// an actual excess to ask about.
+func TestHireCardServeRightClickOpensDialogOnlyWhenThereIsExcess(t *testing.T) {
+	newGame := func(serfCount int) *Game {
+		warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+		return &Game{
+			buildings: []*building.Building{warehouse},
+			stock:     resource.NewStockpile(0),
+			pop:       &economy.Population{},
+			logi:      logistics.NewController(warehouse, serfCount),
+			vills:     villagers.NewController(),
+			jacks:     lumberjack.NewController(),
+			fishers:   fishing.NewController(),
+			quarry:    quarry.NewController(),
+			builders:  builder.NewController(),
+			miners:    miner.NewController(),
+			layout:    ui.NewLayout(1024, 768),
+			leftTab:   ui.HireTab,
+		}
+	}
+
+	t.Run("at recommended: dismisses one immediately, no dialog", func(t *testing.T) {
+		game := newGame(1) // recommendedServeCount floors at 1 with just a Warehouse
+		options := game.hireOptions()
+		mx, my := findHireCardPoint(t, game.layout, len(options), hireOptionIndex(t, options, ui.HireSerf))
+
+		if !game.handleHireCardDismissRightClick(mx, my) {
+			t.Fatal("right-click on the Serf card was not handled")
+		}
+		if game.dialog != ui.DialogNone {
+			t.Fatalf("dialog = %v, want DialogNone (no excess to ask about)", game.dialog)
+		}
+		if !game.logi.Serfs[0].Dismissing() {
+			t.Fatal("expected the one serf to be dismissed directly, same as before this change")
+		}
+	})
+
+	t.Run("above recommended: opens the confirm dialog, dismisses no one yet", func(t *testing.T) {
+		game := newGame(10)
+		options := game.hireOptions()
+		mx, my := findHireCardPoint(t, game.layout, len(options), hireOptionIndex(t, options, ui.HireSerf))
+
+		if !game.handleHireCardDismissRightClick(mx, my) {
+			t.Fatal("right-click on the Serf card was not handled")
+		}
+		if game.dialog != ui.DialogConfirmTrimServes {
+			t.Fatalf("dialog = %v, want DialogConfirmTrimServes", game.dialog)
+		}
+		for _, s := range game.logi.Serfs {
+			if s.Dismissing() {
+				t.Fatal("a serf was dismissed before the dialog was answered")
+			}
+		}
+	})
+}
+
+func TestTickAdvisorQueuesAndCoolsDownTips(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	game := &Game{
+		buildings: []*building.Building{warehouse},
+		stock:     resource.NewStockpile(0),
+		pop:       &economy.Population{},
+		logi:      logistics.NewController(warehouse, 0), // 0 serfs -> recommendedServeCount's floor of 1 makes this KindServeCountLow
+		vills:     villagers.NewController(),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
+		miners:    miner.NewController(),
+		grid:      world.NewGrid(4, 4),
+	}
+
+	tick := func(n int) {
+		for i := 0; i < n; i++ {
+			game.worldTicks++
+			game.tickAdvisor()
+		}
+	}
+
+	tick(advisorCheckIntervalTicks)
+	if game.advisorVisible == nil {
+		t.Fatal("expected a tip to be visible after the first check interval")
+	}
+	if game.advisorVisible.Kind != advisor.KindServeCountLow {
+		t.Fatalf("visible tip kind = %v, want KindServeCountLow", game.advisorVisible.Kind)
+	}
+
+	game.acknowledgeAdvisorTip()
+	if game.advisorVisible != nil {
+		t.Fatal("tip should be cleared right after being acknowledged")
+	}
+
+	tick(advisorCheckIntervalTicks)
+	if game.advisorVisible != nil {
+		t.Fatalf("tip reappeared during its own cooldown: %+v", game.advisorVisible)
+	}
+
+	tick(advisorCooldownTicks)
+	if game.advisorVisible == nil {
+		t.Fatal("expected the tip to reappear once its cooldown elapsed")
 	}
 }
 
