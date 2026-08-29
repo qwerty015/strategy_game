@@ -124,6 +124,8 @@ func init() {
 		HireSerf:                    "Hire serf",
 		RemoveSelected:              "Remove",
 		DismissSerf:                 "Dismiss serf",
+		ConfirmRemovalPrompt:        "Remove \"%s\"?",
+		ConfirmRemovalButton:        "Remove",
 		Deleted:                     "Deleted.",
 		SerfDismissRequested:        "The serf will leave after this delivery.",
 		CannotDeleteWarehouse:       "The last warehouse cannot be deleted",

@@ -19,44 +19,43 @@ var textFace = text.NewGoXFace(bitmapfont.Face)
 // by every package that draws HUD/status text so there's exactly one
 // font to swap out later if real UI art replaces this placeholder text.
 func DrawText(screen *ebiten.Image, s string, x, y float64) {
-	drawText(screen, s, x, y, 1)
+	drawTextColor(screen, s, x, y, color.White)
 }
 
-const (
-	menuTextScale        = 1.17
-	compactMenuTextScale = 1.05
-	inspectorTextScale   = 1.12
-)
+var textOutlineColor = color.RGBA{R: 20, G: 15, B: 15, A: 255}
 
-// DrawMenuText gives the three left-panel tabs a larger, stronger pixel type
-// treatment without affecting map labels or the information-dense inspector.
-// The one-pixel second pass is intentional: bitmapfont has no bold face, so
-// it creates a crisp pixel-art weight instead of blurry raster scaling.
+// DrawMenuText gives the three left-panel tabs a stronger pixel type treatment
+// without affecting map labels or the information-dense inspector. Bitmap
+// glyphs are never fractionally scaled: that was blurring their edges in both
+// side panels. A one-pixel dark outline supplies weight and contrast while
+// keeping every glyph aligned to the pixel grid.
 func DrawMenuText(screen *ebiten.Image, s string, x, y float64) {
-	drawText(screen, s, x, y, menuTextScale)
-	drawText(screen, s, x+1, y, menuTextScale)
+	drawOutlinedText(screen, s, x, y)
 }
 
-// DrawCompactMenuText is the same heavier left-menu style for controls split
+// DrawCompactMenuText is the same crisp left-menu style for controls split
 // into narrow segments, such as the six speed buttons in the Options tab.
 func DrawCompactMenuText(screen *ebiten.Image, s string, x, y float64) {
-	drawText(screen, s, x, y, compactMenuTextScale)
-	drawText(screen, s, x+1, y, compactMenuTextScale)
+	drawOutlinedText(screen, s, x, y)
 }
 
-// DrawInspectorText raises the right panel's information density without
-// making its many resource rows hard to read. It uses the same crisp bold
-// treatment as the menu, at a slightly calmer scale for long labels.
+// DrawInspectorText uses the same crisp, high-contrast treatment as the left
+// menu, so long resource rows stay readable without blurred scaling.
 func DrawInspectorText(screen *ebiten.Image, s string, x, y float64) {
-	drawText(screen, s, x, y, inspectorTextScale)
-	drawText(screen, s, x+1, y, inspectorTextScale)
+	drawOutlinedText(screen, s, x, y)
 }
 
-func drawText(screen *ebiten.Image, s string, x, y, scale float64) {
+func drawOutlinedText(screen *ebiten.Image, s string, x, y float64) {
+	for _, offset := range [][2]float64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+		drawTextColor(screen, s, x+offset[0], y+offset[1], textOutlineColor)
+	}
+	drawTextColor(screen, s, x, y, color.White)
+}
+
+func drawTextColor(screen *ebiten.Image, s string, x, y float64, tint color.Color) {
 	op := &text.DrawOptions{}
-	op.GeoM.Scale(scale, scale)
 	op.GeoM.Translate(x, y)
-	op.ColorScale.ScaleWithColor(color.White)
+	op.ColorScale.ScaleWithColor(tint)
 	op.Blend = ebiten.BlendSourceOver // see the comment on the same field in render/sprite.go
 	text.Draw(screen, s, textFace, op)
 }

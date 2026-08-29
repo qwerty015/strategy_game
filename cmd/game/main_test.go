@@ -676,14 +676,22 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 	}
 }
 
-// TestRemoveSelectedDismissesSerf checks the inspector action preserves the
-// existing safe dismissal rule: a serf leaves after, rather than during, a
-// delivery.
-func TestRemoveSelectedDismissesSerf(t *testing.T) {
+// TestConfirmedRemovalDismissesSerf checks the inspector confirmation keeps
+// the existing safe dismissal rule: a serf leaves after, rather than during,
+// a delivery.
+func TestConfirmedRemovalDismissesSerf(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	game := &Game{logi: logistics.NewController(warehouse, 1)}
 	game.selection = ui.Selection{Kind: ui.SelectionSerf, Serf: game.logi.Serfs[0]}
 
+	game.requestSelectedRemoval()
+	if game.dialog != ui.DialogConfirmRemoval {
+		t.Fatalf("removal dialog = %v, want confirmation", game.dialog)
+	}
+	if game.logi.Serfs[0].Dismissing() {
+		t.Fatal("serf dismissal was requested before confirmation")
+	}
+	game.dialog = ui.DialogNone
 	game.removeSelected()
 
 	if !game.logi.Serfs[0].Dismissing() {
@@ -691,6 +699,16 @@ func TestRemoveSelectedDismissesSerf(t *testing.T) {
 	}
 }
 
+func TestRequestSelectedBuildingRemovalOpensConfirmation(t *testing.T) {
+	road := &building.Building{Kind: building.Road, X: 2, Y: 2}
+	game := &Game{selection: ui.Selection{Kind: ui.SelectionBuilding, Building: road}}
+
+	game.requestSelectedRemoval()
+
+	if game.dialog != ui.DialogConfirmRemoval {
+		t.Fatalf("building removal dialog = %v, want confirmation", game.dialog)
+	}
+}
 func TestDeleteWarehousePromotesRemainingWarehouse(t *testing.T) {
 	first := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	second := &building.Building{Kind: building.Warehouse, X: 4, Y: 0}

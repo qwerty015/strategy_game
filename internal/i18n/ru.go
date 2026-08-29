@@ -124,6 +124,8 @@ func init() {
 		HireSerf:                    "Нанять слугу",
 		RemoveSelected:              "Удалить",
 		DismissSerf:                 "Уволить слугу",
+		ConfirmRemovalPrompt:        "Удалить «%s»?",
+		ConfirmRemovalButton:        "Удалить",
 		Deleted:                     "Удалено.",
 		SerfDismissRequested:        "Слуга завершит рейс и уйдёт.",
 		CannotDeleteWarehouse:       "Нельзя удалить последний склад",

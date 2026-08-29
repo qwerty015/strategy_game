@@ -305,14 +305,12 @@ func (g *Game) Update() error {
 	g.handleCameraPan()
 	g.handleCameraZoom()
 
-	// While the settings tab's save/load modal is open, it owns every key
-	// and click: typing a name must not also select a build-palette item
-	// (digit keys) or hire a serf (H).
+	// A modal owns every key and click, so its destructive confirmation or
+	// save-name input cannot accidentally also change the map behind it.
 	if g.dialog != ui.DialogNone {
 		g.handleDialogInput()
 	} else {
 		g.handleMouse()
-		g.handleUnitActions()
 	}
 
 	for range g.sim.Advance() {
@@ -801,13 +799,9 @@ func (g *Game) handleMouse() {
 		}
 	}
 
-	if g.layout.HireAt(mx, my) {
-		g.hireSerf()
-		return
-	}
 	showPriority := g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil && priorityEligible(g.selection.Building.Kind)
 	if ui.CanRemoveSelection(g.selection) && g.layout.InspectorRemoveAt(mx, my, showPriority) {
-		g.removeSelected()
+		g.requestSelectedRemoval()
 		return
 	}
 	if showPriority {
@@ -818,8 +812,7 @@ func (g *Game) handleMouse() {
 	}
 	point := image.Pt(mx, my)
 	if point.In(g.layout.LeftPanel()) ||
-		point.In(g.layout.RightPanel()) ||
-		point.In(g.layout.BottomPanel()) {
+		point.In(g.layout.RightPanel()) {
 		return
 	}
 	if selected := g.selectionAt(mx, my); selected.Kind != ui.SelectionNone {
@@ -868,12 +861,6 @@ func (g *Game) handleMouse() {
 	g.statusMsg = ""
 }
 
-func (g *Game) handleUnitActions() {
-	if inpututil.IsKeyJustPressed(ebiten.KeyH) {
-		g.hireSerf()
-	}
-}
-
 // canAffordHire reports whether the stockpile can currently cover one more
 // unitHireCost. Used both to gate the hire actions themselves and to grey
 // out a Hire-tab card before the player even clicks it (see hireOptions).
@@ -902,7 +889,16 @@ func (g *Game) hireSerf() {
 	g.statusMsg = ""
 }
 
-// removeSelected performs the inspector's removal action. A serf finishes an
+// requestSelectedRemoval opens the shared confirmation before the inspector
+// changes any building or serf. The selection stays intact beneath the modal,
+// so the prompt always describes the exact object the player clicked.
+func (g *Game) requestSelectedRemoval() {
+	if ui.CanRemoveSelection(g.selection) {
+		g.dialog = ui.DialogConfirmRemoval
+	}
+}
+
+// removeSelected performs a confirmed inspector removal. A serf finishes an
 // already assigned delivery before leaving; buildings use the established
 // removal flow with its warehouse and natural-resource safeguards.
 func (g *Game) removeSelected() {
@@ -1300,6 +1296,33 @@ func (g *Game) handleDialogInput() {
 		g.handleNamingInput()
 	case ui.DialogConfirmNewGame:
 		g.handleConfirmNewGameInput()
+	case ui.DialogConfirmRemoval:
+		g.handleConfirmRemovalInput()
+	}
+}
+
+// handleConfirmRemovalInput confirms or cancels the inspector's generic
+// destructive action. Enter confirms and Escape cancels, matching the other
+// modal dialogs without reintroducing a keyboard shortcut for deletion.
+func (g *Game) handleConfirmRemovalInput() {
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.dialog = ui.DialogNone
+		return
+	}
+	confirm := inpututil.IsKeyJustPressed(ebiten.KeyEnter)
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		mx, my := ebiten.CursorPosition()
+		if selected, ok := g.layout.InspectorConfirmRemoveAt(mx, my); ok {
+			if !selected {
+				g.dialog = ui.DialogNone
+				return
+			}
+			confirm = true
+		}
+	}
+	if confirm {
+		g.dialog = ui.DialogNone
+		g.removeSelected()
 	}
 }
 
@@ -3018,12 +3041,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.hireOptions(), g.sim.Speed(), g.slotCache, g.dialog, g.dialogSlot, g.dialogText)
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel)
-	ui.DrawBottomPanel(screen, g.layout)
-	ui.DrawUnitControls(screen, g.layout, len(g.logi.Serfs))
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog)
 
 	if g.statusMsg != "" {
-		ui.DrawText(screen, g.statusMsg, 8, float64(g.layout.Height-36))
+		ui.DrawText(screen, g.statusMsg, float64(g.layout.LeftWidth+12), 10)
 	}
 }
 

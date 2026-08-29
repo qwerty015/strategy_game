@@ -129,7 +129,7 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 	vector.FillRect(screen, float32(x), float32(settingsNewGameRowY), float32(w), float32(settingsNewGameRowH), panelInnerColor, false)
 	DrawMenuText(screen, t.NewGameButton, float64(x+8), float64(settingsNewGameRowY+6))
 
-	if dialog != DialogNone {
+	if IsSettingsDialog(dialog) {
 		drawSettingsDialog(screen, layout, dialog, dialogSlot, dialogText)
 		return
 	}
@@ -338,15 +338,16 @@ func hireKindForProfession(profession villagers.Profession) HireKind {
 }
 
 const (
-	inspectorIconSize = 52
-	inspectorBodyY    = 122
+	inspectorIconSize = 72
+	inspectorDividerY = 138
+	inspectorBodyY    = 152
 )
 
 // DrawInspectorPanel renders the currently selected object. It reads only
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation. A large centered portrait separates the selected object
 // from its data, while no selection becomes the compact town summary.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, occupants int, showPriority bool, priorityLevel int) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, occupants int, showPriority bool, priorityLevel int, dialog DialogKind) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -364,7 +365,7 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	// corner: it makes a worker and his workplace recognisable before reading.
 	iconX := r.Min.X + (r.Dx()-inspectorIconSize)/2
 	drawSelectionIcon(screen, selection, iconX, 48, inspectorIconSize)
-	vector.FillRect(screen, float32(r.Min.X+18), 112, float32(r.Dx()-36), 2, panelEdgeColor, false)
+	vector.FillRect(screen, float32(r.Min.X+18), inspectorDividerY, float32(r.Dx()-36), 2, panelEdgeColor, false)
 
 	switch selection.Kind {
 	case SelectionBuilding:
@@ -390,6 +391,30 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	if showPriority {
 		drawPriorityControl(screen, layout, priorityLevel)
 	}
+	if dialog == DialogConfirmRemoval {
+		drawConfirmRemovalDialog(screen, layout, selection)
+	}
+}
+
+// drawConfirmRemovalDialog overlays the current inspector instead of hiding
+// the selected object. The same confirmation is used before changing any
+// removable building or serf.
+func drawConfirmRemovalDialog(screen *ebiten.Image, layout Layout, selection Selection) {
+	r := layout.InspectorConfirmRemoveRect()
+	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), panelInnerColor, false)
+	vector.StrokeRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), 2, panelEdgeColor, false)
+
+	name := i18n.T().UnitSerf
+	if selection.Kind == SelectionBuilding && selection.Building != nil {
+		name = i18n.T().BuildingName[selection.Building.Kind]
+	}
+	DrawInspectorText(screen, fmt.Sprintf(i18n.T().ConfirmRemovalPrompt, name), float64(r.Min.X+10), float64(r.Min.Y+12))
+
+	confirm, cancel := layout.InspectorConfirmRemoveButtons()
+	vector.FillRect(screen, float32(confirm.Min.X), float32(confirm.Min.Y), float32(confirm.Dx()), float32(confirm.Dy()), color.RGBA{R: 126, G: 53, B: 45, A: 255}, false)
+	vector.FillRect(screen, float32(cancel.Min.X), float32(cancel.Min.Y), float32(cancel.Dx()), float32(cancel.Dy()), panelColor, false)
+	DrawInspectorText(screen, i18n.T().ConfirmRemovalButton, float64(confirm.Min.X+8), float64(confirm.Min.Y+8))
+	DrawInspectorText(screen, i18n.T().SlotCancelButton, float64(cancel.Min.X+8), float64(cancel.Min.Y+8))
 }
 
 // drawRemoveButton renders the selected object's removal action in the
@@ -980,26 +1005,6 @@ func drawAccessMarker(screen *ebiten.Image, cam *render.Camera, x, y int, marker
 	// A small door/connection dot is intentionally distinct from the worker
 	// +/- marker. The old large plus looked like a green person on roofs.
 	vector.FillCircle(screen, float32(sx+cam.TilePixels()/2), float32(sy+cam.TilePixels()-6*scale), radius, marker, false)
-}
-
-// DrawBottomPanel renders the utility strip. Simulation speed intentionally
-// lives only in the Options tab, leaving this strip for the unit control.
-func DrawBottomPanel(screen *ebiten.Image, layout Layout) {
-	r := layout.BottomPanel()
-	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), panelColor, false)
-	vector.FillRect(screen, float32(layout.LeftWidth), float32(r.Min.Y+5), float32(layout.Width-layout.LeftWidth-5), 1, panelEdgeColor, false)
-}
-
-// DrawUnitControls renders the small population action area in the bottom
-// utility strip. Hiring currently has no resource cost; the visible button
-// gives the action a discoverable mouse target while H remains a shortcut.
-func DrawUnitControls(screen *ebiten.Image, layout Layout, serfCount int) {
-	x := layout.LeftWidth + 16
-	y := layout.Height - layout.BottomHeight + 20
-	vector.FillRect(screen, float32(x), float32(y), 180, 34, panelInnerColor, false)
-	vector.FillRect(screen, float32(x), float32(y+31), 180, 3, panelEdgeColor, false)
-	DrawText(screen, i18n.T().HireSerf, float64(x+8), float64(y+8))
-	DrawText(screen, fmt.Sprintf("%s: %d", i18n.T().UnitSerf, serfCount), float64(x+8), float64(y+22))
 }
 
 func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) {

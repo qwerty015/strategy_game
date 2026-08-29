@@ -17,8 +17,11 @@ func TestLayoutKeepsPanelsAtWindowEdges(t *testing.T) {
 		if got := layout.RightPanel().Max.X; got != size[0] {
 			t.Fatalf("right panel ends at %d, want window width %d", got, size[0])
 		}
-		if got := layout.BottomPanel().Max.X; got != size[0] {
-			t.Fatalf("bottom panel ends at %d, want window width %d", got, size[0])
+		if got := layout.RightPanel().Max.Y; got != size[1] {
+			t.Fatalf("right panel ends at y=%d, want window height %d", got, size[1])
+		}
+		if got := layout.MapRect().Max.Y; got != size[1] {
+			t.Fatalf("map ends at y=%d, want window height %d", got, size[1])
 		}
 		if layout.MapRect().Dx() <= 0 || layout.MapRect().Dy() <= 0 {
 			t.Fatalf("map rect is not usable for window %dx%d: %v", size[0], size[1], layout.MapRect())
@@ -36,9 +39,23 @@ func TestBuildPaletteKeepsEveryCardClickable(t *testing.T) {
 		if !ok || got != i {
 			t.Fatalf("card %d at (%d,%d) resolved to %d, %v", i, x, y, got, ok)
 		}
-		if y >= layout.BottomPanel().Min.Y {
-			t.Fatalf("card %d starts inside bottom panel at y=%d", i, y)
+		if y >= layout.Height {
+			t.Fatalf("card %d starts outside the left panel at y=%d", i, y)
 		}
+	}
+}
+
+func TestInspectorConfirmRemoveButtonsCoverBothActions(t *testing.T) {
+	layout := NewLayout(1024, 768)
+	confirm, cancel := layout.InspectorConfirmRemoveButtons()
+	if got, ok := layout.InspectorConfirmRemoveAt(confirm.Min.X+confirm.Dx()/2, confirm.Min.Y+confirm.Dy()/2); !ok || !got {
+		t.Fatalf("confirm button resolved to confirm=%v ok=%v, want true true", got, ok)
+	}
+	if got, ok := layout.InspectorConfirmRemoveAt(cancel.Min.X+cancel.Dx()/2, cancel.Min.Y+cancel.Dy()/2); !ok || got {
+		t.Fatalf("cancel button resolved to confirm=%v ok=%v, want false true", got, ok)
+	}
+	if _, ok := layout.InspectorConfirmRemoveAt(confirm.Min.X, confirm.Min.Y-1); ok {
+		t.Fatal("a click above the confirmation buttons resolved to an action")
 	}
 }
 

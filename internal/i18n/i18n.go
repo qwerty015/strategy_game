@@ -101,6 +101,8 @@ type Catalog struct {
 	HireSerf                    string
 	RemoveSelected              string
 	DismissSerf                 string
+	ConfirmRemovalPrompt        string // formatted with the selected object name
+	ConfirmRemovalButton        string
 	Deleted                     string
 	SerfDismissRequested        string
 	CannotDeleteWarehouse       string

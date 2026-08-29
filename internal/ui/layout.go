@@ -13,9 +13,8 @@ import (
 type Layout struct {
 	Width, Height int
 
-	LeftWidth    int
-	RightWidth   int
-	BottomHeight int
+	LeftWidth  int
+	RightWidth int
 }
 
 const (
@@ -35,9 +34,9 @@ const (
 // cardGeometry returns the vertical stride and height to draw/hit-test count
 // cards in the left panel's card list (the Build palette or the Hire tab).
 // The list keeps its normal leftCardStride/leftCardHeight as long as it
-// fits above the bottom panel; a longer list -- the Build palette gains a
+// fits inside the left panel; a longer list -- the Build palette gains a
 // new card with almost every new building kind -- is compressed just
-// enough to keep every card clickable instead of running under the bottom
+// enough to keep every card clickable instead of running beyond the left
 // panel. Shared by drawing and hit-testing so the two never disagree about
 // where a card actually is.
 func (l Layout) cardGeometry(count int) (stride, height int) {
@@ -45,7 +44,7 @@ func (l Layout) cardGeometry(count int) (stride, height int) {
 	if count <= 0 {
 		return
 	}
-	available := l.Height - l.BottomHeight - leftCardsStartY
+	available := l.Height - leftCardsStartY
 	if available <= 0 || stride*count <= available {
 		return
 	}
@@ -92,22 +91,11 @@ func NewLayout(width, height int) Layout {
 		left = width / 2
 		right = width - left
 	}
-	bottom := height / 9
-	if bottom < 64 {
-		bottom = 64
-	}
-	if bottom > 84 {
-		bottom = 84
-	}
-	if bottom > height {
-		bottom = height
-	}
 	return Layout{
-		Width:        width,
-		Height:       height,
-		LeftWidth:    left,
-		RightWidth:   right,
-		BottomHeight: bottom,
+		Width:      width,
+		Height:     height,
+		LeftWidth:  left,
+		RightWidth: right,
 	}
 }
 
@@ -116,15 +104,11 @@ func (l Layout) LeftPanel() image.Rectangle {
 }
 
 func (l Layout) RightPanel() image.Rectangle {
-	return image.Rect(l.Width-l.RightWidth, 0, l.Width, l.Height-l.BottomHeight)
-}
-
-func (l Layout) BottomPanel() image.Rectangle {
-	return image.Rect(0, l.Height-l.BottomHeight, l.Width, l.Height)
+	return image.Rect(l.Width-l.RightWidth, 0, l.Width, l.Height)
 }
 
 func (l Layout) MapRect() image.Rectangle {
-	return image.Rect(l.LeftWidth, 0, l.Width-l.RightWidth, l.Height-l.BottomHeight)
+	return image.Rect(l.LeftWidth, 0, l.Width-l.RightWidth, l.Height)
 }
 
 const (
@@ -177,13 +161,6 @@ func (l Layout) menuIndexAt(x, y int, count int) (int, bool) {
 	return 0, false
 }
 
-// HireAt reports whether the cursor is over the serf hiring button in the
-// bottom panel.
-func (l Layout) HireAt(x, y int) bool {
-	r := image.Rect(l.LeftWidth+16, l.Height-l.BottomHeight+20, l.LeftWidth+196, l.Height-l.BottomHeight+54)
-	return image.Pt(x, y).In(r)
-}
-
 const (
 	priorityRowHeight = 30
 	priorityMargin    = 18
@@ -194,6 +171,54 @@ const (
 	inspectorRemoveBottomGap   = 12
 	inspectorRemovePriorityGap = 26
 )
+
+const (
+	inspectorConfirmRemoveTop     = 164
+	inspectorConfirmRemoveHeight  = 94
+	inspectorConfirmRemoveMargin  = 18
+	inspectorConfirmRemoveButtonH = 30
+	inspectorConfirmRemoveButtonY = 52
+)
+
+// InspectorConfirmRemoveRect is the modal that confirms a destructive
+// inspector action. It deliberately lives in the inspector, beside the
+// selected object, rather than returning the player to a separate UI area.
+func (l Layout) InspectorConfirmRemoveRect() image.Rectangle {
+	r := l.RightPanel()
+	top := r.Min.Y + inspectorConfirmRemoveTop
+	bottom := top + inspectorConfirmRemoveHeight
+	if bottom > r.Max.Y-inspectorConfirmRemoveMargin {
+		bottom = r.Max.Y - inspectorConfirmRemoveMargin
+		top = bottom - inspectorConfirmRemoveHeight
+	}
+	return image.Rect(r.Min.X+inspectorConfirmRemoveMargin, top, r.Max.X-inspectorConfirmRemoveMargin, bottom)
+}
+
+// InspectorConfirmRemoveButtons returns the matching confirm/cancel button
+// rectangles. Keeping them in Layout makes rendering and hit-testing share
+// one geometry for every removable object.
+func (l Layout) InspectorConfirmRemoveButtons() (confirm, cancel image.Rectangle) {
+	r := l.InspectorConfirmRemoveRect()
+	buttonY := r.Min.Y + inspectorConfirmRemoveButtonY
+	half := r.Dx() / 2
+	confirm = image.Rect(r.Min.X, buttonY, r.Min.X+half-2, buttonY+inspectorConfirmRemoveButtonH)
+	cancel = image.Rect(r.Min.X+half, buttonY, r.Max.X, buttonY+inspectorConfirmRemoveButtonH)
+	return confirm, cancel
+}
+
+// InspectorConfirmRemoveAt reports which confirmation button is under the
+// cursor: true for confirm, false for cancel.
+func (l Layout) InspectorConfirmRemoveAt(x, y int) (bool, bool) {
+	point := image.Pt(x, y)
+	confirm, cancel := l.InspectorConfirmRemoveButtons()
+	if point.In(confirm) {
+		return true, true
+	}
+	if point.In(cancel) {
+		return false, true
+	}
+	return false, false
+}
 
 // InspectorRemoveRect returns the removal button bounds in the inspector.
 // When the selected building exposes its supply-priority control, the button

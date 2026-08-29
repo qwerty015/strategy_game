@@ -17,10 +17,9 @@ const (
 	SettingsSlotLoad
 )
 
-// DialogKind is the active side-panel modal for the settings tab: none,
-// typing a name for a slot about to be saved, confirming an overwrite of an
-// already-occupied slot before naming it, or confirming the destructive
-// "New Game" reset.
+// DialogKind is the active side-panel modal: the settings tab owns save/load
+// dialogs, while the inspector owns the generic confirmation before any
+// removable unit or building is changed.
 type DialogKind int
 
 const (
@@ -28,4 +27,17 @@ const (
 	DialogNaming
 	DialogConfirmOverwrite
 	DialogConfirmNewGame
+	DialogConfirmRemoval
 )
+
+// IsSettingsDialog reports whether dialog belongs in the Settings-tab slot
+// area. Inspector confirmation deliberately remains visible over the object
+// that is about to be removed.
+func IsSettingsDialog(dialog DialogKind) bool {
+	switch dialog {
+	case DialogNaming, DialogConfirmOverwrite, DialogConfirmNewGame:
+		return true
+	default:
+		return false
+	}
+}
