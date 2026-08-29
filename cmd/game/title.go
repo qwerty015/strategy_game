@@ -363,6 +363,20 @@ func (g *Game) populateTitleTown() {
 	for _, point := range []titlePoint{{42, 23}, {53, 23}, {42, 27}} {
 		wineryHomes = append(wineryHomes, add(building.Winery, point.x, point.y))
 	}
+	// Short spurs from each door to the nearest spine/cross-street tile --
+	// without these none of the food-district buildings actually touch the
+	// road network (every AccessX/AccessY defaults to 0,0, i.e. the door is
+	// the building's own top-left tile), which is what made the showcase
+	// read as a disconnected, "dead" town rather than a working one. Each
+	// spur stops one tile short of the building's own footprint -- a road
+	// tile must sit next to the door, not on top of it.
+	hRoad(23, 10, 11)
+	hRoad(23, 18, 20)
+	hRoad(27, 10, 11)
+	vRoad(42, 20, 22)
+	hRoad(23, 51, 52)
+	hRoad(27, 39, 41)
+
 	add(building.Mill, 64, 31)
 	add(building.Bakery, 68, 31)
 	add(building.PigFarm, 74, 31)
@@ -376,12 +390,32 @@ func (g *Game) populateTitleTown() {
 	add(building.PigFarm, 97, 31)
 	add(building.MeatWorkshop, 101, 31)
 
+	// Same reasoning as the food district: this whole row sits between the
+	// y=20 and y=35 spines, so each door gets a stub either down to y=35 or
+	// sideways to the nearest north-south column, again stopping one tile
+	// short of the building itself.
+	vRoad(64, 32, 35)
+	hRoad(31, 69, 70)
+	hRoad(31, 70, 73)
+	vRoad(79, 32, 35)
+	vRoad(76, 32, 35)
+	hRoad(31, 83, 86)
+	hRoad(31, 86, 87)
+	vRoad(92, 32, 35)
+	vRoad(97, 32, 35)
+	hRoad(31, 102, 103)
+
 	// Workshops and raw materials form the final third of the tour.
 	add(building.LumberjackHut, 108, 31)
 	add(building.CarpentryWorkshop, 113, 31)
 	add(building.QuarryHut, 124, 31)
 	add(building.MinerHut, 138, 31)
 	add(building.Smeltery, 143, 31)
+	vRoad(108, 32, 35)
+	vRoad(113, 32, 35)
+	vRoad(124, 32, 35)
+	vRoad(138, 32, 35)
+	hRoad(31, 144, 146)
 	for _, point := range []titlePoint{{105, 16}, {110, 18}, {114, 14}, {118, 20}, {121, 16}, {116, 25}, {111, 28}} {
 		addTree(point.x, point.y)
 	}
@@ -397,9 +431,12 @@ func (g *Game) populateTitleTown() {
 	addOre(building.GoldOreDeposit, 158, 22)
 
 	// Fisher huts look out over the water while the road remains on land.
+	// Each one gets a stub straight up to the y=57 spine, stopping one tile
+	// above its own door, so it isn't just standing alone at the shoreline.
 	for _, x := range []int{16, 45, 92, 119, 151} {
 		shore := 61 + (x*7+x/9)%3
 		add(building.FisherHut, x, shore-1)
+		vRoad(x, 57, shore-2)
 	}
 	// Title workers are real renderable units, but the title never advances the
 	// economy. Farmers and winemakers animate among the mature fields while

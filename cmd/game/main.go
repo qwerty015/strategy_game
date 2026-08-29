@@ -3197,6 +3197,19 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.drawFrontScreen(screen)
 		return
 	}
+	// Same fix as drawFrontScreen's own screen.Bounds() read (see its
+	// comment): in fullscreen, Update's ebiten.WindowSize() call can be
+	// stale, and Layout's outsideWidth/outsideHeight isn't guaranteed to
+	// have caught up either, but screen.Bounds() here is always the
+	// actual draw-buffer size Draw is about to paint into -- this is what
+	// the user hit directly ("карта смещена в верхний левый угол, справа
+	// и внизу - чернота"): the front screen already self-corrected this
+	// way every frame, gameplay never did, so a stale small viewport
+	// from before switching to fullscreen (or before the real size was
+	// first reported) could persist indefinitely once screenPlay started.
+	if bounds := screen.Bounds(); bounds.Dx() > 0 && bounds.Dy() > 0 {
+		g.resizeLayout(bounds.Dx(), bounds.Dy())
+	}
 	if !g.paused {
 		render.Tick()
 	}
