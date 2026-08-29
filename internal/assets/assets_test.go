@@ -25,14 +25,15 @@ func TestRemoveDetachedAlphaComponents(t *testing.T) {
 	}
 }
 
-func TestRoundedRoadEntranceKeepsCentreAndSoftensCorners(t *testing.T) {
-	if got := roundedRoadCornerAlpha(0, 0); got != 0 {
-		t.Fatalf("top-left corner alpha = %d, want 0", got)
+func TestRoundedRoadEntranceSoftensOnlyRequestedCorner(t *testing.T) {
+	const northWest uint8 = 1
+	if got := roundedRoadCornerAlpha(northWest, 0, 0); got != 0 {
+		t.Fatalf("requested top-left corner alpha = %d, want 0", got)
 	}
-	if got := roundedRoadCornerAlpha(roadEntranceCornerRadius-1, roadEntranceCornerRadius-1); got != 255 {
-		t.Fatalf("rounded corner interior alpha = %d, want 255", got)
+	if got := roundedRoadCornerAlpha(northWest, TileSize-1, 0); got != 255 {
+		t.Fatalf("unrequested top-right corner alpha = %d, want 255", got)
 	}
-	if got := roundedRoadCornerAlpha(TileSize/2, 0); got != 255 {
+	if got := roundedRoadCornerAlpha(northWest, TileSize/2, 0); got != 255 {
 		t.Fatalf("top edge centre alpha = %d, want 255", got)
 	}
 }

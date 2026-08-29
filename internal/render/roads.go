@@ -7,12 +7,12 @@ import (
 )
 
 // drawOrganicRoad keeps normal roads on the original square cobblestone tile.
-// Only the one road cell at a building entrance uses the same texture with
-// softly rounded grass corners; no bright seam correction is drawn anywhere.
-func drawOrganicRoad(screen *ebiten.Image, roads map[roadTile]bool, entranceRoads map[roadTile]bool, x, y int, sx, sy, tilePixels float64) {
+// At a building entrance, only corner bits whose surrounding tiles are open
+// grass get a stronger round cut from that same texture.
+func drawOrganicRoad(screen *ebiten.Image, entranceCorners map[roadTile]uint8, x, y int, sx, sy, tilePixels float64) {
 	image := assets.Road
-	if entranceRoads[roadTile{x: x, y: y}] {
-		image = assets.RoadEntrance
+	if corners := entranceCorners[roadTile{x: x, y: y}]; corners != 0 {
+		image = assets.RoadEntranceVariant(corners)
 	}
 	drawGround(screen, image, sx, sy, tilePixels, false)
 }

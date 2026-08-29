@@ -80,6 +80,8 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 	visible := cam.VisibleTileBounds(2)
 	roads := finishedRoadPositions(buildings)
 	entranceRoads := buildingEntranceRoadPositions(buildings, roads)
+	occupiedTiles := nonRoadBuildingPositions(buildings)
+	entranceCorners := buildingEntranceCornerMasks(entranceRoads, roads, occupiedTiles)
 	// Ground is drawn before this function. Roads and stone deposits are
 	// both flat, terrain-scale ground decoration rather than standing
 	// objects, so both render in this same bottom pass -- otherwise a
@@ -97,7 +99,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			// cobblestone texture here would visually claim otherwise.
 			drawConstructionSite(screen, b, 1, sx, sy, tilePixels)
 		case b.Kind == building.Road:
-			drawOrganicRoad(screen, roads, entranceRoads, b.X, b.Y, sx, sy, tilePixels)
+			drawOrganicRoad(screen, entranceCorners, b.X, b.Y, sx, sy, tilePixels)
 		case b.Kind == building.StoneDeposit:
 			drawStoneDeposit(screen, sx, sy, tilePixels, b.Reserve)
 		case b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit:
@@ -394,6 +396,61 @@ func buildingEntranceRoadPositions(buildings []*building.Building, roads map[roa
 		}
 	}
 	return entrances
+}
+
+const (
+	roadCornerNorthWest uint8 = 1 << iota
+	roadCornerNorthEast
+	roadCornerSouthWest
+	roadCornerSouthEast
+)
+
+// nonRoadBuildingPositions indexes every occupied building tile. Deposits and
+// trees count too: a rounded road corner must never visually cut into any
+// solid map object.
+func nonRoadBuildingPositions(buildings []*building.Building) map[roadTile]bool {
+	occupied := make(map[roadTile]bool)
+	for _, b := range buildings {
+		if b == nil || b.Kind == building.Road {
+			continue
+		}
+		size := building.Types[b.Kind].Footprint
+		for dy := 0; dy < size; dy++ {
+			for dx := 0; dx < size; dx++ {
+				occupied[roadTile{x: b.X + dx, y: b.Y + dy}] = true
+			}
+		}
+	}
+	return occupied
+}
+
+// buildingEntranceCornerMasks exposes an entrance corner only when all three
+// tiles around it (two cardinal and one diagonal) are open grass. Roads and
+// buildings keep that corner square, producing a continuous stone edge at
+// doorways, junctions and diagonal route contacts.
+func buildingEntranceCornerMasks(entrances, roads, occupied map[roadTile]bool) map[roadTile]uint8 {
+	masks := make(map[roadTile]uint8, len(entrances))
+	for tile := range entrances {
+		blocked := func(dx, dy int) bool {
+			neighbor := roadTile{x: tile.x + dx, y: tile.y + dy}
+			return roads[neighbor] || occupied[neighbor]
+		}
+		var mask uint8
+		if !blocked(0, -1) && !blocked(-1, 0) && !blocked(-1, -1) {
+			mask |= roadCornerNorthWest
+		}
+		if !blocked(0, -1) && !blocked(1, 0) && !blocked(1, -1) {
+			mask |= roadCornerNorthEast
+		}
+		if !blocked(0, 1) && !blocked(-1, 0) && !blocked(-1, 1) {
+			mask |= roadCornerSouthWest
+		}
+		if !blocked(0, 1) && !blocked(1, 0) && !blocked(1, 1) {
+			mask |= roadCornerSouthEast
+		}
+		masks[tile] = mask
+	}
+	return masks
 }
 func finishedRoadPositions(buildings []*building.Building) map[roadTile]bool {
 	roads := make(map[roadTile]bool)

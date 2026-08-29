@@ -50,3 +50,20 @@ func TestBuildingEntranceRoadPositionsUsesOnlyPreferredDoorway(t *testing.T) {
 		t.Fatalf("entrance roads = %#v, want south doorway only", entrances)
 	}
 }
+
+func TestBuildingEntranceCornerMasksCutsOnlyOpenGrassCorner(t *testing.T) {
+	entrance := roadTile{4, 5}
+	entrances := map[roadTile]bool{entrance: true}
+	roads := map[roadTile]bool{
+		entrance: true,
+		{3, 5}:   true, // the entrance's west edge continues into a road
+	}
+	occupied := map[roadTile]bool{
+		{4, 4}: true, // the building directly above the entrance
+	}
+
+	masks := buildingEntranceCornerMasks(entrances, roads, occupied)
+	if got, want := masks[entrance], roadCornerSouthEast; got != want {
+		t.Fatalf("entrance corner mask = %04b, want only open south-east corner %04b", got, want)
+	}
+}

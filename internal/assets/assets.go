@@ -40,9 +40,8 @@ var (
 	// The water export has the same bright top-edge fringe as several ground
 	// tiles. Load it through the one-time repair pass so zoomed ponds stay
 	// seamless instead of gaining horizontal white stripes.
-	Water        = mustLoadGround("generated/terrain_water.png")
-	Road         = mustLoad("generated/terrain_road_stone.png") // cobblestone path
-	RoadEntrance = mustLoadRoundedRoadEntrance("generated/terrain_road_stone.png")
+	Water = mustLoadGround("generated/terrain_water.png")
+	Road  = mustLoad("generated/terrain_road_stone.png") // cobblestone path
 
 	// MillFrames are flattened once on the CPU from the mill body and three
 	// blade positions. The base is the older, more detailed mill sprite; its
