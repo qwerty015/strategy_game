@@ -29,14 +29,14 @@ func DrawLumberjacks(screen *ebiten.Image, jacks []*lumberjack.Lumberjack, cam *
 		}
 
 		sx, sy := cam.TileToScreen(j.X, j.Y)
-		frame := (animFrame / 10) % len(assets.Lumberjack)
+		frame := walkingFrame(j.RemainingPath(), j.X+j.Y)
 		bob := unitBob()
 		tint := color.Color(color.White)
 		if j.Starving {
 			tint = color.RGBA{R: 255, G: 105, B: 90, A: 255}
 		}
 		flip := facingLeft(j.X, j.RemainingPath())
-		drawStandingFacingTintedAtScale(screen, assets.Lumberjack[frame], sx, sy+bob*tilePixels/TileSize, lumberjackHeight, tilePixels, tint, flip)
+		drawStandingFacingTintedAtScale(screen, assets.LumberjackWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, lumberjackHeight, tilePixels, tint, flip)
 
 		cargo, amount := j.Cargo()
 		if amount > 0 {

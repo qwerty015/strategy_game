@@ -4,8 +4,26 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/pathfind"
 	"strategy_game/internal/world"
 )
+
+func TestWalkingFrameAnimatesOnlyWithAnActiveRoute(t *testing.T) {
+	originalFrame := animFrame
+	t.Cleanup(func() { animFrame = originalFrame })
+
+	if got := walkingFrame(nil, 0); got != 1 {
+		t.Fatalf("stationary frame = %d, want neutral frame 1", got)
+	}
+
+	path := []pathfind.Point{{X: 1, Y: 1}}
+	for frame, want := range []int{0, 1, 2, 0} {
+		animFrame = frame * 7
+		if got := walkingFrame(path, 0); got != want {
+			t.Fatalf("walk frame at tick %d = %d, want %d", animFrame, got, want)
+		}
+	}
+}
 
 func TestFindHareRunUsesOnlyGrass(t *testing.T) {
 	g := world.NewGrid(12, 3)

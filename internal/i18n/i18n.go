@@ -36,6 +36,8 @@ type Catalog struct {
 	SettingsTab      string
 	InspectorTitle   string
 	InspectorHint    string
+	MusicVolumeLabel string
+	SFXVolumeLabel   string
 	SpeedTitle       string
 	SpeedPaused      string
 	SpeedHalf        string

@@ -19,8 +19,7 @@ const serfHeight = 0.85
 // DrawSerfs renders every serf as a small figure at its current tile, so
 // the player can actually see goods being hauled along the road network
 // instead of resources just teleporting between buildings. A busy serf uses
-// the frame-array hook in assets.Serf (the current generated pass has one
-// consistent pose); an idle one is dimmed.
+// a dedicated three-frame walking atlas; an idle one is dimmed.
 func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
@@ -30,21 +29,20 @@ func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 		}
 		sx, sy := cam.TileToScreen(s.X, s.Y)
 
-		frame := 0
+		frame := walkingFrame(s.RemainingPath(), s.X+s.Y)
 		bob := 0.0
 		tint := color.Color(color.RGBA{R: 200, G: 200, B: 200, A: 180})
 		if s.Starving {
 			tint = color.RGBA{R: 255, G: 115, B: 95, A: 255}
 		}
 		if s.Busy() {
-			frame = (animFrame / 10) % len(assets.Serf)
 			bob = unitBob()
 			if !s.Starving {
 				tint = color.White
 			}
 		}
 		flip := facingLeft(s.X, s.RemainingPath())
-		drawStandingFacingTintedAtScale(screen, assets.Serf[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint, flip)
+		drawStandingFacingTintedAtScale(screen, assets.SerfWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint, flip)
 
 		// A tiny resource badge makes the logistics simulation readable on the
 		// map itself: the player can see that this is a loaded serf before

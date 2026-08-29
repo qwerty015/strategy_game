@@ -59,6 +59,8 @@ func init() {
 		SettingsTab:      "Options",
 		InspectorTitle:   "Inspector",
 		InspectorHint:    "Select a building or unit",
+		MusicVolumeLabel: "Music volume",
+		SFXVolumeLabel:   "SFX volume",
 		SpeedTitle:       "Speed",
 		SpeedPaused:      "Pause",
 		SpeedHalf:        "0.5x",

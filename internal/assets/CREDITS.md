@@ -58,3 +58,5 @@ building_warehouse_v2.png was generated with the built-in OpenAI image generatio
 `ambient_fox_trot.png` was generated with the built-in OpenAI image generation tool on 2026-08-29 as a three-frame transparent fox atlas for the cosmetic ambient layer. It is original project art and does not derive from a specific commercial game asset.
 
 `ambient_bird_flap.png` was generated with the built-in OpenAI image generation tool on 2026-08-29. It is an original three-frame transparent flying-bird atlas (wings raised, extended and lowered) for the cosmetic ambient layer; it does not derive from a specific commercial game asset.
+
+`unit_*_walk.png` (serf, farmer, baker, winemaker, fisherman, swineherd, butcher, carpenter, lumberjack, quarryman, builder, miner and smelter) plus `unit_fishing_boat_paddle.png` were generated with the built-in OpenAI image generation tool on 2026-08-29. They are original three-frame transparent walking/paddling atlases for the map render layer; the prior static `unit_*.png` files remain the menu and inspector icons.

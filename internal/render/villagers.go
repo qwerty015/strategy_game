@@ -28,35 +28,31 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 		if !visible.Intersects(v.X, v.Y, 1) {
 			continue
 		}
-		frames := assets.Farmer
+		frames := assets.FarmerWalkFrames
 		switch v.Profession {
 		case villagers.Baker:
-			frames = assets.Baker
+			frames = assets.BakerWalkFrames
 		case villagers.Winemaker:
-			frames = assets.Winemaker
+			frames = assets.WinemakerWalkFrames
 		case villagers.Swineherd:
-			frames = assets.Swineherd
+			frames = assets.SwineherdWalkFrames
 		case villagers.Butcher:
-			frames = assets.Butcher
+			frames = assets.ButcherWalkFrames
 		case villagers.Carpenter:
-			frames = assets.Carpenter
+			frames = assets.CarpenterWalkFrames
 		case villagers.Smelter:
-			frames = assets.Smelter
+			frames = assets.SmelterWalkFrames
 		}
 
 		sx, sy := cam.TileToScreen(v.X, v.Y)
 
-		frame := 0
+		frame := walkingFrame(v.RemainingPath(), v.X+v.Y)
 		bob := 0.0
 		tint := color.Color(color.White)
-		switch {
-		case v.Starving:
+		if v.Starving {
 			tint = color.RGBA{R: 255, G: 90, B: 90, A: 255}
-		case v.Working():
-			frame = (animFrame / 10) % len(frames)
-			bob = unitBob()
-		case !v.Working():
-			frame = (animFrame / 10) % len(frames)
+		}
+		if v.Working() {
 			bob = unitBob()
 		}
 		flip := facingLeft(v.X, v.RemainingPath())

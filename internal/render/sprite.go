@@ -56,6 +56,17 @@ func unitBob() float64 {
 	}
 }
 
+// walkingFrame returns a neutral middle pose for a stationary unit and moves
+// through the three atlas poses only while the unit actually has a route.
+// offset de-synchronizes neighbours so a row of workers does not step as one.
+func walkingFrame(path []pathfind.Point, offset int) int {
+	const walkFrames = 3
+	if len(path) == 0 {
+		return 1
+	}
+	return (animFrame/7 + offset) % walkFrames
+}
+
 // drawStandingTinted is drawStanding with a color multiplied over the
 // sprite -- used to sweep a Farm's fertile tiles from bare soil to
 // golden wheat as its crop matures (see render/buildings.go).

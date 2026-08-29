@@ -88,9 +88,9 @@ var (
 	// while letting fry remain a quiet detail of the water surface.
 	FishFrames = mustLoadAtlasFrames("generated/fish_stages.png")
 
-	// There is one purpose-built silhouette per profession for now. The
-	// renderer still exposes frame arrays so directional/walking variants can
-	// be added without changing the simulation packages.
+	// The original one-pose figures remain menu and inspector icons. Keeping
+	// them separate from WalkFrames avoids making UI cards animate or changing
+	// their already established silhouettes.
 	Serf       = staticFrames("generated/unit_serf.png")
 	Farmer     = staticFrames("generated/unit_farmer.png")
 	Baker      = staticFrames("generated/unit_baker.png")
@@ -104,6 +104,22 @@ var (
 	Builder    = staticFrames("generated/unit_builder.png")
 	Miner      = staticFrames("generated/unit_miner.png")
 	Smelter    = staticFrames("generated/unit_smelter.png")
+
+	// WalkFrames are map-only three-step walking loops. Each atlas is reduced
+	// once at startup, so animated crowds cost no per-frame image decoding.
+	SerfWalkFrames       = mustLoadAtlasFrames("generated/unit_serf_walk.png")
+	FarmerWalkFrames     = mustLoadAtlasFrames("generated/unit_farmer_walk.png")
+	BakerWalkFrames      = mustLoadAtlasFrames("generated/unit_baker_walk.png")
+	LumberjackWalkFrames = mustLoadAtlasFrames("generated/unit_lumberjack_walk.png")
+	WinemakerWalkFrames  = mustLoadAtlasFrames("generated/unit_winemaker_walk.png")
+	FishermanWalkFrames  = mustLoadAtlasFrames("generated/unit_fisherman_walk.png")
+	SwineherdWalkFrames  = mustLoadAtlasFrames("generated/unit_swineherd_walk.png")
+	ButcherWalkFrames    = mustLoadAtlasFrames("generated/unit_butcher_walk.png")
+	CarpenterWalkFrames  = mustLoadAtlasFrames("generated/unit_carpenter_walk.png")
+	QuarrymanWalkFrames  = mustLoadAtlasFrames("generated/unit_quarryman_walk.png")
+	BuilderWalkFrames    = mustLoadAtlasFrames("generated/unit_builder_walk.png")
+	MinerWalkFrames      = mustLoadAtlasFrames("generated/unit_miner_walk.png")
+	SmelterWalkFrames    = mustLoadAtlasFrames("generated/unit_smelter_walk.png")
 	// HareFrames and ButterflyFrames are transparent three-frame ambient loops.
 	// They belong only to the visual layer and are never simulation units or
 	// save-file data.
@@ -115,6 +131,8 @@ var (
 	// cosmetic only and is sliced once during startup.
 	BirdFrames  = mustLoadAtlasFrames("generated/ambient_bird_flap.png")
 	FishingBoat = mustLoad("generated/unit_fishing_boat.png")
+	// FishingBoatPaddleFrames animates oar strokes while the fisherman moves on water.
+	FishingBoatPaddleFrames = mustLoadAtlasFrames("generated/unit_fishing_boat_paddle.png")
 )
 
 func mustDecode(name string) image.Image {

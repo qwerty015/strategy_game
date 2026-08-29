@@ -29,14 +29,14 @@ func DrawQuarrymen(screen *ebiten.Image, quarrymen []*quarry.Quarryman, cam *Cam
 		}
 
 		sx, sy := cam.TileToScreen(q.X, q.Y)
-		frame := (animFrame / 10) % len(assets.Quarryman)
+		frame := walkingFrame(q.RemainingPath(), q.X+q.Y)
 		bob := unitBob()
 		tint := color.Color(color.White)
 		if q.Starving {
 			tint = color.RGBA{R: 255, G: 105, B: 90, A: 255}
 		}
 		flip := facingLeft(q.X, q.RemainingPath())
-		drawStandingFacingTintedAtScale(screen, assets.Quarryman[frame], sx, sy+bob*tilePixels/TileSize, quarrymanHeight, tilePixels, tint, flip)
+		drawStandingFacingTintedAtScale(screen, assets.QuarrymanWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, quarrymanHeight, tilePixels, tint, flip)
 
 		cargo, amount := q.Cargo()
 		if amount > 0 {

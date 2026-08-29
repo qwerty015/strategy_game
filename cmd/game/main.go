@@ -14,6 +14,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	"strategy_game/internal/advisor"
+	"strategy_game/internal/audio"
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
@@ -566,6 +567,7 @@ func (g *Game) Update() error {
 		g.refreshPopulation()
 		g.tickAutosave()
 		g.tickAdvisor()
+		g.tickAudioCues()
 	}
 
 	return nil
@@ -1914,6 +1916,57 @@ func advisorTipText(tip advisor.Tip) string {
 	default:
 		return ""
 	}
+}
+
+// audioChopPeriod/audioMinePeriod/audioHammerPeriod pace tickAudioCues.
+// Deliberately not one sound per worker: internal/render/ambient.go
+// already solves the same problem for wildlife ("Two candidates at a
+// time are enough to make the land feel inhabited without turning
+// wildlife into a repeated visual effect on every screen") -- with many
+// simultaneous lumberjacks/quarrymen/miners/builders, playing one
+// overlapping "thwack" per worker every tick would be a wall of noise,
+// not ambiance. Instead: at most one instance of each sound, on a fixed
+// tick period, whenever *any* worker of that kind is actively working.
+const (
+	audioChopPeriod   = lumberjack.ChopTicks // one hit per felling cycle
+	audioMinePeriod   = quarry.MineTicks     // quarry and miner share this value
+	audioHammerPeriod = 20                   // construction has no natural cycle length; picked by ear
+)
+
+// tickAudioCues plays occasional flavor sound effects for whichever
+// professions are actively working right now -- see the constants above
+// for why this isn't one sound per worker. Called once per simulation
+// tick (see the loop in Update), so pausing already silences it for free:
+// no new calls happen while the world isn't ticking.
+func (g *Game) tickAudioCues() {
+	if g.worldTicks%audioChopPeriod == 0 && anyMatch(g.jacks.Lumberjacks, func(j *lumberjack.Lumberjack) bool {
+		return j.State() == lumberjack.StateChopping
+	}) {
+		audio.PlayChop()
+	}
+	if g.worldTicks%audioMinePeriod == 0 &&
+		(anyMatch(g.quarry.Quarrymen, func(q *quarry.Quarryman) bool { return q.State() == quarry.StateMining }) ||
+			anyMatch(g.miners.Miners, func(m *miner.Miner) bool { return m.State() == miner.StateMining })) {
+		audio.PlayMining()
+	}
+	if g.worldTicks%audioHammerPeriod == 0 && anyMatch(g.builders.Builders, func(b *builder.Builder) bool {
+		return b.State() == builder.StateFoundation || b.State() == builder.StateFinishing
+	}) {
+		audio.PlayHammer()
+	}
+}
+
+// anyMatch reports whether any item in items satisfies pred. The four
+// worker professions each have their own unrelated State type (not a
+// shared interface), so this stays a small generic helper rather than
+// something more specific to one of them.
+func anyMatch[T any](items []T, pred func(T) bool) bool {
+	for _, item := range items {
+		if pred(item) {
+			return true
+		}
+	}
+	return false
 }
 
 // tickAutosave advances the autosave countdown by one simulation tick

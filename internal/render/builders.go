@@ -23,14 +23,14 @@ func DrawBuilders(screen *ebiten.Image, builders []*builder.Builder, cam *Camera
 			continue
 		}
 		sx, sy := cam.TileToScreen(b.X, b.Y)
-		frame := (animFrame / 10) % len(assets.Builder)
+		frame := walkingFrame(b.RemainingPath(), b.X+b.Y)
 		bob := unitBob()
 		tint := color.Color(color.White)
 		if b.Starving {
 			tint = color.RGBA{R: 255, G: 105, B: 90, A: 255}
 		}
 		flip := facingLeft(b.X, b.RemainingPath())
-		drawStandingFacingTintedAtScale(screen, assets.Builder[frame], sx, sy+bob*tilePixels/TileSize, builderHeight, tilePixels, tint, flip)
+		drawStandingFacingTintedAtScale(screen, assets.BuilderWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, builderHeight, tilePixels, tint, flip)
 
 		switch b.State() {
 		case builder.StateFoundation:

@@ -33,14 +33,14 @@ func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Ca
 			tint = color.RGBA{R: 255, G: 105, B: 90, A: 255}
 		}
 		flip := facingLeft(f.X, f.RemainingPath())
+		frame := walkingFrame(f.RemainingPath(), f.X+f.Y)
 		if f.InBoat() {
-			drawStandingFacingTintedAtScale(screen, assets.FishingBoat, sx, sy+bob*tilePixels/TileSize, 1.08, tilePixels, tint, flip)
+			drawStandingFacingTintedAtScale(screen, assets.FishingBoatPaddleFrames[frame], sx, sy+bob*tilePixels/TileSize, 1.08, tilePixels, tint, flip)
 			if f.State() == fishing.StateFishing {
 				drawFishingCue(screen, sx, sy+bob*tilePixels/TileSize, tilePixels)
 			}
 		} else {
-			frame := (animFrame / 10) % len(assets.Fisherman)
-			drawStandingFacingTintedAtScale(screen, assets.Fisherman[frame], sx, sy+bob*tilePixels/TileSize, fishermanHeight, tilePixels, tint, flip)
+			drawStandingFacingTintedAtScale(screen, assets.FishermanWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, fishermanHeight, tilePixels, tint, flip)
 		}
 
 		_, amount := f.Cargo()

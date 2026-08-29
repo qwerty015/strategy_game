@@ -10,6 +10,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	gamehelp "strategy_game"
+	"strategy_game/internal/audio"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/ui"
@@ -26,9 +27,11 @@ type pauseMenuLayout struct {
 	new    image.Rectangle
 	exit   image.Rectangle
 
-	languages [2]image.Rectangle
-	speeds    []image.Rectangle
-	slots     []pauseSlotRects
+	languages   [2]image.Rectangle
+	speeds      []image.Rectangle
+	musicVolume []image.Rectangle
+	sfxVolume   []image.Rectangle
+	slots       []pauseSlotRects
 
 	modal        image.Rectangle
 	modalConfirm image.Rectangle
@@ -43,8 +46,17 @@ type pauseSlotRects struct {
 	nameY    int
 }
 
+// volumeLevelCount/volumeLevels back the music/sfx volume rows: five
+// discrete steps (0/25/50/75/100%) rather than a free-dragging slider,
+// matching the existing speed/priority controls' segmented-button style
+// instead of introducing a new kind of widget. 0% is a real "off", not
+// just quiet -- see audio.SetMusicVolume's doc comment.
+const volumeLevelCount = 5
+
+var volumeLevels = [volumeLevelCount]float64{0, 0.25, 0.5, 0.75, 1}
+
 func newPauseMenuLayout(width, height int) pauseMenuLayout {
-	panelW, panelH := 700, 650
+	panelW, panelH := 700, 746
 	if limit := width - 40; panelW > limit {
 		panelW = limit
 	}
@@ -86,7 +98,25 @@ func newPauseMenuLayout(width, height int) pauseMenuLayout {
 		layout.speeds[index] = image.Rect(x, speedY, x+w, speedY+30)
 	}
 
-	slotsY := speedY + 64
+	segW := contentW / volumeLevelCount
+	volumeRow := func(y int) []image.Rectangle {
+		row := make([]image.Rectangle, volumeLevelCount)
+		for index := range row {
+			x := contentX + index*segW
+			w := segW - 2
+			if index == volumeLevelCount-1 {
+				w = contentX + contentW - x
+			}
+			row[index] = image.Rect(x, y, x+w, y+30)
+		}
+		return row
+	}
+	musicVolumeY := speedY + 48
+	layout.musicVolume = volumeRow(musicVolumeY)
+	sfxVolumeY := musicVolumeY + 48
+	layout.sfxVolume = volumeRow(sfxVolumeY)
+
+	slotsY := sfxVolumeY + 64
 	layout.slots = make([]pauseSlotRects, slotCount)
 	for index := range layout.slots {
 		y := slotsY + index*60
@@ -172,6 +202,18 @@ func (g *Game) updatePauseMenu() error {
 				return nil
 			}
 		}
+		for index, rect := range layout.musicVolume {
+			if point.In(rect) {
+				audio.SetMusicVolume(volumeLevels[index])
+				return nil
+			}
+		}
+		for index, rect := range layout.sfxVolume {
+			if point.In(rect) {
+				audio.SetSFXVolume(volumeLevels[index])
+				return nil
+			}
+		}
 		for index, slot := range layout.slots {
 			slotNumber := index + 1
 			switch {
@@ -244,6 +286,18 @@ func (g *Game) drawPauseMenu(screen *ebiten.Image) {
 	speedLabels := []string{t.SpeedPaused, t.SpeedHalf, t.SpeedNormal, t.SpeedDouble, t.SpeedQuadruple, t.SpeedOctuple, t.SpeedSixteenfold}
 	for index, rect := range layout.speeds {
 		drawPauseChoice(screen, rect, speedLabels[index], economy.Speed(index) == g.sim.Speed())
+	}
+
+	volumeLabels := [volumeLevelCount]string{"0%", "25%", "50%", "75%", "100%"}
+	musicVolumeY := layout.musicVolume[0].Min.Y - 16
+	ui.DrawMenuText(screen, t.MusicVolumeLabel, float64(layout.musicVolume[0].Min.X), float64(musicVolumeY))
+	for index, rect := range layout.musicVolume {
+		drawPauseChoice(screen, rect, volumeLabels[index], volumeLevels[index] == audio.MusicVolume())
+	}
+	sfxVolumeY := layout.sfxVolume[0].Min.Y - 16
+	ui.DrawMenuText(screen, t.SFXVolumeLabel, float64(layout.sfxVolume[0].Min.X), float64(sfxVolumeY))
+	for index, rect := range layout.sfxVolume {
+		drawPauseChoice(screen, rect, volumeLabels[index], volumeLevels[index] == audio.SFXVolume())
 	}
 
 	ui.DrawMenuText(screen, t.SaveSlotsLabel, float64(layout.slots[0].save.Min.X), float64(layout.slots[0].nameY-16))

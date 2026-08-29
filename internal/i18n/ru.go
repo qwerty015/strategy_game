@@ -59,6 +59,8 @@ func init() {
 		SettingsTab:      "Опции",
 		InspectorTitle:   "Сведения",
 		InspectorHint:    "Выберите здание или юнита",
+		MusicVolumeLabel: "Громкость музыки",
+		SFXVolumeLabel:   "Громкость звуков",
 		SpeedTitle:       "Скорость",
 		SpeedPaused:      "Пауза",
 		SpeedHalf:        "0,5x",
