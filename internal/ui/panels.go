@@ -16,6 +16,7 @@ import (
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/miner"
+	"strategy_game/internal/pathfind"
 	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
@@ -147,6 +148,14 @@ func drawSettingsContent(screen *ebiten.Image, layout Layout, speed economy.Spee
 			name = t.SlotEmptyLabel
 		}
 		DrawMenuText(screen, fmt.Sprintf("%d. %s", i+1, name), float64(x), float64(rowY))
+
+		autoX := x + w - settingsSlotAutoW
+		autoFill := panelInnerColor
+		if slot.Autosave {
+			autoFill = selectedColor
+		}
+		vector.FillRect(screen, float32(autoX), float32(rowY), float32(settingsSlotAutoW-2), float32(settingsSlotNameH-2), autoFill, false)
+		DrawCompactMenuText(screen, t.AutosaveToggle, float64(autoX+4), float64(rowY+4))
 
 		btnY := rowY + settingsSlotNameH
 		halfW := w / 2
@@ -939,6 +948,54 @@ func drawFishermanInspector(screen *ebiten.Image, x, y int, f *fishing.Fisherman
 	DrawInspectorText(screen, fmt.Sprintf("%s: %d/%d", t.HungerLabel, min(f.HungerTicks(), fishing.HungerInterval), fishing.HungerInterval), float64(x), float64(y))
 }
 
+// selectedUnitTile returns the current grid tile of whichever *unit* (not
+// building) is selected, plus the tiles still ahead of it on its current
+// route (e.g. Serf.RemainingPath). Shared by DrawSelectionMarker's unit
+// branches and DrawSelectedRoute, so both agree on where a unit "is" and
+// "is going" from exactly the same lookup instead of two parallel type
+// switches that could quietly drift apart.
+func selectedUnitTile(selection Selection) (tx, ty int, path []pathfind.Point, ok bool) {
+	switch selection.Kind {
+	case SelectionSerf:
+		if selection.Serf == nil {
+			return 0, 0, nil, false
+		}
+		return selection.Serf.X, selection.Serf.Y, selection.Serf.RemainingPath(), true
+	case SelectionVillager:
+		if selection.Villager == nil {
+			return 0, 0, nil, false
+		}
+		return selection.Villager.X, selection.Villager.Y, selection.Villager.RemainingPath(), true
+	case SelectionLumberjack:
+		if selection.Lumberjack == nil {
+			return 0, 0, nil, false
+		}
+		return selection.Lumberjack.X, selection.Lumberjack.Y, selection.Lumberjack.RemainingPath(), true
+	case SelectionFisherman:
+		if selection.Fisherman == nil {
+			return 0, 0, nil, false
+		}
+		return selection.Fisherman.X, selection.Fisherman.Y, selection.Fisherman.RemainingPath(), true
+	case SelectionQuarryman:
+		if selection.Quarryman == nil {
+			return 0, 0, nil, false
+		}
+		return selection.Quarryman.X, selection.Quarryman.Y, selection.Quarryman.RemainingPath(), true
+	case SelectionBuilder:
+		if selection.Builder == nil {
+			return 0, 0, nil, false
+		}
+		return selection.Builder.X, selection.Builder.Y, selection.Builder.RemainingPath(), true
+	case SelectionMiner:
+		if selection.Miner == nil {
+			return 0, 0, nil, false
+		}
+		return selection.Miner.X, selection.Miner.Y, selection.Miner.RemainingPath(), true
+	default:
+		return 0, 0, nil, false
+	}
+}
+
 // DrawSelectionMarker draws a warm outline under the selected object so the
 // player can connect the inspector to the world even when sprites overlap.
 func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Selection) {
@@ -947,14 +1004,8 @@ func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Sel
 	if selection.Kind == SelectionBuilding && selection.Building != nil {
 		x, y = cam.TileToScreen(selection.Building.X, selection.Building.Y)
 		size *= float64(building.Types[selection.Building.Kind].Footprint)
-	} else if selection.Kind == SelectionSerf && selection.Serf != nil {
-		x, y = cam.TileToScreen(selection.Serf.X, selection.Serf.Y)
-	} else if selection.Kind == SelectionVillager && selection.Villager != nil {
-		x, y = cam.TileToScreen(selection.Villager.X, selection.Villager.Y)
-	} else if selection.Kind == SelectionLumberjack && selection.Lumberjack != nil {
-		x, y = cam.TileToScreen(selection.Lumberjack.X, selection.Lumberjack.Y)
-	} else if selection.Kind == SelectionFisherman && selection.Fisherman != nil {
-		x, y = cam.TileToScreen(selection.Fisherman.X, selection.Fisherman.Y)
+	} else if tx, ty, _, ok := selectedUnitTile(selection); ok {
+		x, y = cam.TileToScreen(tx, ty)
 	} else {
 		return
 	}
@@ -965,6 +1016,35 @@ func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Sel
 	vector.FillRect(screen, float32(x), float32(y+size-2), float32(size), thickness, line, false)
 	vector.FillRect(screen, float32(x), float32(y), thickness, float32(size), line, false)
 	vector.FillRect(screen, float32(x+size-2), float32(y), thickness, float32(size), line, false)
+}
+
+// DrawSelectedRoute draws the remaining path of the currently selected
+// unit as a thin connected line from tile-centre to tile-centre, so a
+// player can see *where* a walking unit is actually headed -- until now
+// DrawSelectionMarker only boxed its current tile, per the user's own
+// roadmap note ("сам выбранный объект уже подсвечивается... но не рисует
+// линию маршрута"). A building selection, or a unit that's idle/has no
+// path right now, draws nothing.
+func DrawSelectedRoute(screen *ebiten.Image, cam *render.Camera, selection Selection) {
+	tx, ty, path, ok := selectedUnitTile(selection)
+	if !ok || len(path) == 0 {
+		return
+	}
+
+	line := color.RGBA{R: 245, G: 201, B: 72, A: 150}
+	thickness := float32(2)
+	tp := cam.TilePixels()
+	center := func(gx, gy int) (float32, float32) {
+		sx, sy := cam.TileToScreen(gx, gy)
+		return float32(sx + tp/2), float32(sy + tp/2)
+	}
+
+	px, py := center(tx, ty)
+	for _, p := range path {
+		qx, qy := center(p.X, p.Y)
+		vector.StrokeLine(screen, px, py, qx, qy, thickness, line, true)
+		px, py = qx, qy
+	}
 }
 
 // DrawAccessMarker marks the only tile where a road can serve a building.

@@ -1087,3 +1087,53 @@ func TestController_SuppliesSmelteryWithIronOreFromWarehouse(t *testing.T) {
 	}
 	t.Fatalf("smeltery IronOre input = %d, want 1 after a warehouse supply run", smeltery.InputBuffer[resource.IronOre])
 }
+
+// TestSerf_RemainingPath is a regression guard for the inspector's
+// route-line overlay (ui.DrawSelectedRoute, and the same pattern
+// mirrored across villagers/lumberjack/fishing/quarry/builder/miner): an
+// idle serf reports no path, a serf mid-haul reports the tiles still
+// ahead of it (not the whole route from the start -- the player wants to
+// see where it's *going*, not where it's already been), and that
+// remaining length only ever shrinks as it walks, never grows or resets
+// mid-trip.
+func TestSerf_RemainingPath(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}
+	farm.AddOutput(resource.Wheat, 5)
+	buildings := append([]*building.Building{warehouse, farm}, straightRoad(1, 5, 0)...)
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+	s := c.Serfs[0]
+
+	if got := s.RemainingPath(); len(got) != 0 {
+		t.Fatalf("idle serf RemainingPath = %v, want empty", got)
+	}
+
+	// A full haul is two legs (walk to the farm, then walk back to the
+	// warehouse with cargo) and arriveAtPickup hands the serf a brand new
+	// path for the second leg in the very same tick the first leg's
+	// path empties -- so RemainingPath legitimately jumps back up once,
+	// exactly when State() changes. It must still only shrink within a
+	// single leg (same State value).
+	lastState, lastLen := State(-1), -1
+	sawMidTrip := false
+	for range 500 {
+		tick(c, nil, buildings, stock)
+		remaining := s.RemainingPath()
+		if len(remaining) == 0 {
+			if sawMidTrip {
+				break // the whole haul just finished -- stop before an unrelated second trip could start
+			}
+			continue
+		}
+		sawMidTrip = true
+		if s.State() == lastState && len(remaining) > lastLen {
+			t.Fatalf("RemainingPath grew from %d to %d tiles within the same leg (state %v), want monotonically non-increasing", lastLen, len(remaining), s.State())
+		}
+		lastState, lastLen = s.State(), len(remaining)
+	}
+	if !sawMidTrip {
+		t.Fatal("serf never reported a non-empty RemainingPath during its haul")
+	}
+}

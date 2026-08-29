@@ -227,8 +227,28 @@ type Game struct {
 	dialogText string
 	slotCache  []ui.SaveSlotInfo
 
+	// autosaveSlot is which save-panel slot (1-slotCount) periodic
+	// autosave silently re-saves into every autosaveIntervalTicks
+	// simulation ticks; 0 means autosave is off. A live, session-only
+	// preference like language/speed -- not persisted across launches,
+	// and not reset by New Game or Load, see toggleAutosaveSlot's doc
+	// comment. autosaveTicks counts simulation ticks since the last
+	// autosave (or since it was turned on), reset to 0 on every trigger.
+	autosaveSlot  int
+	autosaveTicks int
+
 	statusMsg string
 }
+
+// autosaveIntervalTicks is how often (in simulation ticks, not render
+// frames or wall-clock time) a designated autosave slot is silently
+// re-saved -- about 16-17 minutes of played time at Normal speed
+// (framesPerSimTick=30, 60fps => 2 ticks/sec => 2000 ticks ~= 1000s), the
+// same order of magnitude as the roadmap's other tick-scale constants
+// (hunger.MaxTicks etc.), not wall-clock: a paused or slow game
+// legitimately autosaves less often in real time, matching how nothing
+// else in the simulation is clocked to the wall either.
+const autosaveIntervalTicks = 2000
 
 func NewGame() *Game {
 	mapSeed := newMapSeed()
@@ -429,6 +449,7 @@ func (g *Game) Update() error {
 		}
 		g.clearMissingUnitSelection()
 		g.refreshPopulation()
+		g.tickAutosave()
 	}
 
 	if g.dialog == ui.DialogNone && inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
@@ -803,6 +824,10 @@ func (g *Game) handleMouse() {
 			g.dialog = ui.DialogConfirmNewGame
 			return
 		}
+		if slot, ok := g.layout.SettingsSlotAutosaveAt(mx, my); ok {
+			g.toggleAutosaveSlot(slot)
+			return
+		}
 		if slot, action, ok := g.layout.SettingsSlotActionAt(mx, my); ok {
 			g.handleSettingsSlotAction(slot, action)
 			return
@@ -1076,10 +1101,29 @@ func (g *Game) refreshPopulation() {
 // normally on every unoccupied map tile.
 func (g *Game) selectionAt(mx, my int) ui.Selection {
 	tx, ty := g.camera.ScreenToTile(mx, my)
+	// A building wins over a unit standing on it, so a click always
+	// reaches the workplace being inspected (a farm, a construction
+	// site, a warehouse) rather than a worker or serf merely passing
+	// through -- see the TestSelectionAt_* tests below.
+	//
+	// Road is the one deliberate exception: it has nothing of its own
+	// worth inspecting, and it's also where nearly every walking unit in
+	// the game spends nearly all of its time -- letting it win here made
+	// it all but impossible to ever click a unit at all, a real
+	// regression the user reported directly ("не могу выбрать юнита
+	// если он на дороге"). So a road tile is remembered but not
+	// returned immediately: the unit loops below get first refusal, and
+	// the road is only the fallback if no unit is actually standing
+	// there.
+	var roadHit *building.Building
 	for i := len(g.buildings) - 1; i >= 0; i-- {
 		b := g.buildings[i]
 		footprint := building.Types[b.Kind].Footprint
 		if tx >= b.X && tx < b.X+footprint && ty >= b.Y && ty < b.Y+footprint {
+			if b.Kind == building.Road {
+				roadHit = b
+				continue
+			}
 			return ui.Selection{Kind: ui.SelectionBuilding, Building: b}
 		}
 	}
@@ -1124,6 +1168,9 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		if m.X == tx && m.Y == ty && m.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionMiner, Miner: m}
 		}
+	}
+	if roadHit != nil {
+		return ui.Selection{Kind: ui.SelectionBuilding, Building: roadHit}
 	}
 	return ui.Selection{}
 }
@@ -1270,9 +1317,68 @@ func (g *Game) refreshSlotCache() {
 	infos := make([]ui.SaveSlotInfo, slotCount)
 	for i := 0; i < slotCount; i++ {
 		name, ok := save.PeekName(slotPath(i + 1))
-		infos[i] = ui.SaveSlotInfo{Name: name, Occupied: ok}
+		infos[i] = ui.SaveSlotInfo{Name: name, Occupied: ok, Autosave: i+1 == g.autosaveSlot}
 	}
 	g.slotCache = infos
+}
+
+// toggleAutosaveSlot designates slot as the periodic-autosave target, or
+// turns autosave off if that slot is already the target -- a settings-tab
+// preference like language/speed, so it's deliberately not reset by New
+// Game or Load, and not written to any save file (a fresh launch always
+// starts with autosave off, same as every other live-only preference).
+// At most one slot can be the target at a time: picking a new one simply
+// replaces the old choice, it does not need to be turned off first.
+func (g *Game) toggleAutosaveSlot(slot int) {
+	if slot < 1 || slot > slotCount {
+		return
+	}
+	if g.autosaveSlot == slot {
+		g.autosaveSlot = 0
+	} else {
+		g.autosaveSlot = slot
+	}
+	g.autosaveTicks = 0
+	g.refreshSlotCache()
+}
+
+// tickAutosave advances the autosave countdown by one simulation tick
+// (see autosaveIntervalTicks) and triggers a silent save once it fires.
+// Called once per simulation tick, not once per render frame, so autosave
+// cadence is paced by played time, not wall-clock time -- consistent with
+// every other tick-scale constant in the simulation (hunger, growth, ...).
+func (g *Game) tickAutosave() {
+	if g.autosaveSlot == 0 {
+		return
+	}
+	g.autosaveTicks++
+	if g.autosaveTicks < autosaveIntervalTicks {
+		return
+	}
+	g.autosaveTicks = 0
+	g.autosave()
+}
+
+// autosave silently re-saves into g.autosaveSlot, bypassing the naming/
+// overwrite-confirmation dialogs a manual Save-button click goes through
+// (see commitDialogSave) -- the whole point of autosave is that it never
+// interrupts play. It keeps the slot's existing name if it already has
+// one, or falls back to the same default a manual save would use if this
+// is that slot's very first save.
+func (g *Game) autosave() {
+	if g.autosaveSlot < 1 || g.autosaveSlot > slotCount {
+		return
+	}
+	name := g.slotCache[g.autosaveSlot-1].Name
+	if name == "" {
+		name = fmt.Sprintf("%s %d", i18n.T().SlotDefaultName, g.autosaveSlot)
+	}
+	if err := g.saveGame(slotPath(g.autosaveSlot), name); err != nil {
+		g.statusMsg = i18n.T().SaveFailedPrefix + err.Error()
+		return
+	}
+	g.statusMsg = i18n.T().Autosaved
+	g.refreshSlotCache()
 }
 
 // handleSettingsSlotAction executes a click on a save-panel slot's Save or
@@ -3064,6 +3170,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	for b, connected := range visibleConnectivity {
 		ui.DrawAccessMarker(screen, g.camera, b, connected)
 	}
+	ui.DrawSelectedRoute(screen, g.camera, g.selection)
 	ui.DrawSelectionMarker(screen, g.camera, g.selection)
 	connected := false
 	occupants := 0

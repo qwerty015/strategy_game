@@ -220,6 +220,17 @@ func (f *Fisherman) HungerTicks() int { return f.hungerTick }
 // SatietyPercent returns the player-facing 0-100 satiety value.
 func (f *Fisherman) SatietyPercent() int { return hunger.Percent(f.hungerTick) }
 
+// RemainingPath returns the tiles still ahead on the fisherman's current
+// route, starting from (and including) the tile it's walking toward right
+// now -- for the inspector's route-line overlay (see
+// ui.DrawSelectedRoute). nil once idle or with no path assigned.
+func (f *Fisherman) RemainingPath() []pathfind.Point {
+	if f.pathIdx >= len(f.path) {
+		return nil
+	}
+	return f.path[f.pathIdx:]
+}
+
 // WorkTicks returns progress through the net-casting animation.
 func (f *Fisherman) WorkTicks() int { return f.workTicks }
 

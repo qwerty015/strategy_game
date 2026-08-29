@@ -1,18 +1,22 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/fishing"
+	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/miner"
 	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
+	"strategy_game/internal/save"
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
 	"strategy_game/internal/world"
@@ -530,6 +534,47 @@ func TestSelectionAt_WarehouseWinsOverSerf(t *testing.T) {
 	}
 }
 
+// TestSelectionAt_SerfOnRoadWinsOverTheRoad is a regression guard for a
+// real bug the user reported directly: after TestSelectionAt_*WinsOver*
+// above made a building win over any unit standing on it (so an
+// inspector click always reaches a workplace, not the worker passing
+// through), that same rule quietly made it impossible to ever select a
+// unit standing on a Road tile -- roads have nothing of their own worth
+// inspecting, and nearly every walking unit spends nearly all its time
+// on one. A serf on a road must still be selectable; the road itself is
+// only the fallback when no unit is actually standing there.
+func TestSelectionAt_SerfOnRoadWinsOverTheRoad(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	road := &building.Building{Kind: building.Road, X: 3, Y: 0}
+	game := &Game{
+		buildings: []*building.Building{warehouse, road},
+		vills:     villagers.NewController(),
+		logi:      logistics.NewController(warehouse, 1),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
+		miners:    miner.NewController(),
+		camera:    render.NewCamera(),
+	}
+	serf := game.logi.Serfs[0]
+	serf.X, serf.Y = road.X, road.Y
+
+	sx, sy := game.camera.TileToScreen(road.X, road.Y)
+	got := game.selectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionSerf || got.Serf != serf {
+		t.Fatalf("selection = %+v, want the serf standing on the road", got)
+	}
+
+	// And with nobody standing there, the same tile still resolves to the
+	// road -- the fallback path must actually fire, not just no-op.
+	serf.X, serf.Y = -1, -1
+	got = game.selectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionBuilding || got.Building != road {
+		t.Fatalf("selection with nobody on the tile = %+v, want the road itself", got)
+	}
+}
+
 // TestUnitsAt_CountsAnyoneOnTheFootprintEvenWithoutADedicatedResident
 // covers "показывать сколько внутри людей ... в т.ч. харчевне и складе":
 // unitsAt must work on buildings that never get an assigned resident
@@ -941,6 +986,76 @@ func TestResetToNewGameDiscardsProgress(t *testing.T) {
 	}
 	if g.statusMsg == "" {
 		t.Fatal("status message after reset is empty, want a confirmation message")
+	}
+}
+
+// TestToggleAutosaveSlot_TogglesOnAndOff covers the pure state transitions
+// behind the settings tab's per-slot autosave toggle: picking a slot turns
+// it on, picking the *same* slot again turns it off, and picking a
+// *different* slot just switches the target directly without needing to
+// be turned off first.
+func TestToggleAutosaveSlot_TogglesOnAndOff(t *testing.T) {
+	g := NewGame()
+	if g.autosaveSlot != 0 {
+		t.Fatalf("autosaveSlot on a fresh game = %d, want 0 (off by default)", g.autosaveSlot)
+	}
+
+	g.toggleAutosaveSlot(3)
+	if g.autosaveSlot != 3 {
+		t.Fatalf("autosaveSlot after toggling on slot 3 = %d, want 3", g.autosaveSlot)
+	}
+	if !g.slotCache[2].Autosave {
+		t.Fatal("slotCache[2].Autosave = false after toggling slot 3 on, want true")
+	}
+
+	g.toggleAutosaveSlot(5)
+	if g.autosaveSlot != 5 {
+		t.Fatalf("autosaveSlot after toggling on slot 5 = %d, want 5 (switched, not merely added)", g.autosaveSlot)
+	}
+	if g.slotCache[2].Autosave {
+		t.Fatal("slotCache[2].Autosave still true after switching the target to slot 5")
+	}
+
+	g.toggleAutosaveSlot(5)
+	if g.autosaveSlot != 0 {
+		t.Fatalf("autosaveSlot after toggling slot 5 off = %d, want 0", g.autosaveSlot)
+	}
+}
+
+// TestTickAutosave_FiresAfterIntervalAndWritesTheSlot covers the actual
+// timer: nothing happens before autosaveIntervalTicks calls, and the
+// designated slot's file exists on disk right after the tick that crosses
+// the threshold, using whatever name the slot already had.
+func TestTickAutosave_FiresAfterIntervalAndWritesTheSlot(t *testing.T) {
+	g := NewGame()
+	const slot = 5
+	path := slotPath(slot)
+	os.Remove(path)
+	t.Cleanup(func() { os.Remove(path) })
+
+	g.toggleAutosaveSlot(slot)
+
+	for range autosaveIntervalTicks - 1 {
+		g.tickAutosave()
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("autosave slot file exists before autosaveIntervalTicks was reached")
+	}
+
+	g.tickAutosave()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("autosave slot file missing after autosaveIntervalTicks ticks: %v", err)
+	}
+	if g.autosaveTicks != 0 {
+		t.Fatalf("autosaveTicks after firing = %d, want reset to 0", g.autosaveTicks)
+	}
+
+	name, ok := save.PeekName(path)
+	if !ok {
+		t.Fatal("autosaved file has no readable name")
+	}
+	if want := fmt.Sprintf("%s %d", i18n.T().SlotDefaultName, slot); name != want {
+		t.Fatalf("autosaved name = %q, want %q (default name on a slot's first save)", name, want)
 	}
 }
 

@@ -290,6 +290,10 @@ const (
 	settingsSlotButtonH = 26
 	settingsSlotStride  = 58
 	settingsSlotCount   = 5
+	// settingsSlotAutoW is the small on/off toggle docked at the right
+	// edge of each slot's name row -- "напротив слота", designating that
+	// slot as the periodic autosave target (see Game.autosave).
+	settingsSlotAutoW = 46
 
 	settingsDialogFieldY  = settingsSlotsLabelY + 20
 	settingsDialogFieldH  = 28
@@ -369,6 +373,27 @@ func (l Layout) SettingsSlotActionAt(x, y int) (int, SettingsSlotAction, bool) {
 		return i + 1, SettingsSlotLoad, true
 	}
 	return 0, SettingsSlotNone, false
+}
+
+// SettingsSlotAutosaveAt returns which save-slot's autosave toggle (1-5)
+// the cursor is over -- a small button docked at the right edge of the
+// slot's *name* row, not the Save/Load button row below it, so it doesn't
+// need to shrink either of those two existing buttons.
+func (l Layout) SettingsSlotAutosaveAt(x, y int) (int, bool) {
+	startX := 12
+	w := l.LeftWidth - 24
+	autoX := startX + w - settingsSlotAutoW
+	for i := 0; i < settingsSlotCount; i++ {
+		rowY := settingsSlotsStartY + i*settingsSlotStride
+		if y < rowY || y >= rowY+settingsSlotNameH {
+			continue
+		}
+		if x < autoX || x >= startX+w {
+			return 0, false
+		}
+		return i + 1, true
+	}
+	return 0, false
 }
 
 // SettingsDialogButtonAt returns which half of the settings tab's modal

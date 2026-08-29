@@ -183,6 +183,17 @@ func (s *Serf) Busy() bool {
 	return s.ph != idle
 }
 
+// RemainingPath returns the tiles still ahead of the serf on its current
+// route, starting from (and including) the tile it's walking toward right
+// now -- for the inspector's route-line overlay (see
+// ui.DrawSelectedRoute). nil once idle or with no path assigned.
+func (s *Serf) RemainingPath() []pathfind.Point {
+	if s.pathIdx >= len(s.path) {
+		return nil
+	}
+	return s.path[s.pathIdx:]
+}
+
 // Dismissing reports whether the serf will leave the town after completing
 // the currently assigned trip. A dismissal never interrupts a haul, so cargo
 // that is already in the serf's hands still reaches its destination.

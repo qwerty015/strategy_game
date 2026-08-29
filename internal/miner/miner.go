@@ -305,6 +305,17 @@ func (m *Miner) HungerTicks() int { return m.hungerTick }
 // SatietyPercent returns the player-facing 0-100 satiety value.
 func (m *Miner) SatietyPercent() int { return hunger.Percent(m.hungerTick) }
 
+// RemainingPath returns the tiles still ahead on the miner's current
+// route, starting from (and including) the tile it's walking toward right
+// now -- for the inspector's route-line overlay (see
+// ui.DrawSelectedRoute). nil once idle or with no path assigned.
+func (m *Miner) RemainingPath() []pathfind.Point {
+	if m.pathIdx >= len(m.path) {
+		return nil
+	}
+	return m.path[m.pathIdx:]
+}
+
 // WorkTicks returns progress through the current mining animation.
 func (m *Miner) WorkTicks() int { return m.workTicks }
 

@@ -119,6 +119,17 @@ func (v *Villager) SatietyPercent() int {
 	return hunger.Percent(v.ticksSinceMeal)
 }
 
+// RemainingPath returns the tiles still ahead on the villager's current
+// route, starting from (and including) the tile it's walking toward right
+// now -- for the inspector's route-line overlay (see
+// ui.DrawSelectedRoute). nil once idle or with no path assigned.
+func (v *Villager) RemainingPath() []pathfind.Point {
+	if v.pathIdx >= len(v.path) {
+		return nil
+	}
+	return v.path[v.pathIdx:]
+}
+
 // HomeBuilding returns the building where this villager works.
 func (v *Villager) HomeBuilding() *building.Building {
 	return v.Home

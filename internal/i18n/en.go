@@ -151,6 +151,8 @@ func init() {
 		SlotOverwriteButton: "Overwrite",
 		SlotCancelButton:    "Cancel",
 		SlotDefaultName:     "Slot",
+		AutosaveToggle:      "Auto",
+		Autosaved:           "Autosaved.",
 
 		NewGameButton:        "New Game",
 		NewGameConfirmPrompt: "Start over? All current progress will be lost.",

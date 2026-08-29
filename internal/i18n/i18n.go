@@ -128,6 +128,8 @@ type Catalog struct {
 	SlotOverwriteButton string
 	SlotCancelButton    string
 	SlotDefaultName     string // fallback base name when a slot is saved with an empty typed name
+	AutosaveToggle      string // short label on each slot's autosave on/off button
+	Autosaved           string // status line after a silent periodic autosave
 
 	NewGameButton        string
 	NewGameConfirmPrompt string

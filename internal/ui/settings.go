@@ -5,6 +5,9 @@ package ui
 type SaveSlotInfo struct {
 	Name     string
 	Occupied bool
+	// Autosave marks this slot as the current periodic-autosave target
+	// (see Game.autosave) -- at most one slot is ever true at a time.
+	Autosave bool
 }
 
 // SettingsSlotAction identifies which half of a save-slot row the cursor is

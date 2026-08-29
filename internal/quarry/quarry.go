@@ -256,6 +256,17 @@ func (q *Quarryman) HungerTicks() int { return q.hungerTick }
 // SatietyPercent returns the player-facing 0-100 satiety value.
 func (q *Quarryman) SatietyPercent() int { return hunger.Percent(q.hungerTick) }
 
+// RemainingPath returns the tiles still ahead on the quarryman's current
+// route, starting from (and including) the tile it's walking toward right
+// now -- for the inspector's route-line overlay (see
+// ui.DrawSelectedRoute). nil once idle or with no path assigned.
+func (q *Quarryman) RemainingPath() []pathfind.Point {
+	if q.pathIdx >= len(q.path) {
+		return nil
+	}
+	return q.path[q.pathIdx:]
+}
+
 // WorkTicks returns progress through the current mining animation.
 func (q *Quarryman) WorkTicks() int { return q.workTicks }
 

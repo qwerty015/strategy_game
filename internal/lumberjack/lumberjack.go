@@ -254,6 +254,17 @@ func (j *Lumberjack) HungerTicks() int { return j.hungerTick }
 // SatietyPercent returns the player-facing 0-100 satiety value.
 func (j *Lumberjack) SatietyPercent() int { return hunger.Percent(j.hungerTick) }
 
+// RemainingPath returns the tiles still ahead on the lumberjack's current
+// route, starting from (and including) the tile it's walking toward right
+// now -- for the inspector's route-line overlay (see
+// ui.DrawSelectedRoute). nil once idle or with no path assigned.
+func (j *Lumberjack) RemainingPath() []pathfind.Point {
+	if j.pathIdx >= len(j.path) {
+		return nil
+	}
+	return j.path[j.pathIdx:]
+}
+
 // WorkTicks returns progress through the current chopping animation.
 func (j *Lumberjack) WorkTicks() int { return j.workTicks }
 

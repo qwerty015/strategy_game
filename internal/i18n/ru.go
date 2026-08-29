@@ -151,6 +151,8 @@ func init() {
 		SlotOverwriteButton: "Перезаписать",
 		SlotCancelButton:    "Отмена",
 		SlotDefaultName:     "Слот",
+		AutosaveToggle:      "Авто",
+		Autosaved:           "Автосохранение.",
 
 		NewGameButton:        "Новая игра",
 		NewGameConfirmPrompt: "Начать заново? Весь текущий прогресс будет потерян.",

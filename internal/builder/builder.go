@@ -208,6 +208,17 @@ func (b *Builder) HungerTicks() int { return b.hungerTick }
 // SatietyPercent returns the player-facing 0-100 satiety value.
 func (b *Builder) SatietyPercent() int { return hunger.Percent(b.hungerTick) }
 
+// RemainingPath returns the tiles still ahead on the builder's current
+// route, starting from (and including) the tile it's walking toward right
+// now -- for the inspector's route-line overlay (see
+// ui.DrawSelectedRoute). nil once idle or with no path assigned.
+func (b *Builder) RemainingPath() []pathfind.Point {
+	if b.pathIdx >= len(b.path) {
+		return nil
+	}
+	return b.path[b.pathIdx:]
+}
+
 // WorkTicks returns progress through the current construction stage.
 func (b *Builder) WorkTicks() int { return b.workTicks }
 
