@@ -38,12 +38,24 @@ var Types = map[Kind]Type{
 		RequiresWorker: true,
 		Recipe: Recipe{
 			// No Inputs: a Farm gathers Wheat from the land itself.
-			Output:       resource.Wheat,
-			OutputAmount: 5,
-			// At the normal speed (2 simulation ticks/sec) this is about
-			// one minute per harvest: deliberately much slower than the
-			// original prototype's two-second cycle.
-			TicksToProduce: 120,
+			//
+			// Per the user's explicit request ("чтобы за раз не сразу
+			// восемь единиц продукции попадало... а условно давать по
+			// два... цикл производства немного увеличится, но логика
+			// изменится сильно"): the farmer brings in Wheat two units at
+			// a time instead of the old single 5-unit harvest at the end
+			// of the cycle, at a slightly slower overall rate (2/60 here
+			// vs. the old 5/120) to reflect the overhead of several
+			// shorter trips instead of one long one. This also fixes a
+			// real side effect the user found by simulating their save
+			// (see AGENTS.md): a batch that lands all at once, at or
+			// above a building's OutputCapacity, sits reading "100% full"
+			// for as long as it takes a serf to physically reach it --
+			// small, frequent batches never create that all-or-nothing
+			// spike in the first place.
+			Output:         resource.Wheat,
+			OutputAmount:   2,
+			TicksToProduce: 60,
 		},
 		PlankCost:                   standardPlankCost,
 		StoneCost:                   standardStoneCost,
@@ -163,9 +175,15 @@ var Types = map[Kind]Type{
 			// The eight vineyard cells appear immediately with the building.
 			// Progress is the shared grape-growing/harvest cycle; the raw
 			// grapes stay internal and only finished Wine enters logistics.
+			//
+			// Per the user's explicit request, see Farm's Recipe doc
+			// comment for the full reasoning: the winemaker brings in Wine
+			// two units at a time instead of the old single 8-unit harvest,
+			// at a slightly slower overall rate (2/72 here vs. the old
+			// 8/240).
 			Output:         resource.Wine,
-			OutputAmount:   8,
-			TicksToProduce: 240, // about two minutes at normal speed
+			OutputAmount:   2,
+			TicksToProduce: 72,
 		},
 		OutputCapacity:              8,
 		PlankCost:                   standardPlankCost,

@@ -23,9 +23,17 @@ func TestProductionRatios(t *testing.T) {
 		t.Fatalf("bakery recipe = %+v, want 2 Bread", bakery)
 	}
 
+	// Per the user's explicit request, Wine comes in small batches (2 at
+	// a time) rather than one 8-unit harvest at the end of the cycle --
+	// see the Recipe's own doc comment in types.go for the full reasoning
+	// (it fixed a real "buffer instantly at 100% full" side effect a
+	// single all-at-once 8-unit batch had). OutputCapacity stays at 8
+	// (unchanged): with 2-unit batches, that's still room for 4
+	// uncollected cycles before the buffer would actually block progress,
+	// same margin of safety as before, just no longer front-loaded.
 	winery := Types[Winery].Recipe
-	if winery.OutputAmount != 8 || winery.Output != resource.Wine {
-		t.Fatalf("winery recipe = %+v, want 8 Wine", winery)
+	if winery.OutputAmount != 2 || winery.Output != resource.Wine {
+		t.Fatalf("winery recipe = %+v, want 2 Wine per batch", winery)
 	}
 	if Types[Winery].Footprint != 3 || Types[Winery].OutputCapacity != 8 {
 		t.Fatalf("winery type = %+v, want 3x3 footprint and output capacity 8", Types[Winery])

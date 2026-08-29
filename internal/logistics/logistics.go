@@ -725,22 +725,47 @@ func findTavernSupplyJob(buildings []*building.Building, warehouses []*building.
 			if room <= 0 {
 				continue
 			}
+			// Among every producer holding rt, try the biggest backlog
+			// first, not just the first one in buildings' slice order.
+			// Real bug the user found by simulating their actual save: a
+			// producer earlier in that slice (in practice, whichever one
+			// happened to be built first) won this search every single
+			// time it had *any* leftover output, even a sliver -- forever
+			// starving a same-kind sibling sitting on a much bigger,
+			// unrelieved backlog. Most visible on Winery, whose
+			// OutputCapacity exactly equals one batch's OutputAmount, so
+			// it jumps from empty straight to 100% full every cycle
+			// instead of filling gradually like everything else.
+			//
+			// This costs no more pathfind calls than before in the
+			// typical case: sorting a handful of candidates by backlog is
+			// cheap (no BFS involved), and the expensive reachability/
+			// deliverability check still stops at the first candidate
+			// that actually works -- it just tries the biggest backlog
+			// first instead of the slice-order-first one.
+			type sourceCandidate struct {
+				b    *building.Building
+				have int
+			}
+			var candidates []sourceCandidate
 			for _, producer := range buildings {
 				if producer.Kind == building.Warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
 					continue
 				}
-				have := ledger.AvailableOutput(producer, rt)
-				if have <= 0 {
-					continue
+				if have := ledger.AvailableOutput(producer, rt); have > 0 {
+					candidates = append(candidates, sourceCandidate{producer, have})
 				}
-				p, reachable := pathfind.FindPathFromPoint(buildings, from, producer)
+			}
+			slices.SortFunc(candidates, func(a, b sourceCandidate) int { return b.have - a.have })
+			for _, c := range candidates {
+				p, reachable := pathfind.FindPathFromPoint(buildings, from, c.b)
 				if !reachable {
 					continue // not reachable from here right now -- try the next source
 				}
-				if _, deliverable := pathfind.FindPath(buildings, producer, tavern); !deliverable {
+				if _, deliverable := pathfind.FindPath(buildings, c.b, tavern); !deliverable {
 					continue // can't actually deliver from here to this Tavern -- try the next source
 				}
-				return producer, tavern, rt, min(have, CarryCapacity, room), p, true
+				return c.b, tavern, rt, min(c.have, CarryCapacity, room), p, true
 			}
 			if avail := ledger.AvailableStock(stock, rt); avail > 0 {
 				if warehouse, p, ok := nearestReachableWarehouseTo(buildings, warehouses, from, tavern); ok {
@@ -765,7 +790,9 @@ func findTavernSupplyJob(buildings []*building.Building, warehouses []*building.
 // being accepted, so an unreachable producer never blocks trying the next
 // one. When more than one consumer wants the same producer's output,
 // priority (see Controller.SetPriority) picks the winner; consumers tied
-// on priority keep the original first-found-in-buildings-order behavior.
+// on priority go to whichever is short the most, not just whichever
+// happens to come first in buildings' slice order (see
+// findTavernSupplyJob's doc comment for the bug that fixed).
 func findDirectJob(buildings []*building.Building, warehouse *building.Building, ledger *reservations.Ledger, from pathfind.Point, priority map[building.Kind]int) (pickup, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
 	for _, producer := range buildings {
 		if producer == warehouse || producer.Kind == building.Road || producer.Kind == building.Tree {
@@ -781,7 +808,7 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 				continue // not reachable from here right now -- try the next producer
 			}
 			var bestConsumer *building.Building
-			var bestAmt int
+			var bestAmt, bestShort int
 			bestPriority := 0
 			for _, consumer := range buildings {
 				if consumer == warehouse || consumer == producer || consumer.Kind == building.Road || consumer.Kind == building.Tree {
@@ -799,13 +826,20 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 				if amt <= 0 {
 					continue
 				}
-				if bestConsumer != nil && priority[consumer.Kind] <= bestPriority {
-					continue // a candidate at least as prioritized already won
+				if bestConsumer != nil && priority[consumer.Kind] < bestPriority {
+					continue // a strictly higher-priority candidate already won
+				}
+				// Among candidates tied on priority, the consumer with the
+				// bigger shortfall wins -- see findTavernSupplyJob's doc
+				// comment for the real bug this fixes (same bias, same
+				// fix, applied here too).
+				if bestConsumer != nil && priority[consumer.Kind] == bestPriority && short <= bestShort {
+					continue
 				}
 				if _, deliverable := pathfind.FindPath(buildings, producer, consumer); !deliverable {
 					continue // this producer can't actually deliver to this consumer -- try the next consumer
 				}
-				bestConsumer, bestAmt, bestPriority = consumer, amt, priority[consumer.Kind]
+				bestConsumer, bestAmt, bestPriority, bestShort = consumer, amt, priority[consumer.Kind], short
 			}
 			if bestConsumer != nil {
 				return producer, bestConsumer, rt, bestAmt, p, true
@@ -819,19 +853,31 @@ func findDirectJob(buildings []*building.Building, warehouse *building.Building,
 // warehouse. Resource types are visited in a fixed sorted order, and each
 // candidate is checked for reachability before being accepted. Among
 // several candidates with surplus, priority (see Controller.SetPriority)
-// picks which one gets cleared out first.
+// picks which one gets cleared out first; candidates tied on priority go
+// to whichever has the biggest backlog, not just whichever happens to
+// come first in buildings' slice order (see findTavernSupplyJob's doc
+// comment for the bug that fixed).
 func findCollectJob(buildings []*building.Building, warehouse *building.Building, ledger *reservations.Ledger, from pathfind.Point, priority map[building.Kind]int) (b *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
 	bestPriority := 0
+	bestAmount := 0
 	for _, cand := range buildings {
 		if cand == warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
 		}
-		if b != nil && priority[cand.Kind] <= bestPriority {
-			continue // a candidate at least as prioritized already won
+		if b != nil && priority[cand.Kind] < bestPriority {
+			continue // a strictly higher-priority candidate already won
 		}
 		for _, rt := range sortedResourceTypes(cand.OutputBuffer) {
 			n := ledger.AvailableOutput(cand, rt)
 			if n <= 0 {
+				continue
+			}
+			// Among candidates tied on priority, the biggest backlog wins
+			// -- see findTavernSupplyJob's doc comment for the real bug
+			// this fixes (same bias, same fix, applied here too). Checked
+			// before the reachability BFS below, so a losing candidate on
+			// this tie-break never pays for that BFS at all.
+			if b != nil && priority[cand.Kind] == bestPriority && n <= bestAmount {
 				continue
 			}
 			p, reachable := pathfind.FindPathFromPoint(buildings, from, cand)
@@ -839,7 +885,7 @@ func findCollectJob(buildings []*building.Building, warehouse *building.Building
 				continue // not reachable from here right now -- try the next candidate
 			}
 			b, t, amount, path, ok = cand, rt, min(n, CarryCapacity), p, true
-			bestPriority = priority[cand.Kind]
+			bestPriority, bestAmount = priority[cand.Kind], n
 			break
 		}
 	}
@@ -864,12 +910,13 @@ func findCollectJob(buildings []*building.Building, warehouse *building.Building
 // building entirely.
 func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, priority map[building.Kind]int) (b *building.Building, t resource.Type, amount int, ok bool) {
 	bestPriority := 0
+	bestShort := 0
 	for _, cand := range buildings {
 		if cand.Kind == building.Warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
 		}
-		if b != nil && priority[cand.Kind] <= bestPriority {
-			continue // a candidate at least as prioritized already won
+		if b != nil && priority[cand.Kind] < bestPriority {
+			continue // a strictly higher-priority candidate already won
 		}
 		for _, rt := range resource.AllTypes() {
 			need := building.Types[cand.Kind].InputRequirement(rt)
@@ -884,8 +931,14 @@ func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, le
 			if amt <= 0 {
 				continue // nothing in stock for this shortage -- try the next one
 			}
+			// Among candidates tied on priority, the biggest shortfall
+			// wins -- see findTavernSupplyJob's doc comment for the real
+			// bug this fixes (same bias, same fix, applied here too).
+			if b != nil && priority[cand.Kind] == bestPriority && short <= bestShort {
+				continue
+			}
 			b, t, amount, ok = cand, rt, amt, true
-			bestPriority = priority[cand.Kind]
+			bestPriority, bestShort = priority[cand.Kind], short
 			break
 		}
 	}

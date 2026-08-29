@@ -851,6 +851,35 @@ func TestController_PrioritizesTavernSupply(t *testing.T) {
 	}
 }
 
+// TestController_TavernSupplyPrefersBiggestBacklog is a regression guard
+// for a real bug the user found by simulating their own save: two
+// same-kind producers (two Wineries here) both holding Wine for the same
+// Tavern used to always resolve to whichever came first in buildings'
+// slice order, no matter how small its backlog was next to the other's --
+// in the real save this meant one Winery got serviced constantly while its
+// sibling, sitting on a much bigger backlog, could go unvisited far longer
+// than distance alone would explain. The near one (small leftover) is
+// listed *first* here specifically so a pass can't be explained away by
+// the old first-wins behavior coincidentally picking the right building.
+func TestController_TavernSupplyPrefersBiggestBacklog(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	wineryLowBacklog := &building.Building{Kind: building.Winery, X: 5, Y: 0}
+	wineryHighBacklog := &building.Building{Kind: building.Winery, X: 10, Y: 0}
+	tavern := &building.Building{Kind: building.Tavern, X: 12, Y: 0}
+	wineryLowBacklog.AddOutput(resource.Wine, 1)
+	wineryHighBacklog.AddOutput(resource.Wine, 8)
+
+	buildings := append([]*building.Building{warehouse, wineryLowBacklog, wineryHighBacklog, tavern}, straightRoad(1, 12, 0)...)
+
+	c := NewController(warehouse, 1)
+	tick(c, nil, buildings, resource.NewStockpile(100))
+
+	s := c.Serfs[0]
+	if s.PickupBuilding() != wineryHighBacklog {
+		t.Fatalf("pickup = %v, want the Winery with the bigger backlog (8, not the first-listed one with 1)", s.PickupBuilding())
+	}
+}
+
 // TestController_PriorityAPI covers Controller.SetPriority/Priority/
 // Priorities directly: default is PriorityNormal, setting a level is
 // reflected back, and resetting to PriorityNormal clears the entry
@@ -877,9 +906,8 @@ func TestController_PriorityAPI(t *testing.T) {
 
 // TestController_PriorityBreaksDirectHaulTie covers the exact scenario the
 // user asked about: a Farm's Wheat could go to either the Mill or the Pig
-// Farm this tick -- without a priority set, the first one in the
-// buildings slice wins (an accident of build order); with the Pig Farm
-// prioritized, it wins instead, regardless of slice order.
+// Farm this tick -- without a priority set, whichever is short the most
+// wins by default; an explicit priority still overrides that.
 func TestController_PriorityBreaksDirectHaulTie(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20} // off to the side, irrelevant here
 	farm := &building.Building{Kind: building.Farm, X: 0, Y: 1}
@@ -889,19 +917,25 @@ func TestController_PriorityBreaksDirectHaulTie(t *testing.T) {
 
 	buildings := append([]*building.Building{warehouse, farm, mill, pigFarm}, straightRoad(0, 9, 0)...)
 
+	// Without an explicit priority, PigFarm wins on its own: it needs 3
+	// Wheat (ConsumeInputsAtStart) against Mill's 1, so the bigger
+	// shortfall wins the tie -- not just whichever happens to come first
+	// in buildings' slice order (see findTavernSupplyJob's doc comment for
+	// the real bug this replaced).
 	c := NewController(warehouse, 1)
 	c.Serfs[0].X, c.Serfs[0].Y = farm.X, farm.Y
 	tick(c, nil, buildings, resource.NewStockpile(100))
-	if got := c.Serfs[0].DropoffBuilding(); got != mill {
-		t.Fatalf("without priority, dropoff = %v, want mill (first in buildings, tie-broken by order)", got)
+	if got := c.Serfs[0].DropoffBuilding(); got != pigFarm {
+		t.Fatalf("without priority, dropoff = %v, want pigFarm (bigger shortfall: needs 3 Wheat vs. Mill's 1)", got)
 	}
 
+	// Explicit priority still overrides the backlog-based default.
 	c2 := NewController(warehouse, 1)
 	c2.Serfs[0].X, c2.Serfs[0].Y = farm.X, farm.Y
-	c2.SetPriority(building.PigFarm, PriorityHigh)
+	c2.SetPriority(building.Mill, PriorityHigh)
 	tick(c2, nil, buildings, resource.NewStockpile(100))
-	if got := c2.Serfs[0].DropoffBuilding(); got != pigFarm {
-		t.Fatalf("with Pig Farm prioritized, dropoff = %v, want pigFarm", got)
+	if got := c2.Serfs[0].DropoffBuilding(); got != mill {
+		t.Fatalf("with Mill prioritized, dropoff = %v, want mill", got)
 	}
 }
 
@@ -914,21 +948,26 @@ func TestController_PriorityBreaksSupplyTie(t *testing.T) {
 	pigFarm := &building.Building{Kind: building.PigFarm, X: 8, Y: 1}
 	buildings := append([]*building.Building{warehouse, mill, pigFarm}, straightRoad(0, 9, 0)...)
 
+	// Without an explicit priority, PigFarm wins on its own -- see
+	// TestController_PriorityBreaksDirectHaulTie's comment: it's short 3
+	// Wheat against Mill's 1, and the bigger shortfall wins ties now,
+	// not just slice order.
 	c := NewController(warehouse, 1)
 	stock := resource.NewStockpile(100)
 	stock.Add(resource.Wheat, 20)
 	tick(c, nil, buildings, stock)
-	if got := c.Serfs[0].DropoffBuilding(); got != mill {
-		t.Fatalf("without priority, dropoff = %v, want mill (first in buildings, tie-broken by order)", got)
+	if got := c.Serfs[0].DropoffBuilding(); got != pigFarm {
+		t.Fatalf("without priority, dropoff = %v, want pigFarm (bigger shortfall: needs 3 Wheat vs. Mill's 1)", got)
 	}
 
+	// Explicit priority still overrides the backlog-based default.
 	c2 := NewController(warehouse, 1)
-	c2.SetPriority(building.PigFarm, PriorityHigh)
+	c2.SetPriority(building.Mill, PriorityHigh)
 	stock2 := resource.NewStockpile(100)
 	stock2.Add(resource.Wheat, 20)
 	tick(c2, nil, buildings, stock2)
-	if got := c2.Serfs[0].DropoffBuilding(); got != pigFarm {
-		t.Fatalf("with Pig Farm prioritized, dropoff = %v, want pigFarm", got)
+	if got := c2.Serfs[0].DropoffBuilding(); got != mill {
+		t.Fatalf("with Mill prioritized, dropoff = %v, want mill", got)
 	}
 }
 
