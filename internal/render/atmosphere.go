@@ -2,7 +2,6 @@ package render
 
 import (
 	"image/color"
-	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -11,18 +10,22 @@ import (
 )
 
 // Atmospheric timing deliberately follows render frames rather than simulation
-// ticks. Pausing or changing the economy speed never makes rain, clouds or
-// evening lighting jump, and this entire layer remains outside save data.
+// ticks. Pausing or changing the economy speed never makes rain or clouds
+// jump, and this entire layer remains outside save data.
 const (
 	atmosphereWeatherCycleFrames = 7200
 	atmosphereRainStartFrame     = 4700
 	atmosphereRainEndFrame       = 5750
-	atmosphereLightCycleFrames   = 18000
 )
 
 // DrawAtmosphericOverlay paints a small, bounded finishing layer over the map:
-// slow cloud shadows, occasional rain, rain ripples and a restrained warm evening
-// darkening. It never walks the full grid or draws over the fixed UI side panels.
+// occasional rain, rain ripples and a darkening wash while it rains. It never
+// walks the full grid or draws over the fixed UI side panels.
+//
+// Per the user's explicit request ("убери смену освещения, пусть всегда
+// будет статично и только при дожде - темнее"), lighting no longer cycles
+// through the day at all -- the map stays at a constant, always-daylight
+// tone, and rain is the *only* thing that darkens it (see drawRainShade).
 func DrawAtmosphericOverlay(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 	viewX, viewY, viewWidth, viewHeight := cam.Viewport()
 	if viewWidth <= 0 || viewHeight <= 0 {
@@ -34,18 +37,16 @@ func DrawAtmosphericOverlay(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 		drawRainRipples(screen, g, cam, phase)
 		drawRainShade(screen, viewX, viewY, viewWidth, viewHeight)
 	}
-	drawEveningTint(screen, viewX, viewY, viewWidth, viewHeight)
 }
 
-// atmosphericTwilight varies smoothly only through a late-afternoon/evening
-// segment of a long visual cycle. Daylight otherwise stays unfiltered so
-// resource colours and production warnings remain easy to read.
+// atmosphericTwilight is permanently frozen at 0 (constant daylight, no
+// evening tint) per the user's request above. Kept as a function rather than
+// deleted because internal/render/ambient.go still gates butterflies/
+// fireflies on it: with no evening phase, butterflies (daytime-only) always
+// show and fireflies (evening-only) never do, which is the correct outcome
+// of "no more time-of-day" rather than a bug.
 func atmosphericTwilight() float64 {
-	phase := float64(animFrame%atmosphereLightCycleFrames) / atmosphereLightCycleFrames
-	if phase < 0.48 || phase > 0.90 {
-		return 0
-	}
-	return math.Sin((phase - 0.48) / 0.42 * math.Pi)
+	return 0
 }
 
 func atmosphericRain() (raining bool, phase int) {
@@ -94,15 +95,15 @@ func drawRainRipples(screen *ebiten.Image, g *world.Grid, cam *Camera, phase int
 func drawRainShade(screen *ebiten.Image, viewX, viewY, viewWidth, viewHeight int) {
 	// A neutral warm wash gives rain a cloudy, wet atmosphere without turning
 	// the entire settlement blue.
-	vector.FillRect(screen, float32(viewX), float32(viewY), float32(viewWidth), float32(viewHeight), color.RGBA{R: 66, G: 58, B: 45, A: 24}, false)
-}
-func drawEveningTint(screen *ebiten.Image, viewX, viewY, viewWidth, viewHeight int) {
-	twilight := atmosphericTwilight()
-	if twilight <= 0 {
-		return
-	}
-	// The darkening stays amber and restrained; the former blue-violet wash
-	// made the entire map look like an opaque cold screen.
-	alpha := uint8(10 + int(twilight*28))
-	vector.FillRect(screen, float32(viewX), float32(viewY), float32(viewWidth), float32(viewHeight), color.RGBA{R: 104, G: 63, B: 31, A: alpha}, false)
+	//
+	// Real bug the user caught: at the old alpha (24, ~9% opacity) this
+	// wash was too faint to read as darkening at all -- the 120 pale
+	// raindrop streaks in drawRain (color ~196,197,182 at alpha 156) and
+	// the pale ripple rings in drawRainRipples visually dominated instead,
+	// so the net impression during rain was a *lighter* map, backwards
+	// from wet ground actually getting darker. This wash is drawn last
+	// (see DrawAtmosphericOverlay), on top of the streaks and ripples, so
+	// raising its alpha is enough to make it the dominant, correctly
+	// darkening effect without touching the streaks/ripples themselves.
+	vector.FillRect(screen, float32(viewX), float32(viewY), float32(viewWidth), float32(viewHeight), color.RGBA{R: 66, G: 58, B: 45, A: 92}, false)
 }

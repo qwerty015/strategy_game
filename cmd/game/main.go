@@ -354,9 +354,16 @@ func newGameWithSize(width, height int) *Game {
 }
 
 func (g *Game) Update() error {
-	if width, height := ebiten.WindowSize(); width > 0 && height > 0 {
-		g.resizeLayout(width, height)
-	}
+	// No resize call here on purpose. ebiten.WindowSize() reports a stale
+	// logical size in fullscreen (see frontWidth/frontHeight's comment
+	// below) -- calling resizeLayout from it clobbered the correct
+	// g.layout with wrong dimensions right before every click below gets
+	// hit-tested against it, which is exactly what made buttons register
+	// clicks at the wrong screen position ("клик происходит в другой
+	// части"). Layout() and Draw() already call resizeLayout every frame
+	// with the real negotiated size -- the same coordinate space
+	// ebiten.CursorPosition() reports in -- so g.layout is already correct
+	// by the time Update runs; this call was redundant and harmful.
 	if g.screen != screenPlay {
 		return g.updateFrontScreen()
 	}
@@ -790,19 +797,31 @@ func (g *Game) handleCameraPan() {
 
 	mx, my := ebiten.CursorPosition()
 	mapRect := g.layout.MapRect()
+	windowRect := image.Rect(0, 0, g.layout.Width, g.layout.Height)
 	mapPoint := image.Pt(mx, my)
-	// Moving the cursor to an edge scrolls only the playable map rectangle;
-	// side panels never trigger it. A fresh left click is excluded so selecting
-	// a border tile cannot nudge the target out from under the cursor.
-	if mapPoint.In(mapRect) && !ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle) && !g.leftPanning && !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		if mx-mapRect.Min.X < edgePanSize {
+	// Moving the cursor to a screen edge scrolls the map, including into a
+	// corner for diagonal panning. This used to gate on mapRect (the map
+	// strip between the side panels), which matched the vertical edges --
+	// there's no top/bottom panel, so mapRect's Y bounds are already the
+	// window's -- but made the horizontal edges nearly unreachable: the
+	// trigger band sat just inside the map's own border, tens to hundreds
+	// of pixels short of the window edge a player's cursor actually stops
+	// at, and the side panels swallowed a corner entirely, killing
+	// diagonal panning near any of the four corners too. Every left/right
+	// panel button stays a comfortable 12px+ inset from the panel's own
+	// outer edge (see e.g. layout.go's card rects), so the outer
+	// edgePanSize band at the literal window border is safe to use here.
+	// A fresh left click is still excluded so selecting a border tile
+	// cannot nudge the target out from under the cursor.
+	if mapPoint.In(windowRect) && !ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle) && !g.leftPanning && !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		if mx < edgePanSize {
 			dx -= edgePanSpeed
-		} else if mapRect.Max.X-mx <= edgePanSize {
+		} else if g.layout.Width-mx <= edgePanSize {
 			dx += edgePanSpeed
 		}
-		if my-mapRect.Min.Y < edgePanSize {
+		if my < edgePanSize {
 			dy -= edgePanSpeed
-		} else if mapRect.Max.Y-my <= edgePanSize {
+		} else if g.layout.Height-my <= edgePanSize {
 			dy += edgePanSpeed
 		}
 	}

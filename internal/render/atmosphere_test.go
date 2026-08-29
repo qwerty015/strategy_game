@@ -23,20 +23,17 @@ func TestAtmosphericRainSchedule(t *testing.T) {
 	}
 }
 
-func TestAtmosphericTwilightIsLimitedToEvening(t *testing.T) {
+// TestAtmosphericTwilightIsFrozen locks in the user's explicit request
+// ("убери смену освещения, пусть всегда будет статично и только при дожде -
+// темнее"): lighting never cycles through the day any more, at any frame.
+func TestAtmosphericTwilightIsFrozen(t *testing.T) {
 	original := animFrame
 	t.Cleanup(func() { animFrame = original })
 
-	animFrame = 0
-	if got := atmosphericTwilight(); got != 0 {
-		t.Fatalf("daylight twilight=%f, want 0", got)
-	}
-	animFrame = 12420 // 69% of the 18,000-frame visual cycle
-	if got := atmosphericTwilight(); got < 0.98 {
-		t.Fatalf("evening twilight=%f, want near 1", got)
-	}
-	animFrame = 17100 // 95% of the 18,000-frame visual cycle
-	if got := atmosphericTwilight(); got != 0 {
-		t.Fatalf("next daylight twilight=%f, want 0", got)
+	for _, frame := range []int{0, 12420, 17100, 999999} {
+		animFrame = frame
+		if got := atmosphericTwilight(); got != 0 {
+			t.Fatalf("frame %d: twilight=%f, want 0 (lighting must stay static)", frame, got)
+		}
 	}
 }
