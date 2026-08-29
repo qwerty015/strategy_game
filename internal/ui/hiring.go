@@ -41,4 +41,11 @@ type HireOption struct {
 	Current   int
 	Limit     int
 	Available bool
+
+	// Recommended is a suggested headcount, shown on the card when > 0.
+	// Currently only set for HireSerf (see cmd/game's
+	// recommendedServeCount), per the user's explicit request: "в меню
+	// 'Юниты' рядом со слугами показывать рекомендацию сколько
+	// рекомендуется слуг".
+	Recommended int
 }

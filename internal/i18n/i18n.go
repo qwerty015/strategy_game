@@ -111,6 +111,7 @@ type Catalog struct {
 	Deleted                     string
 	SerfDismissRequested        string
 	BuilderDismissRequested     string
+	RecommendedServeCountLabel  string // formatted with the recommended headcount, e.g. "реком. %d"
 	CannotDeleteWarehouse       string
 	CannotDeleteTree            string
 	CannotDeleteFish            string

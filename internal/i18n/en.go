@@ -134,6 +134,7 @@ func init() {
 		Deleted:                     "Deleted.",
 		SerfDismissRequested:        "The serf will leave after this delivery.",
 		BuilderDismissRequested:     "The builder will leave after finishing this site.",
+		RecommendedServeCountLabel:  "rec. %d",
 		CannotDeleteWarehouse:       "The last warehouse cannot be deleted",
 		CannotDeleteTree:            "The tree cannot be removed yet",
 		CannotDeleteFish:            "Fish cannot be removed manually",

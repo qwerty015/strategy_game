@@ -920,6 +920,64 @@ func TestDeleteLastWarehouseIsRejected(t *testing.T) {
 // clicking a still-available card must fill exactly one of the empty ones
 // -- never more, never a building of the wrong kind. Serfs are the one
 // exception and stay available regardless of building count.
+// TestServeHaulWorkloadScalesWithDistanceAndRate locks in the shape of the
+// serf-recommendation formula: workload is proportional to both the
+// building's own output rate and its round-trip distance from the
+// Warehouse, and a Mill (no RequiresWorker, but still produces something a
+// serf must haul) is not silently skipped.
+func TestServeHaulWorkloadScalesWithDistanceAndRate(t *testing.T) {
+	near := serfHaulWorkload(building.Farm, 5)
+	far := serfHaulWorkload(building.Farm, 50)
+	if far <= near*5 {
+		t.Fatalf("workload at 10x the distance = %f, want roughly 10x the near workload %f", far, near)
+	}
+	if got := serfHaulWorkload(building.Warehouse, 10); got != 0 {
+		t.Fatalf("Warehouse workload = %f, want 0 (no Recipe, nothing to haul)", got)
+	}
+	if got := serfHaulWorkload(building.Mill, 10); got <= 0 {
+		t.Fatal("Mill workload = 0, want > 0 (Mill produces Flour a serf must haul, even without RequiresWorker)")
+	}
+}
+
+// TestRecommendedServeCountGrowsWithDistanceAndProducerCount is an
+// integration-level check with real road-connected buildings: moving the
+// same producer farther from the Warehouse, or adding more producers,
+// must never recommend *fewer* serfs.
+func TestRecommendedServeCountGrowsWithDistanceAndProducerCount(t *testing.T) {
+	buildAt := func(mills int, spacing int) *Game {
+		// Road runs along Y=0; every Mill sits one row below (Y=1),
+		// cardinally adjacent to its own road tile, so no Road ever
+		// shares a coordinate with a Mill or the Warehouse regardless of
+		// how many mills are placed along the same corridor.
+		warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+		buildings := []*building.Building{warehouse}
+		farthest := mills * spacing
+		for rx := 1; rx <= farthest; rx++ {
+			buildings = append(buildings, &building.Building{Kind: building.Road, X: rx, Y: 0})
+		}
+		for i := 0; i < mills; i++ {
+			x := (i + 1) * spacing
+			buildings = append(buildings, &building.Building{Kind: building.Mill, X: x, Y: 1})
+		}
+		return &Game{buildings: buildings}
+	}
+
+	oneMillNear := buildAt(1, 5).recommendedServeCount()
+	oneMillFar := buildAt(1, 60).recommendedServeCount()
+	if oneMillFar < oneMillNear {
+		t.Fatalf("recommendation dropped from %d to %d when the same Mill moved farther away", oneMillNear, oneMillFar)
+	}
+
+	twoMillsNear := buildAt(2, 5).recommendedServeCount()
+	if twoMillsNear < oneMillNear {
+		t.Fatalf("recommendation dropped from %d to %d when a second Mill was added", oneMillNear, twoMillsNear)
+	}
+
+	if got := (&Game{buildings: []*building.Building{{Kind: building.Warehouse, X: 0, Y: 0}}}).recommendedServeCount(); got != 1 {
+		t.Fatalf("empty settlement (just a Warehouse) recommends %d, want 1 (the flat baseline)", got)
+	}
+}
+
 func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	farm := &building.Building{Kind: building.Farm, X: 2, Y: 0}

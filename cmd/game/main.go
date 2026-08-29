@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"log"
+	"math"
 	"sort"
 	"time"
 
@@ -227,6 +228,16 @@ type Game struct {
 	// connection marker and inspector. It is cleared whenever a player
 	// changes the road/building topology, never every render frame.
 	connectionCache map[*building.Building]bool
+
+	// recommendedServeCountCache memoizes recommendedServeCount, which runs
+	// one pathfind.FindPath BFS per production building -- exactly the cost
+	// pattern that was a real "hundreds of full BFS calls every frame" bug
+	// elsewhere in this file (see showsAccessMarker's doc comment), so this
+	// must never be recomputed on every Draw. Invalidated by the same event
+	// as connectionCache (see invalidateConnectionCache): the recommendation
+	// can only change when the road/building layout does. nil means "not
+	// computed yet for the current layout".
+	recommendedServeCountCache *int
 
 	camera         *render.Camera
 	palette        *ui.Palette
@@ -691,6 +702,88 @@ func (g *Game) hireOptions() []ui.HireOption {
 		limited(ui.HireMiner, building.MinerHut, len(g.miners.Miners)),
 		limited(ui.HireSmelter, building.Smeltery, countProfession(villagers.Smelter)),
 	}
+}
+
+// serfHaulOutputRate returns the (amount, ticks) of one production cycle for
+// kind, the same shape as building.Recipe's OutputAmount/TicksToProduce but
+// covering the four "gather hut" kinds too (LumberjackHut, QuarryHut,
+// MinerHut, FisherHut), which have no Recipe at all -- their worker walks
+// out, gathers, and deposits directly into OutputBuffer (see each
+// profession package's doc comment). All four share the same 12-tick gather
+// cycle (ChopTicks/MineTicks/CatchTicks); QuarryHut is the one exception
+// that converts on unload (1 mined stone -> 2 Stone Blocks, see package
+// quarry), hence amount 2 instead of 1. This ignores the hut worker's own
+// walk time to the resource, which recommendedServeCount's doc comment
+// explains is a deliberate, safe simplification.
+func serfHaulOutputRate(kind building.Kind) (amount, ticks int) {
+	switch kind {
+	case building.LumberjackHut, building.MinerHut, building.FisherHut:
+		return 1, 12
+	case building.QuarryHut:
+		return 2, 12
+	}
+	recipe := building.Types[kind].Recipe
+	return recipe.OutputAmount, recipe.TicksToProduce
+}
+
+// serfHaulWorkload estimates how much of one serf's continuous attention a
+// single production building demands, as a fraction (1.0 = fully occupies
+// one serf): production rate (units/tick) times one round trip to the
+// Warehouse (in ticks), divided by how much a serf carries per trip. A
+// building whose demand exceeds what a single serf can deliver in the time
+// it takes to produce another full load needs more than 1.0 of a serf's
+// time to keep its buffer from backing up.
+func serfHaulWorkload(kind building.Kind, roadTilesOneWay int) float64 {
+	amount, ticks := serfHaulOutputRate(kind)
+	if ticks <= 0 || amount <= 0 {
+		return 0
+	}
+	rate := float64(amount) / float64(ticks)
+	roundTripTicks := float64(2 * roadTilesOneWay * logistics.TicksPerTile)
+	return rate * roundTripTicks / float64(logistics.CarryCapacity)
+}
+
+// recommendedServeCount sums serfHaulWorkload across every finished
+// production building reachable from the Warehouse, rounds up to a whole
+// serf count, and adds one flat serf for duties this estimate doesn't
+// otherwise cover at all (delivering construction materials, carrying
+// finished food specifically to the Tavern rather than the Warehouse).
+// Shown next to the Serf hire card per the user's explicit request ("в меню
+// 'Юниты' рядом со слугами показывать рекомендацию сколько рекомендуется
+// слуг").
+//
+// Deliberately counts every finished building regardless of whether it
+// currently has a resident worker: an unstaffed building produces nothing
+// *right now*, but the player will presumably staff it, and the
+// recommendation is meant to answer "how many serfs does this settlement
+// need once it's running at the capacity I've already built", not just
+// "right now this instant". Memoized in recommendedServeCountCache -- see
+// its doc comment for why this must never run on every Draw.
+func (g *Game) recommendedServeCount() int {
+	if g.recommendedServeCountCache != nil {
+		return *g.recommendedServeCountCache
+	}
+	warehouse := findWarehouse(g.buildings)
+	total := 0.0
+	if warehouse != nil {
+		for _, b := range g.buildings {
+			if b == nil || b == warehouse || b.ConstructionStage != building.ConstructionNone {
+				continue
+			}
+			amount, ticks := serfHaulOutputRate(b.Kind)
+			if ticks <= 0 || amount <= 0 {
+				continue
+			}
+			path, ok := pathfind.FindPath(g.buildings, warehouse, b)
+			if !ok {
+				continue // not yet road-connected, no hauling demand to plan for
+			}
+			total += serfHaulWorkload(b.Kind, len(path))
+		}
+	}
+	result := int(math.Ceil(total)) + 1
+	g.recommendedServeCountCache = &result
+	return result
 }
 
 // hireFromTab executes a click on an available Hire-tab card. It finds the
@@ -1464,6 +1557,7 @@ func (g *Game) buildingConnected(b *building.Building) bool {
 
 func (g *Game) invalidateConnectionCache() {
 	g.connectionCache = nil
+	g.recommendedServeCountCache = nil
 }
 
 // spawnWorkersFor gives each worker building its physical resident. Other

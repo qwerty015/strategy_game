@@ -129,6 +129,9 @@ func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {
 		if option.Limit > 0 {
 			count = fmt.Sprintf("%d/%d", option.Current, option.Limit)
 		}
+		if option.Recommended > 0 {
+			count += " (" + fmt.Sprintf(i18n.T().RecommendedServeCountLabel, option.Recommended) + ")"
+		}
 		DrawMenuText(screen, count, float64(iconX+iconSize+10), float64(y+21))
 	}
 }

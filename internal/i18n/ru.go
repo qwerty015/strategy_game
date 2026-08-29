@@ -134,6 +134,7 @@ func init() {
 		Deleted:                     "Удалено.",
 		SerfDismissRequested:        "Слуга завершит рейс и уйдёт.",
 		BuilderDismissRequested:     "Строитель закончит текущую стройку и уйдёт.",
+		RecommendedServeCountLabel:  "реком. %d",
 		CannotDeleteWarehouse:       "Нельзя удалить последний склад",
 		CannotDeleteTree:            "Дерево пока нельзя убрать",
 		CannotDeleteFish:            "Рыбу нельзя убрать вручную",
