@@ -11,7 +11,7 @@
 3. Наймите нужного работника во вкладке **Юниты**.
 4. Следите за входными и выходными ресурсами в правой панели.
 
-![Склад](../internal/assets/generated/building_warehouse_v2.png)
+![Склад](../internal/assets/generated/building_warehouse_v3.png)
 
 ## Хлебная цепочка
 
@@ -19,10 +19,10 @@
 
 Фермер выращивает пшеницу. Слуга переносит пшеницу на мельницу, где она превращается в муку. Пекарь забирает муку и выпускает хлеб: из 1 муки получается 2 хлеба. Готовая еда доставляется в харчевню, а излишки остаются на складе.
 
-![Ферма](../internal/assets/generated/building_farm.png)
+![Ферма](../internal/assets/generated/building_farm_v2.png)
 ![Мельница](../internal/assets/generated/building_mill.png)
-![Пекарня](../internal/assets/generated/building_bakery.png)
-![Харчевня](../internal/assets/generated/building_tavern.png)
+![Пекарня](../internal/assets/generated/building_bakery_v2.png)
+![Харчевня](../internal/assets/generated/building_tavern_v2.png)
 
 Цепочка: **ферма → пшеница → мельница → мука → пекарня → хлеб → харчевня**.
 
@@ -32,7 +32,7 @@
 
 Харчевня принимает хлеб, рыбу, вино и колбасу. Голодный житель случайно выбирает один из доступных в этот тик видов еды — у вина нет искусственного приоритета.
 
-![Харчевня](../internal/assets/generated/building_tavern.png)
+![Харчевня](../internal/assets/generated/building_tavern_v2.png)
 
 ## Дороги, строительство и слуги
 
@@ -44,7 +44,7 @@
 
 Строитель сначала возводит фундамент, затем ждёт доски и каменные блоки, после чего заканчивает постройку. Слуги переносят материалы только по дороге. Режим сноса доступен во вкладке **Стройка** и удаляет дороги или здания после подтверждения.
 
-![Фундамент](../internal/assets/generated/construction_foundation.png)
+![Фундамент](../internal/assets/generated/construction_foundation_v2.png)
 
 ## Работники
 
@@ -56,16 +56,16 @@
 
 Фермер обрабатывает восемь клеток фермы. Винодел работает с восемью клетками виноградника: созревшие плоды дают по 1 вину с клетки. Вино — обычная еда для харчевни.
 
-![Винодельня](../internal/assets/generated/building_winery.png)
+![Винодельня](../internal/assets/generated/building_winery_v2.png)
 
 ### Рыбак, лесоруб и добытчики
 
 Рыбак ходит к пирсу только по дороге и выходит на воду на лодке. Лесоруб свободно идёт по суше к ближайшему дереву, рубит его и относит бревно в хижину. Камнетёс добывает каменные блоки у каменоломни. Рудокоп добывает уголь, золотую или железную руду для плавильни.
 
-![Хижина рыбака](../internal/assets/generated/building_fisher_hut.png)
-![Хижина лесоруба](../internal/assets/generated/building_lumberjack_hut.png)
-![Каменоломня](../internal/assets/generated/building_quarry_hut.png)
-![Хижина рудокопа](../internal/assets/generated/building_miner_hut.png)
+![Хижина рыбака](../internal/assets/generated/building_fisher_hut_v2.png)
+![Хижина лесоруба](../internal/assets/generated/building_lumberjack_hut_v2.png)
+![Каменоломня](../internal/assets/generated/building_quarry_hut_v2.png)
+![Хижина рудокопа](../internal/assets/generated/building_miner_hut_v2.png)
 
 ## Производство и ресурсы
 
@@ -73,14 +73,14 @@
 
 Лесоруб добывает дерево → бревно. Столярная мастерская превращает бревно в доски. Каменоломня производит каменные блоки. Эти материалы нужны строителю.
 
-![Столярная мастерская](../internal/assets/generated/building_carpentry_workshop.png)
+![Столярная мастерская](../internal/assets/generated/building_carpentry_workshop_v2.png)
 
 ### Мясо и металл
 
 Свиноферма потребляет пшеницу. Созревшая свинья даёт тушку; мясной цех делает из одной тушки две колбасы. Плавильня чередует доступные рецепты: руда и уголь превращаются в железо или золото.
 
-![Свиноферма](../internal/assets/generated/building_pig_farm.png)
-![Мясной цех](../internal/assets/generated/building_meat_workshop.png)
+![Свиноферма](../internal/assets/generated/building_pig_farm_v2.png)
+![Мясной цех](../internal/assets/generated/building_meat_workshop_v2.png)
 ![Плавильня](../internal/assets/generated/building_smeltery.png)
 
 ## Управление

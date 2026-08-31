@@ -5,6 +5,8 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"strategy_game/internal/assets"
+	"strategy_game/internal/building"
 	"strategy_game/internal/pathfind"
 )
 
@@ -33,13 +35,51 @@ func drawStandingAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesT
 // tall sprites anchored to the first cell. Using drawStanding for a 3×3
 // frame would centre it on that first cell and shift it one tile up-left.
 func drawFootprintAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, footprint, tilePixels float64) {
+	drawFootprintTintedAtScale(screen, img, sx, sy, footprint, tilePixels, color.White)
+}
+
+// drawFootprintTintedAtScale is the footprint counterpart to
+// drawStandingTintedAtScale. Construction art uses it for a future per-kind
+// site sheet while retaining normal alpha compositing for transparent timber
+// frames and ground markers.
+func drawFootprintTintedAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, footprint, tilePixels float64, clr color.Color) {
+	if img == nil {
+		return
+	}
 	b := img.Bounds()
 	size := footprint * tilePixels
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Scale(size/float64(b.Dx()), size/float64(b.Dy()))
 	op.GeoM.Translate(sx, sy)
+	op.ColorScale.ScaleWithColor(clr)
 	op.Blend = ebiten.BlendSourceOver
 	screen.DrawImage(img, op)
+}
+
+// drawVisualLayerAtScale places one layer from assets.BuildingVisual. The
+// simulation owns the footprint; the art only decides whether it spans that
+// footprint or rises from a particular tile pivot. This is the bridge from the
+// current 64px sprites to future KaM-style, arbitrary-canvas art packs.
+func drawVisualLayerAtScale(screen *ebiten.Image, layer assets.VisualLayer, sx, sy, footprint, tilePixels float64) {
+	if layer.Image == nil {
+		return
+	}
+	tint := layer.Tint
+	if tint.A == 0 {
+		tint = color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	}
+	anchorX := sx + layer.AnchorX*tilePixels
+	anchorY := sy + layer.AnchorY*tilePixels
+	switch layer.Mode {
+	case assets.LayerFootprint:
+		drawFootprintTintedAtScale(screen, layer.Image, anchorX, anchorY, footprint, tilePixels, tint)
+	default:
+		tilesTall := layer.TilesTall
+		if tilesTall <= 0 {
+			tilesTall = 1
+		}
+		drawStandingTintedAtScale(screen, layer.Image, anchorX, anchorY, tilesTall, tilePixels, tint)
+	}
 }
 
 // unitBob returns a four-step one-pixel gait offset. It is intentionally
@@ -103,6 +143,16 @@ func facingLeft(x int, path []pathfind.Point) bool {
 // optional horizontal mirror -- see facingLeft.
 func drawStandingFacingTintedAtScale(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall, tilePixels float64, clr color.Color, flip bool) {
 	drawStandingFacingScaled(screen, img, sx, sy, tilesTall, tilePixels, clr, flip)
+}
+
+// visualBuildingHeight is the single source for visual-only building size. It
+// deliberately differs from building.Types[kind].Footprint: changing art must
+// never move an existing building, invalidate a road or corrupt a save file.
+func visualBuildingHeight(kind building.Kind) float64 {
+	if visual, ok := assets.BuildingVisualFor(kind); ok && visual.Body.TilesTall > 0 {
+		return visual.Body.TilesTall
+	}
+	return buildingHeight
 }
 
 func drawStandingFacingScaled(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilesTall, tilePixels float64, clr color.Color, flip bool) {

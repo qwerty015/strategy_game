@@ -10,7 +10,7 @@ import (
 )
 
 // builderHeight matches every other free-roaming worker's readable scale.
-const builderHeight = 0.88
+const builderHeight = 1.08
 
 // DrawBuilders renders every builder. Unlike a hut-based profession, a
 // builder has no interior to hide inside while idle (see

@@ -2,6 +2,7 @@ package render
 
 import (
 	"image/color"
+	"math"
 	"sort"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -141,7 +142,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		// A natural world object (Tree/Fish) grounds itself through its
 		// own multi-stage sprite, not a building's contact shadow.
 		if b.Kind != building.Tree && b.Kind != building.Fish {
-			drawBuildingShadow(screen, sx, sy, tilePixels)
+			drawBuildingShadow(screen, sx, sy, tilePixels, visualBuildingHeight(b.Kind))
 		}
 
 		switch b.Kind {
@@ -169,7 +170,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 					drawCropGrowth(screen, fieldX, fieldY, growth, dx, dy, tilePixels)
 				}
 			}
-			drawStandingAtScale(screen, assets.FarmHouse, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.FarmHouse, sx, sy, tilePixels)
 
 		case building.Winery:
 			growth := float32(0)
@@ -187,41 +188,41 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 					drawVineyardGrowth(screen, fieldX, fieldY, growth, dx, dy, tilePixels)
 				}
 			}
-			drawStandingAtScale(screen, assets.Winery, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.Winery, sx, sy, tilePixels)
 
 		case building.PigFarm:
-			drawStandingAtScale(screen, assets.PigFarm, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.PigFarm, sx, sy, tilePixels)
 
 		case building.MeatWorkshop:
-			drawStandingAtScale(screen, assets.MeatWorkshop, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.MeatWorkshop, sx, sy, tilePixels)
 
 		case building.CarpentryWorkshop:
-			drawStandingAtScale(screen, assets.CarpentryWorkshop, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.CarpentryWorkshop, sx, sy, tilePixels)
 
 		case building.Mill:
-			drawStandingAtScale(screen, assets.MillFrames[(animFrame/12)%len(assets.MillFrames)], sx, sy, buildingHeight, tilePixels)
+			drawStandingAtScale(screen, assets.MillFrames[(animFrame/12)%len(assets.MillFrames)], sx, sy, visualBuildingHeight(b.Kind), tilePixels)
 
 		case building.Bakery:
-			drawStandingAtScale(screen, assets.Bakery, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.Bakery, sx, sy, tilePixels)
 			drawFire(screen, sx+17*tilePixels/TileSize, sy+4*tilePixels/TileSize, tilePixels)
 
 		case building.Warehouse:
-			drawStandingAtScale(screen, assets.Warehouse, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.Warehouse, sx, sy, tilePixels)
 
 		case building.Tavern:
-			drawStandingAtScale(screen, assets.Tavern, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.Tavern, sx, sy, tilePixels)
 
 		case building.LumberjackHut:
-			drawStandingAtScale(screen, assets.LumberjackHut, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.LumberjackHut, sx, sy, tilePixels)
 
 		case building.QuarryHut:
-			drawStandingAtScale(screen, assets.QuarryHut, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.QuarryHut, sx, sy, tilePixels)
 
 		case building.MinerHut:
-			drawStandingAtScale(screen, assets.MinerHut, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.MinerHut, sx, sy, tilePixels)
 
 		case building.Smeltery:
-			drawStandingAtScale(screen, assets.Smeltery, sx, sy, buildingHeight, tilePixels)
+			drawBuildingBody(screen, b, assets.Smeltery, sx, sy, tilePixels)
 			drawFire(screen, sx+17*tilePixels/TileSize, sy+4*tilePixels/TileSize, tilePixels)
 
 		case building.FisherHut:
@@ -236,7 +237,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 					frame = 3
 				}
 			}
-			drawStandingAtScale(screen, assets.FisherHutFrames[frame], sx, sy, buildingHeight, tilePixels)
+			drawStandingAtScale(screen, assets.FisherHutFrames[frame], sx, sy, visualBuildingHeight(b.Kind), tilePixels)
 		}
 
 		drawProductionWorkEffect(screen, b.Kind, b.ProgressTicks, sx, sy, tilePixels)
@@ -245,10 +246,12 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			if progress > 1 {
 				progress = 1
 			}
-			barWidth := float32(bt.Footprint) * float32(tilePixels)
+			barSpan := math.Max(float64(bt.Footprint), visualBuildingHeight(b.Kind))
+			barWidth := float32(barSpan * tilePixels)
+			barX := float32(sx + (tilePixels-barSpan*tilePixels)/2)
 			barY := float32(sy) + float32(bt.Footprint)*float32(tilePixels) - float32(3*tilePixels/TileSize)
 			barHeight := float32(3 * tilePixels / TileSize)
-			vector.FillRect(screen, float32(sx), barY, barWidth*progress, barHeight, color.RGBA{R: 255, G: 255, B: 0, A: 220}, false)
+			vector.FillRect(screen, barX, barY, barWidth*progress, barHeight, color.RGBA{R: 255, G: 255, B: 0, A: 220}, false)
 		}
 
 		// A production building with no resident worker at all (as opposed
@@ -274,8 +277,53 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		case unstaffed[b]:
 			vector.FillRect(screen, float32(sx), float32(sy), size, size, unstaffedTint, false)
 		case disconnected[b], buildingStallReason(b) != stallNone:
-			drawIdleBubble(screen, sx, sy, tilePixels)
+			drawIdleBubble(screen, b.Kind, sx, sy, tilePixels)
 		}
+	}
+}
+
+// drawBuildingBody resolves a building's body from the art manifest. Existing
+// PNG exports remain fallbacks, while a future buildings/<id>/body.png is used
+// immediately without introducing a rendering switch case or changing saves.
+func drawBuildingBody(screen *ebiten.Image, b *building.Building, fallback *ebiten.Image, sx, sy, tilePixels float64) {
+	if visual, ok := assets.BuildingVisualFor(b.Kind); ok && visual.Body.Image != nil {
+		drawVisualLayerAtScale(screen, visual.Body, sx, sy, float64(building.Types[b.Kind].Footprint), tilePixels)
+		return
+	}
+	drawStandingAtScale(screen, fallback, sx, sy, buildingHeight, tilePixels)
+}
+
+// DrawBuildingForegrounds is the final world-object pass. A future art pack
+// can give a building a front porch, low fence or roof eave without changing
+// the simulation: that transparent layer is drawn here after every worker.
+// Current base sprites deliberately have no Front layer, so adding this pass
+// changes no established image until a dedicated foreground sheet is supplied.
+func DrawBuildingForegrounds(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
+	visible := cam.VisibleTileBounds(2)
+	standing := make([]*building.Building, 0, len(buildings))
+	for _, b := range buildings {
+		if b == nil || b.ConstructionStage != building.ConstructionNone || b.Kind == building.Road {
+			continue
+		}
+		visual, ok := assets.BuildingVisualFor(b.Kind)
+		if !ok || visual.Front.Image == nil || !visible.Intersects(b.X, b.Y, building.Types[b.Kind].Footprint) {
+			continue
+		}
+		standing = append(standing, b)
+	}
+	sort.SliceStable(standing, func(i, j int) bool {
+		a, b := standing[i], standing[j]
+		aBottom := a.Y + building.Types[a.Kind].Footprint
+		bBottom := b.Y + building.Types[b.Kind].Footprint
+		if aBottom != bBottom {
+			return aBottom < bBottom
+		}
+		return a.X < b.X
+	})
+	for _, b := range standing {
+		visual, _ := assets.BuildingVisualFor(b.Kind)
+		sx, sy := cam.TileToScreen(b.X, b.Y)
+		drawVisualLayerAtScale(screen, visual.Front, sx, sy, float64(building.Types[b.Kind].Footprint), cam.TilePixels())
 	}
 }
 
@@ -288,13 +336,13 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 // at buildingHeight over its first tile, not centred on a multi-tile
 // footprint -- for Farm/Winery that's where the actual roof is, not the
 // empty field tiles beside it.
-func drawIdleBubble(screen *ebiten.Image, sx, sy, tilePixels float64) {
+func drawIdleBubble(screen *ebiten.Image, kind building.Kind, sx, sy, tilePixels float64) {
 	cx := float32(sx + tilePixels*0.5)
 	// drawStandingScaled anchors a tilesTall sprite to the *bottom* of its
 	// tile (translate.y = sy+tilePixels-drawnH), not the top -- this must
 	// mirror that exactly or the marker ends up a whole tile too high,
 	// floating well above the actual roof instead of sitting on it.
-	top := float32(sy + tilePixels - tilePixels*buildingHeight)
+	top := float32(sy + tilePixels - tilePixels*visualBuildingHeight(kind))
 	bob := float32(0)
 	if (animFrame/20)%2 == 1 {
 		bob = -float32(tilePixels) * 0.05
@@ -340,10 +388,10 @@ func drawIdleBubble(screen *ebiten.Image, sx, sy, tilePixels float64) {
 // of the tile at (sx,sy) -- the same bottom edge drawStandingScaled
 // anchors a standing sprite's own feet to, so the shadow reads as
 // underneath the building rather than floating at an unrelated offset.
-func drawBuildingShadow(screen *ebiten.Image, sx, sy, tilePixels float64) {
+func drawBuildingShadow(screen *ebiten.Image, sx, sy, tilePixels, visualHeight float64) {
 	img := assets.BuildingShadow
 	b := img.Bounds()
-	s := tilePixels / float64(assets.TileSize)
+	s := visualHeight * tilePixels / float64(assets.TileSize)
 	w := float64(b.Dx()) * s
 	h := float64(b.Dy()) * s
 	op := &ebiten.DrawImageOptions{}
@@ -513,24 +561,33 @@ func drawRoadFade(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels fl
 	screen.DrawImage(img, op)
 }
 
-// drawConstructionSite renders the three shared visual construction stages.
-// The foundation/scaffolding frames intentionally remain generic: they show
-// progress without previewing the finished building before its resources arrive.
+// drawConstructionSite renders foundation, waiting-for-materials and finishing
+// stages. A building may provide three dedicated art layers; incomplete visual
+// families safely retain the shared site frames plus that building's silhouette.
 func drawConstructionSite(screen *ebiten.Image, b *building.Building, footprint int, sx, sy, tilePixels float64) {
 	size := float32(footprint) * float32(tilePixels)
 	vector.FillRect(screen, float32(sx), float32(sy), size, size, constructionGroundColor, false)
-
-	siteArt := assets.ConstructionFoundation
-	if b.ConstructionStage == building.ConstructionFinishing {
-		siteArt = assets.ConstructionScaffolding
-	}
-	drawFootprintAtScale(screen, siteArt, sx, sy, float64(footprint), tilePixels)
-
 	if b.ConstructionStage == building.ConstructionWaitingMaterials {
 		vector.FillRect(screen, float32(sx), float32(sy), size, size, constructionWaitColor, false)
 	}
-	drawConstructionSiteEffect(screen, b.ConstructionStage, sx, sy, float64(footprint), tilePixels)
 
+	// The visual manifest supplies independent layers for every building and
+	// construction state. Until a bespoke PNG exists the manifest falls back
+	// to the approved shared site sheet while retaining the selected building's
+	// faint silhouette, so the map never shows the wrong type of construction.
+	if visual, ok := assets.BuildingVisualFor(b.Kind); ok && b.ConstructionStage <= building.ConstructionFinishing {
+		art := visual.Construction[b.ConstructionStage]
+		drawVisualLayerAtScale(screen, art.Site, sx, sy, float64(footprint), tilePixels)
+		drawVisualLayerAtScale(screen, art.Preview, sx, sy, float64(footprint), tilePixels)
+	} else {
+		siteArt := assets.ConstructionFoundation
+		if b.ConstructionStage == building.ConstructionFinishing {
+			siteArt = assets.ConstructionScaffolding
+		}
+		drawFootprintAtScale(screen, siteArt, sx, sy, float64(footprint), tilePixels)
+	}
+
+	drawConstructionSiteEffect(screen, b.ConstructionStage, sx, sy, float64(footprint), tilePixels)
 	progress := float32(b.ConstructionProgress())
 	barY := float32(sy) + size - float32(3*tilePixels/TileSize)
 	barHeight := float32(3 * tilePixels / TileSize)

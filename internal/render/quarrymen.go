@@ -4,7 +4,6 @@ import (
 	"image/color"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"strategy_game/internal/assets"
 	"strategy_game/internal/quarry"
@@ -12,7 +11,7 @@ import (
 
 // quarrymanHeight matches lumberjackHeight: both are workers who roam free
 // land, drawn at the same readable scale.
-const quarrymanHeight = 0.88
+const quarrymanHeight = 1.08
 
 // DrawQuarrymen renders workers while they are outside the hut. Idle and
 // unloading workers are represented by the hut's compact +/- marker instead
@@ -39,10 +38,7 @@ func DrawQuarrymen(screen *ebiten.Image, quarrymen []*quarry.Quarryman, cam *Cam
 		drawStandingFacingTintedAtScale(screen, assets.QuarrymanWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, quarrymanHeight, tilePixels, tint, flip)
 
 		cargo, amount := q.Cargo()
-		if amount > 0 {
-			badge := 5 * tilePixels / TileSize
-			vector.FillRect(screen, float32(sx+17*tilePixels/TileSize), float32(sy+(3+bob)*tilePixels/TileSize), float32(badge), float32(badge), cargoColor(cargo), false)
-		}
+		drawCarriedResource(screen, cargo, amount, sx, sy, tilePixels, bob)
 
 		if q.State() == quarry.StateMining {
 			drawChopCue(screen, sx, sy+bob*tilePixels/TileSize, tilePixels)

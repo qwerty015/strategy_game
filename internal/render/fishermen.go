@@ -8,10 +8,9 @@ import (
 
 	"strategy_game/internal/assets"
 	"strategy_game/internal/fishing"
-	"strategy_game/internal/resource"
 )
 
-const fishermanHeight = 0.9
+const fishermanHeight = 1.10
 
 // DrawFishermen renders the worker as a road walker on land and as a boat
 // unit on water. Idle/unloading fishermen remain represented by their hut's
@@ -43,11 +42,8 @@ func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Ca
 			drawStandingFacingTintedAtScale(screen, assets.FishermanWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, fishermanHeight, tilePixels, tint, flip)
 		}
 
-		_, amount := f.Cargo()
-		if amount > 0 {
-			badge := 5 * tilePixels / TileSize
-			vector.FillRect(screen, float32(sx+17*tilePixels/TileSize), float32(sy+(3+bob)*tilePixels/TileSize), float32(badge), float32(badge), cargoColor(resource.Fish), false)
-		}
+		cargo, amount := f.Cargo()
+		drawCarriedResource(screen, cargo, amount, sx, sy, tilePixels, bob)
 	}
 }
 

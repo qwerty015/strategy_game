@@ -630,31 +630,31 @@ func drawHelpAsset(screen *ebiten.Image, source string, x, y, size int) bool {
 	}
 	var img *ebiten.Image
 	switch name {
-	case "building_farm.png":
+	case "building_farm.png", "building_farm_v2.png":
 		img = assets.FarmHouse
 	case "building_mill.png":
 		img = assets.MillFrames[0]
-	case "building_bakery.png":
+	case "building_bakery.png", "building_bakery_v2.png":
 		img = assets.Bakery
-	case "building_tavern.png":
+	case "building_tavern.png", "building_tavern_v2.png":
 		img = assets.Tavern
-	case "building_warehouse_v2.png":
+	case "building_warehouse_v2.png", "building_warehouse_v3.png":
 		img = assets.Warehouse
-	case "building_winery.png":
+	case "building_winery.png", "building_winery_v2.png":
 		img = assets.Winery
-	case "building_fisher_hut.png":
+	case "building_fisher_hut.png", "building_fisher_hut_v2.png":
 		img = assets.FisherHutFrames[0]
-	case "building_lumberjack_hut.png":
+	case "building_lumberjack_hut.png", "building_lumberjack_hut_v2.png":
 		img = assets.LumberjackHut
-	case "building_quarry_hut.png":
+	case "building_quarry_hut.png", "building_quarry_hut_v2.png":
 		img = assets.QuarryHut
-	case "building_miner_hut.png":
+	case "building_miner_hut.png", "building_miner_hut_v2.png":
 		img = assets.MinerHut
-	case "building_carpentry_workshop.png":
+	case "building_carpentry_workshop.png", "building_carpentry_workshop_v2.png":
 		img = assets.CarpentryWorkshop
-	case "building_pig_farm.png":
+	case "building_pig_farm.png", "building_pig_farm_v2.png":
 		img = assets.PigFarm
-	case "building_meat_workshop.png":
+	case "building_meat_workshop.png", "building_meat_workshop_v2.png":
 		img = assets.MeatWorkshop
 	case "building_smeltery.png":
 		img = assets.Smeltery

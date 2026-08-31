@@ -12,7 +12,7 @@ import (
 
 // lumberjackHeight keeps the worker readable while leaving enough of the
 // tree and building silhouettes visible around him.
-const lumberjackHeight = 0.88
+const lumberjackHeight = 1.08
 
 // DrawLumberjacks renders workers while they are outside the hut. Idle and
 // unloading workers are represented by the hut's compact +/- marker instead
@@ -39,10 +39,7 @@ func DrawLumberjacks(screen *ebiten.Image, jacks []*lumberjack.Lumberjack, cam *
 		drawStandingFacingTintedAtScale(screen, assets.LumberjackWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, lumberjackHeight, tilePixels, tint, flip)
 
 		cargo, amount := j.Cargo()
-		if amount > 0 {
-			badge := 5 * tilePixels / TileSize
-			vector.FillRect(screen, float32(sx+17*tilePixels/TileSize), float32(sy+(3+bob)*tilePixels/TileSize), float32(badge), float32(badge), cargoColor(cargo), false)
-		}
+		drawCarriedResource(screen, cargo, amount, sx, sy, tilePixels, bob)
 
 		if j.State() == lumberjack.StateChopping {
 			drawChopCue(screen, sx, sy+bob*tilePixels/TileSize, tilePixels)

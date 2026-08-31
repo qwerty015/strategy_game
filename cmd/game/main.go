@@ -4050,8 +4050,12 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera)
 	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera)
 	render.DrawBuilders(screen, g.builders.Builders, g.camera)
-	render.DrawAmbientSkyLife(screen, g.grid, g.camera)
 	render.DrawMiners(screen, g.miners.Miners, g.camera)
+	// Foreground layers (porches/fences/eaves) intentionally come after units;
+	// current sprites have none, but the per-building art manifest can add them
+	// without another change to the world render order.
+	render.DrawBuildingForegrounds(screen, g.buildings, g.camera)
+	render.DrawAmbientSkyLife(screen, g.grid, g.camera)
 	render.DrawAtmosphericOverlay(screen, g.grid, g.camera)
 
 	mx, my := ebiten.CursorPosition()

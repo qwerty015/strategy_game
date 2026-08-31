@@ -7,6 +7,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
+	"strategy_game/internal/assets"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/resource"
 )
@@ -40,6 +41,17 @@ func drawResourceIcon(screen *ebiten.Image, kind resource.Type, x, y int) {
 	fillIconRect(screen, x, y+resourceIconSize-1, resourceIconSize, 1, resourceIconBorder)
 	fillIconRect(screen, x, y, 1, resourceIconSize, resourceIconBorder)
 	fillIconRect(screen, x+resourceIconSize-1, y, 1, resourceIconSize, resourceIconBorder)
+
+	if image := assets.ResourceIcon(kind); image != nil {
+		bounds := image.Bounds()
+		scale := float64(resourceIconSize-2) / float64(bounds.Dx())
+		op := &ebiten.DrawImageOptions{}
+		op.GeoM.Scale(scale, scale)
+		op.GeoM.Translate(float64(x+1), float64(y+1))
+		op.Blend = ebiten.BlendSourceOver
+		screen.DrawImage(image, op)
+		return
+	}
 
 	switch kind {
 	case resource.Wheat:

@@ -4,7 +4,6 @@ import (
 	"image/color"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"strategy_game/internal/assets"
 	"strategy_game/internal/logistics"
@@ -14,7 +13,7 @@ import (
 // serfHeight: less than a full tile, since these are small figures, not
 // buildings -- see buildingHeight in buildings.go for the same idea
 // applied to buildings.
-const serfHeight = 0.85
+const serfHeight = 1.05
 
 // DrawSerfs renders every serf as a small figure at its current tile, so
 // the player can actually see goods being hauled along the road network
@@ -44,14 +43,12 @@ func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 		flip := facingLeft(s.X, s.RemainingPath())
 		drawStandingFacingTintedAtScale(screen, assets.SerfWalkFrames[frame], sx, sy+bob*tilePixels/TileSize, serfHeight, tilePixels, tint, flip)
 
-		// A tiny resource badge makes the logistics simulation readable on the
-		// map itself: the player can see that this is a loaded serf before
-		// opening the inspector. The badge uses a stable color per resource,
-		// not text, so it remains legible at the game's small tile scale.
+		// Cargo() is populated while a job is planned, too. Only the drop-off
+		// leg means the serf has physically collected the item and should show
+		// it on the map.
 		cargo, amount := s.Cargo()
-		if amount > 0 {
-			badge := 5 * tilePixels / TileSize
-			vector.FillRect(screen, float32(sx+17*tilePixels/TileSize), float32(sy+(3+bob)*tilePixels/TileSize), float32(badge), float32(badge), cargoColor(cargo), false)
+		if s.State() == logistics.SerfToDropoff {
+			drawCarriedResource(screen, cargo, amount, sx, sy, tilePixels, bob)
 		}
 	}
 }

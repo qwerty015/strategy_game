@@ -80,29 +80,29 @@ var (
 		mustCompositeLegacyMill("tiles/mill_blades3.png"),
 	}
 
-	Bakery            = mustLoad("generated/building_bakery.png")
-	Warehouse         = mustLoad("generated/building_warehouse_v2.png")
-	FarmHouse         = mustLoad("generated/building_farm.png") // stands on one corner of the Farm's field
-	Tavern            = mustLoadWithoutDetachedFragments("generated/building_tavern.png", 120)
-	LumberjackHut     = mustLoad("generated/building_lumberjack_hut.png")
-	Winery            = mustLoad("generated/building_winery.png")
-	PigFarm           = mustLoad("generated/building_pig_farm.png")
-	MeatWorkshop      = mustLoad("generated/building_meat_workshop.png")
-	CarpentryWorkshop = mustLoad("generated/building_carpentry_workshop.png")
-	QuarryHut         = mustLoad("generated/building_quarry_hut.png")
-	MinerHut          = mustLoad("generated/building_miner_hut.png")
+	Bakery            = mustLoad("generated/building_bakery_v2.png")
+	Warehouse         = mustLoad("generated/building_warehouse_v3.png")
+	FarmHouse         = mustLoad("generated/building_farm_v2.png") // stands on one corner of the Farm's field
+	Tavern            = mustLoad("generated/building_tavern_v2.png")
+	LumberjackHut     = mustLoad("generated/building_lumberjack_hut_v2.png")
+	Winery            = mustLoad("generated/building_winery_v2.png")
+	PigFarm           = mustLoad("generated/building_pig_farm_v2.png")
+	MeatWorkshop      = mustLoad("generated/building_meat_workshop_v2.png")
+	CarpentryWorkshop = mustLoad("generated/building_carpentry_workshop_v2.png")
+	QuarryHut         = mustLoad("generated/building_quarry_hut_v2.png")
+	MinerHut          = mustLoad("generated/building_miner_hut_v2.png")
 	Smeltery          = mustLoad("generated/building_smeltery.png")
 	// Construction art is deliberately generic: the same site can scale from
 	// a one-tile road to a 3×3 farm without previewing the finished building.
-	ConstructionFoundation  = mustLoad("generated/construction_foundation.png")
-	ConstructionScaffolding = mustLoad("generated/construction_scaffolding.png")
+	ConstructionFoundation  = mustLoad("generated/construction_foundation_v2.png")
+	ConstructionScaffolding = mustLoad("generated/construction_scaffolding_v2.png")
 	// The source fishing hut's pier points south. CPU-rotated variants let the
 	// renderer orient it toward whichever cardinal water tile borders the hut.
 	FisherHutFrames = [4]*ebiten.Image{
-		mustLoad("generated/building_fisher_hut.png"),
-		mustLoadRotated("generated/building_fisher_hut.png", 1),
-		mustLoadRotated("generated/building_fisher_hut.png", 2),
-		mustLoadRotated("generated/building_fisher_hut.png", 3),
+		mustLoad("generated/building_fisher_hut_v2.png"),
+		mustLoadRotated("generated/building_fisher_hut_v2.png", 1),
+		mustLoadRotated("generated/building_fisher_hut_v2.png", 2),
+		mustLoadRotated("generated/building_fisher_hut_v2.png", 3),
 	}
 
 	// TreeFrames are the three growth stages from one transparent horizontal

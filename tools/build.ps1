@@ -32,6 +32,15 @@ function Copy-RequiredDirectory([string]$Source, [string]$Destination) {
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
 }
 
+# A visual pack can be expanded incrementally. Optional families are copied as
+# soon as their first PNG is added, but do not make the normal build fail while
+# an empty future family (for example resource icons) has not been drawn yet.
+function Copy-OptionalDirectory([string]$Source, [string]$Destination) {
+    if (Test-Path -LiteralPath $Source -PathType Container) {
+        Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
+    }
+}
+
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     throw 'Go was not found on PATH. Install Go (https://go.dev/dl/) and reopen this shell.'
 }
@@ -64,6 +73,9 @@ try {
     New-Item -ItemType Directory -Path $spriteDestination -Force | Out-Null
     foreach ($folder in 'tiles', 'units', 'generated') {
         Copy-RequiredDirectory (Join-Path $spriteSource $folder) $spriteDestination
+    }
+    foreach ($folder in 'buildings', 'resources') {
+        Copy-OptionalDirectory (Join-Path $spriteSource $folder) $spriteDestination
     }
 
     Write-Step 'Copying external audio'
