@@ -1490,3 +1490,29 @@ func TestBuildModePlacesRoadUnderWalkingUnitInsteadOfSelectingIt(t *testing.T) {
 		t.Fatalf("selection after road click = %v, want none", game.selection.Kind)
 	}
 }
+
+func TestReserveConstructionMaterialsUsesAvailableStockOnly(t *testing.T) {
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Plank, 3)
+	stock.Add(resource.StoneBlock, 2)
+	g := &Game{stock: stock}
+	site := building.NewConstructionSite(building.Farm, 2, 3)
+
+	g.reserveConstructionMaterials(site)
+
+	if got := site.InputBuffer[resource.Plank]; got != 3 {
+		t.Errorf("reserved planks = %d, want 3", got)
+	}
+	if got := site.InputBuffer[resource.StoneBlock]; got != 2 {
+		t.Errorf("reserved stone blocks = %d, want 2", got)
+	}
+	if got := stock.Amount(resource.Plank); got != 0 {
+		t.Errorf("stock planks after reservation = %d, want 0", got)
+	}
+	if got := stock.Amount(resource.StoneBlock); got != 0 {
+		t.Errorf("stock stone blocks after reservation = %d, want 0", got)
+	}
+	if tip, short := advisor.ConstructionMaterialShortage(site); !short || tip.Resource != resource.Plank || tip.Missing != site.ConstructionMaterialCost(resource.Plank)-3 {
+		t.Fatalf("shortage after partial reserve = %+v, %v; want remaining plank shortage", tip, short)
+	}
+}

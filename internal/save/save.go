@@ -18,8 +18,8 @@ import (
 
 // FormatVersion is the current persisted schema. Version 1 remains readable:
 // its 180-tick hunger gauge is migrated proportionally to the 1000-tick
-// satiety model introduced in version 2. Version 3 additionally persists
-// the player's active play time; version 4 separates demolition and unit
+// satiety model introduced in version 2. Version 2 also persists the
+// player's active play time; version 4 separates demolition and unit
 // dismissal counters in Population.
 const FormatVersion = 4
 
@@ -253,14 +253,6 @@ func Load(path string) (GameState, error) {
 	return state, nil
 }
 
-// migrateV1Hunger preserves a saved unit's approximate satiety when moving
-// from the old 180-tick hungry timer to the 1000-tick percent scale. Old
-// starving timers could grow without bound (there was no death yet), so a
-// value is first clamped at the old meal-seeking point (180) -- the
-// closest old-scale equivalent of hunger.MealThresholdTicks, not of
-// hunger.MaxTicks. Scaling onto MaxTicks instead would put a merely
-// hungry unit exactly at the new death threshold, killing it the instant
-// the save loads.
 // migrateLegacyRemovalCounter preserves the only historical total available in
 // pre-v4 saves. They did not distinguish demolition from dismissal, so the
 // value is shown as demolished structures rather than discarded silently.
@@ -271,6 +263,14 @@ func migrateLegacyRemovalCounter(state *GameState) {
 	state.Population.Removed = 0
 }
 
+// migrateV1Hunger preserves a saved unit's approximate satiety when moving
+// from the old 180-tick hungry timer to the 1000-tick percent scale. Old
+// starving timers could grow without bound (there was no death yet), so a
+// value is first clamped at the old meal-seeking point (180) -- the
+// closest old-scale equivalent of hunger.MealThresholdTicks, not of
+// hunger.MaxTicks. Scaling onto MaxTicks instead would put a merely
+// hungry unit exactly at the new death threshold, killing it the instant
+// the save loads.
 func migrateV1Hunger(state *GameState) {
 	for i := range state.Units {
 		ticks := state.Units[i].HungerTicks

@@ -4113,7 +4113,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 	render.SetWorldTicks(g.worldTicks)
 	render.DrawGrid(screen, g.grid, g.camera)
-	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
 	// visibleConnectivity feeds both the building tint below and the
 	// access-point dot further down -- each buildingConnected call is a
 	// full pathfind BFS, so computing it once per visible building here

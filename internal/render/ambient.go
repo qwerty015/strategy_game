@@ -19,9 +19,9 @@ const (
 	foxRunTiles     = 9
 )
 
-// DrawAmbientGroundLife renders wildlife that belongs to the landscape. Hares
-// sit below buildings and roads, so they naturally disappear behind solid
-// objects instead of looking as if they run through them.
+// DrawAmbientGroundLife renders wildlife after roads and low resource deposits
+// but before the tall-building pass. Hares and foxes remain visible on flat
+// ground detail while still disappearing behind houses, fields and trees.
 func DrawAmbientGroundLife(screen *ebiten.Image, g *world.Grid, cam *Camera) {
 	drawAmbientFox(screen, g, cam)
 	drawAmbientHares(screen, g, cam)

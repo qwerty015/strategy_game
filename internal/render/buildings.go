@@ -108,6 +108,12 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		}
 	}
 
+	// Wildlife belongs over flat landscape detail: a fox or hare should not
+	// vanish beneath cobblestones or a low boulder deposit. Keep it before the
+	// tall-building pass below, though, so houses, fields and trees still hide
+	// an animal that happens to cross their footprint.
+	DrawAmbientGroundLife(screen, grid, cam)
+
 	// Tall sprites are depth-sorted by the bottom of their footprint instead
 	// of construction/save order. This prevents a building behind another one
 	// from being painted over its roof or field when the map grows large.

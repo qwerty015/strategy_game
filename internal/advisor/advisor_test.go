@@ -232,3 +232,29 @@ func TestEvaluateServeCount(t *testing.T) {
 		})
 	}
 }
+
+func TestConstructionMaterialShortage(t *testing.T) {
+	site := building.NewConstructionSite(building.Farm, 4, 7)
+
+	tip, short := ConstructionMaterialShortage(site)
+	if !short {
+		t.Fatal("empty construction site has no shortage, want the full material cost")
+	}
+	if tip.Kind != KindConstructionMaterialsMissing || tip.Building != site {
+		t.Fatalf("tip = %+v, want construction-material tip for the site", tip)
+	}
+	if tip.Resource != resource.Plank || tip.Missing != site.ConstructionMaterialCost(resource.Plank) {
+		t.Fatalf("first shortage = %v x%d, want Plank x%d", tip.Resource, tip.Missing, site.ConstructionMaterialCost(resource.Plank))
+	}
+
+	site.AddConstructionMaterial(resource.Plank, site.ConstructionMaterialCost(resource.Plank))
+	tip, short = ConstructionMaterialShortage(site)
+	if !short || tip.Resource != resource.StoneBlock || tip.Missing != site.ConstructionMaterialCost(resource.StoneBlock) {
+		t.Fatalf("after reserving planks, shortage = %+v, %v; want stone-only shortage", tip, short)
+	}
+
+	site.AddConstructionMaterial(resource.StoneBlock, site.ConstructionMaterialCost(resource.StoneBlock))
+	if tip, short := ConstructionMaterialShortage(site); short {
+		t.Fatalf("fully supplied site still reports a shortage: %+v", tip)
+	}
+}

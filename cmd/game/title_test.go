@@ -1,9 +1,11 @@
 package main
 
 import (
+	"image"
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/i18n"
 	"strategy_game/internal/render"
 )
 
@@ -123,5 +125,32 @@ func TestTitleCameraAxisPingPongsInsideMap(t *testing.T) {
 	}
 	if back != left {
 		t.Fatalf("camera after a full cycle = %.1f, want %.1f", back, left)
+	}
+}
+
+func TestTitleLanguageChoicesCoverBothLanguages(t *testing.T) {
+	russian, english := titleLanguageRects(1280, 720)
+	for _, tc := range []struct {
+		name string
+		rect image.Rectangle
+		want i18n.Lang
+	}{
+		{"russian", russian, i18n.RU},
+		{"english", english, i18n.EN},
+	} {
+		got, ok := titleLanguageAt(tc.rect.Min.X+tc.rect.Dx()/2, tc.rect.Min.Y+tc.rect.Dy()/2, 1280, 720)
+		if !ok || got != tc.want {
+			t.Fatalf("%s language choice = %q, %v; want %q, true", tc.name, got, ok, tc.want)
+		}
+	}
+	if _, ok := titleLanguageAt(0, 0, 1280, 720); ok {
+		t.Fatal("empty point unexpectedly resolved to a language")
+	}
+}
+
+func TestBuildVersionIsVisibleReleaseMarker(t *testing.T) {
+	const want = "ver_0.1_alpha_build_2026.31.08"
+	if BuildVersion != want {
+		t.Fatalf("BuildVersion = %q, want %q", BuildVersion, want)
 	}
 }

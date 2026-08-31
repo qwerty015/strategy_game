@@ -173,3 +173,19 @@ func writeVersion(t *testing.T, path string, version int) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 }
+
+func TestMigrateLegacyRemovalCounter(t *testing.T) {
+	state := GameState{Population: economy.Population{Removed: 9}}
+
+	migrateLegacyRemovalCounter(&state)
+
+	if got := state.Population.BuildingsRemoved; got != 9 {
+		t.Errorf("BuildingsRemoved = %d, want legacy total 9", got)
+	}
+	if got := state.Population.UnitsDismissed; got != 0 {
+		t.Errorf("UnitsDismissed = %d, want 0 because old saves cannot split it", got)
+	}
+	if got := state.Population.Removed; got != 0 {
+		t.Errorf("legacy Removed = %d, want cleared", got)
+	}
+}

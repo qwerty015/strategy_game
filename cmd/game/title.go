@@ -174,6 +174,10 @@ func (g *Game) updateFrontScreen() error {
 	mx, my := ebiten.CursorPosition()
 	switch g.screen {
 	case screenTitle:
+		if language, ok := titleLanguageAt(mx, my, frontWidth, frontHeight); ok {
+			i18n.SetLang(language)
+			return nil
+		}
 		switch action, ok := titleActionAt(mx, my, frontWidth, frontHeight); {
 		case !ok:
 			return nil
@@ -484,7 +488,6 @@ func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 	// the player hasn't triggered themselves.
 	render.SetWorldTicks(worldclock.TicksPerDay / 2)
 	render.DrawGrid(screen, g.grid, g.camera)
-	render.DrawAmbientGroundLife(screen, g.grid, g.camera)
 	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, map[*building.Building]bool{}, map[*building.Building]bool{})
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
@@ -512,6 +515,17 @@ func (g *Game) drawTitleScreen(screen *ebiten.Image) {
 		r := titleButtonRects(width, height)[index]
 		drawTitleButton(screen, r, label, false)
 	}
+
+	russian, english := titleLanguageRects(width, height)
+	ui.DrawMenuText(screen, i18n.T().LanguageLabel, float64(russian.Min.X), float64(russian.Min.Y-17))
+	drawPauseChoice(screen, russian, "Русский", i18n.Current() == i18n.RU)
+	drawPauseChoice(screen, english, "English", i18n.Current() == i18n.EN)
+
+	versionX := width - 18 - len(BuildVersion)*8
+	if versionX < 18 {
+		versionX = 18
+	}
+	ui.DrawMenuText(screen, BuildVersion, float64(versionX), float64(height-24))
 }
 
 func (g *Game) drawLoadScreen(screen *ebiten.Image) {
@@ -700,6 +714,35 @@ func titleActionAt(x, y, width, height int) (titleAction, bool) {
 		}
 	}
 	return titleActionNewGame, false
+}
+
+// titleLanguageRects keeps the first language choice on the title screen
+// beside the main menu. The controls deliberately use literal native names,
+// so players can choose a language before they can read the rest of the UI.
+func titleLanguageRects(width, height int) (russian, english image.Rectangle) {
+	buttons := titleButtonRects(width, height)
+	menu := buttons[0]
+	const gap = 8
+	choiceWidth := (menu.Dx() - gap) / 2
+	y := buttons[len(buttons)-1].Max.Y + 28
+	russian = image.Rect(menu.Min.X, y, menu.Min.X+choiceWidth, y+32)
+	english = image.Rect(russian.Max.X+gap, y, menu.Max.X, y+32)
+	return russian, english
+}
+
+// titleLanguageAt resolves a title-screen language choice without coupling
+// click handling to the rendered controls.
+func titleLanguageAt(x, y, width, height int) (i18n.Lang, bool) {
+	point := image.Pt(x, y)
+	russian, english := titleLanguageRects(width, height)
+	switch {
+	case point.In(russian):
+		return i18n.RU, true
+	case point.In(english):
+		return i18n.EN, true
+	default:
+		return i18n.Default, false
+	}
 }
 
 func titleBackRect(width, height int) image.Rectangle {
