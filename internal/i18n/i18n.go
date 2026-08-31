@@ -78,6 +78,14 @@ type Catalog struct {
 	RoadLabel                   string
 	Connected                   string
 	Disconnected                string
+	GateStateLabel              string
+	GateAutoLabel               string
+	GateOpenLabel               string
+	GateClosedLabel             string
+	GateOpenButton              string
+	GateCloseButton             string
+	GateAutoOnButton            string
+	GateAutoOffButton           string
 	NoCargo                     string
 	NoRoute                     string
 	StateIdle                   string

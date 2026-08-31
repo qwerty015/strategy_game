@@ -355,4 +355,29 @@ var Types = map[Kind]Type{
 		ConstructionFoundationTicks: standardFoundationTicks,
 		ConstructionBuildTicks:      standardBuildTicks,
 	},
+	StoneWall: {
+		Kind:      StoneWall,
+		Name:      "Stone Wall",
+		Footprint: 1,
+		// A one-tile wall section intentionally costs only three processed
+		// stone blocks. Short build phases keep long player-drawn runs from
+		// becoming a construction queue that takes most of a game day.
+		StoneCost:                   3,
+		ConstructionFoundationTicks: roadFoundationTicks,
+		ConstructionBuildTicks:      20,
+	},
+	Gate: {
+		Kind:      Gate,
+		Name:      "Gate",
+		Footprint: 1,
+		// Gates are a reinforced wall opening: timber leaves, stone posts and
+		// three iron units for straps/latch. They are installed only over a
+		// finished straight StoneWall segment by cmd/game, never placed on
+		// bare ground.
+		PlankCost:                   5,
+		StoneCost:                   3,
+		IronCost:                    3,
+		ConstructionFoundationTicks: roadFoundationTicks,
+		ConstructionBuildTicks:      40,
+	},
 }

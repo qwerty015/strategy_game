@@ -948,7 +948,7 @@ func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, le
 // constructionMaterials is the fixed pair a construction site ever wants,
 // visited in this order so which one gets hauled first (when a site is
 // short on both) is stable from tick to tick.
-var constructionMaterials = [...]resource.Type{resource.Plank, resource.StoneBlock}
+var constructionMaterials = building.ConstructionMaterialTypes()
 
 // findConstructionSupplyJob looks for a building or road tile still under
 // construction (see building.ConstructionStage) that's short on Plank or
@@ -997,6 +997,7 @@ func findConstructionSupplyJob(buildings []*building.Building, stock *resource.S
 var constructionMaterialProducer = map[resource.Type]building.Kind{
 	resource.Plank:      building.CarpentryWorkshop,
 	resource.StoneBlock: building.QuarryHut,
+	resource.Iron:       building.Smeltery,
 }
 
 // findConstructionDirectJob looks for a construction site short on Plank or

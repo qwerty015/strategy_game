@@ -273,12 +273,16 @@ type Game struct {
 	leftTab        ui.LeftTab
 	buildMode      bool
 	demolitionMode bool
-	selection      ui.Selection
-	middlePanning  bool
-	leftPanning    bool
-	leftPanMoved   bool
-	lastMouseX     int
-	lastMouseY     int
+	// wallAnchor is the first/end point of the current chained wall draw.
+	// Nothing is reserved until a second click commits an orthogonal run.
+	wallAnchor    building.Point
+	wallAnchored  bool
+	selection     ui.Selection
+	middlePanning bool
+	leftPanning   bool
+	leftPanMoved  bool
+	lastMouseX    int
+	lastMouseY    int
 
 	// Esc pause menu save/load modal: dialog is DialogNone outside of the
 	// naming/overwrite flow, in which case dialogSlot/dialogText are unused.
@@ -460,6 +464,7 @@ func (g *Game) Update() error {
 		}
 		g.tickTreeRegrowth()
 		g.tickFishRegrowth()
+		g.updateAutomaticGates()
 		economy.TickWithConnectivity(g.buildings, g.inactiveWorkerBuildings(), g.disconnectedBuildings())
 
 		// One shared reservation ledger per simulation tick: every
@@ -705,7 +710,7 @@ func (g *Game) completedTownBuildingCount() int {
 			continue
 		}
 		switch b.Kind {
-		case building.Road, building.Tree, building.Fish, building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+		case building.Road, building.StoneWall, building.Gate, building.Tree, building.Fish, building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
 			continue
 		}
 		count++
@@ -1041,6 +1046,7 @@ func (g *Game) handleMouse() {
 		}
 		g.buildMode = false
 		g.demolitionMode = false
+		g.clearWallAnchor()
 		g.leftPanning = false
 		g.selection.Clear()
 		g.statusMsg = ""
@@ -1226,6 +1232,7 @@ func (g *Game) handleLeftClick(mx, my int) {
 		g.leftTab = tab
 		g.buildMode = false
 		g.demolitionMode = false
+		g.clearWallAnchor()
 		g.statusMsg = ""
 		return
 	}
@@ -1241,6 +1248,7 @@ func (g *Game) handleLeftClick(mx, my int) {
 	default:
 		if g.layout.DemolitionModeAt(mx, my) {
 			g.buildMode = false
+			g.clearWallAnchor()
 			g.selection.Clear()
 			if g.demolitionMode {
 				g.demolitionMode = false
@@ -1253,6 +1261,7 @@ func (g *Game) handleLeftClick(mx, my int) {
 		if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds)); ok {
 			g.palette.Select(index)
 			g.buildMode = true
+			g.clearWallAnchor()
 			g.statusMsg = ""
 			return
 		}
@@ -1266,6 +1275,23 @@ func (g *Game) handleLeftClick(mx, my int) {
 	if showPriority {
 		if level, ok := g.layout.PriorityLevelAt(mx, my); ok {
 			g.logi.SetPriority(g.selection.Building.Kind, level)
+			return
+		}
+	}
+	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil &&
+		g.selection.Building.Kind == building.Gate && g.selection.Building.ConstructionStage == building.ConstructionNone {
+		if g.layout.GateToggleAt(mx, my) {
+			g.selection.Building.GateAuto = false
+			g.selection.Building.GateOpen = !g.selection.Building.GateOpen
+			g.invalidateConnectionCache()
+			return
+		}
+		if g.layout.GateAutoAt(mx, my) {
+			g.selection.Building.GateAuto = !g.selection.Building.GateAuto
+			if g.selection.Building.GateAuto {
+				g.updateAutomaticGates()
+			}
+			g.invalidateConnectionCache()
 			return
 		}
 	}
@@ -1298,6 +1324,14 @@ func (g *Game) handleLeftClick(mx, my int) {
 	tx, ty := g.camera.ScreenToTile(mx, my)
 
 	kind := g.palette.SelectedKind()
+	if kind == building.StoneWall {
+		g.placeWallPoint(tx, ty)
+		return
+	}
+	if kind == building.Gate {
+		g.placeGateAt(tx, ty)
+		return
+	}
 	if !building.CanPlace(g.grid, g.buildings, kind, tx, ty) {
 		g.statusMsg = i18n.T().CantBuildHere
 		return
@@ -1309,7 +1343,7 @@ func (g *Game) handleLeftClick(mx, my int) {
 	// visible anchor to the rest of the road network. Roads themselves remain
 	// individually constructed and do not receive another starter road.
 	var starterRoad *building.Building
-	if kind != building.Road {
+	if kind != building.Road && kind != building.StoneWall && kind != building.Gate {
 		var roadOK bool
 		starterRoad, roadOK = building.FoundationRoad(g.grid, g.buildings, kind, tx, ty)
 		if !roadOK {
@@ -1340,11 +1374,154 @@ func (g *Game) handleLeftClick(mx, my int) {
 // site therefore owns those materials immediately, even before a Builder has
 // reached its foundation; cancellation already returns that buffer to stock.
 // Anything unavailable stays short and ordinary logistics supplies it later.
+// clearWallAnchor cancels only the in-progress drag chain; already committed
+// wall cells are ordinary independent construction sites and remain intact.
+func (g *Game) clearWallAnchor() {
+	g.wallAnchored = false
+}
+
+// placeWallPoint creates a chained orthogonal run. The first click only marks
+// an anchor; every following click commits a shortest horizontal-then-vertical
+// or vertical-then-horizontal route and makes that endpoint the new anchor.
+// Right click exits build mode and clears the chain (handleMouse).
+func (g *Game) placeWallPoint(x, y int) {
+	point := building.Point{X: x, Y: y}
+	if !g.wallAnchored {
+		if !g.wallPieceAt(x, y) && !building.CanPlace(g.grid, g.buildings, building.StoneWall, x, y) {
+			g.statusMsg = i18n.T().CantBuildHere
+			return
+		}
+		g.wallAnchor, g.wallAnchored = point, true
+		g.statusMsg = ""
+		return
+	}
+
+	paths := [][]building.Point{wallPath(g.wallAnchor, point, true)}
+	if g.wallAnchor.X != point.X && g.wallAnchor.Y != point.Y {
+		paths = append(paths, wallPath(g.wallAnchor, point, false))
+	}
+	for _, path := range paths {
+		if g.commitWallPath(path) {
+			g.wallAnchor = point
+			g.statusMsg = ""
+			return
+		}
+	}
+	g.statusMsg = i18n.T().CantBuildHere
+}
+
+// wallPath returns an inclusive Manhattan route. horizontalFirst determines
+// the bend when the two clicks differ on both axes; no diagonal wall segments
+// are created.
+func wallPath(from, to building.Point, horizontalFirst bool) []building.Point {
+	out := []building.Point{{X: from.X, Y: from.Y}}
+	appendLine := func(x0, y0, x1, y1 int) {
+		dx, dy := 0, 0
+		if x1 > x0 {
+			dx = 1
+		} else if x1 < x0 {
+			dx = -1
+		}
+		if y1 > y0 {
+			dy = 1
+		} else if y1 < y0 {
+			dy = -1
+		}
+		for x, y := x0+dx, y0+dy; x != x1+dx || y != y1+dy; x, y = x+dx, y+dy {
+			out = append(out, building.Point{X: x, Y: y})
+		}
+	}
+	if horizontalFirst {
+		appendLine(from.X, from.Y, to.X, from.Y)
+		appendLine(to.X, from.Y, to.X, to.Y)
+	} else {
+		appendLine(from.X, from.Y, from.X, to.Y)
+		appendLine(from.X, to.Y, to.X, to.Y)
+	}
+	return out
+}
+
+// commitWallPath validates the entire run before adding its first foundation,
+// so a failed bend never leaves a partial accidental wall. Existing wall/gate
+// pieces are intentionally reusable: this is how a later segment closes a
+// loop or meets a gate without replacing it.
+func (g *Game) commitWallPath(path []building.Point) bool {
+	for _, point := range path {
+		if g.wallPieceAt(point.X, point.Y) {
+			continue
+		}
+		if !building.CanPlace(g.grid, g.buildings, building.StoneWall, point.X, point.Y) {
+			return false
+		}
+	}
+	var shortage *advisor.Tip
+	for _, point := range path {
+		if g.wallPieceAt(point.X, point.Y) {
+			continue
+		}
+		site := building.NewConstructionSite(building.StoneWall, point.X, point.Y)
+		g.reserveConstructionMaterials(site)
+		g.buildings = append(g.buildings, site)
+		if shortage == nil {
+			if tip, missing := advisor.ConstructionMaterialShortage(site); missing {
+				shortage = &tip
+			}
+		}
+	}
+	g.invalidateConnectionCache()
+	if shortage != nil {
+		g.queueAdvisorTip(*shortage)
+	}
+	return true
+}
+
+func (g *Game) wallPieceAt(x, y int) bool {
+	for _, b := range g.buildings {
+		if b != nil && building.IsWallKind(b.Kind) && b.X == x && b.Y == y {
+			return true
+		}
+	}
+	return false
+}
+
+// placeGateAt upgrades an already finished, straight wall piece in place. The
+// underlying segment survives a cancelled construction so no one gets an
+// unintentional breach after reserving a gate by mistake.
+func (g *Game) placeGateAt(x, y int) {
+	var wall *building.Building
+	for _, b := range g.buildings {
+		if b != nil && b.Kind == building.StoneWall && b.ConstructionStage == building.ConstructionNone && b.X == x && b.Y == y {
+			wall = b
+			break
+		}
+	}
+	axis, valid := building.WallAxisAt(g.buildings, x, y)
+	if wall == nil || !valid {
+		g.statusMsg = i18n.T().CantBuildHere
+		return
+	}
+	wall.Kind = building.Gate
+	wall.ConstructionStage = building.ConstructionFoundation
+	wall.ProgressTicks = 0
+	wall.InputBuffer = nil
+	wall.OutputBuffer = nil
+	wall.GateOpen = false
+	wall.GateAuto = true
+	wall.GateAxis = axis
+	wall.GateReplacesWall = true
+	g.reserveConstructionMaterials(wall)
+	g.invalidateConnectionCache()
+	g.statusMsg = ""
+	if tip, missing := advisor.ConstructionMaterialShortage(wall); missing {
+		g.queueAdvisorTip(tip)
+	}
+}
+
 func (g *Game) reserveConstructionMaterials(site *building.Building) {
 	if site == nil || g.stock == nil {
 		return
 	}
-	for _, kind := range [...]resource.Type{resource.Plank, resource.StoneBlock} {
+	for _, kind := range building.ConstructionMaterialTypes() {
 		need := site.ConstructionMaterialCost(kind)
 		available := g.stock.Amount(kind)
 		reserved := min(need, available)
@@ -1416,13 +1593,36 @@ func (g *Game) deleteSelectedBuilding() {
 	}
 	b := g.selection.Building
 	if b.ConstructionStage != building.ConstructionNone {
+		// A gate has replaced an existing wall in place. Cancelling before it
+		// completes gives the delivered materials back and restores that wall;
+		// deleting a completed gate remains an intentional opening.
+		if b.Kind == building.Gate && b.GateReplacesWall {
+			for _, material := range building.ConstructionMaterialTypes() {
+				g.stock.Add(material, b.InputBuffer[material])
+			}
+			g.builders.CancelRouteTo(b)
+			g.logi.CancelAllJobs(g.stock)
+			b.Kind = building.StoneWall
+			b.ConstructionStage = building.ConstructionNone
+			b.ProgressTicks = 0
+			b.InputBuffer = nil
+			b.OutputBuffer = nil
+			b.GateOpen = false
+			b.GateAuto = false
+			b.GateReplacesWall = false
+			g.invalidateConnectionCache()
+			g.selection.Clear()
+			g.statusMsg = i18n.T().Deleted
+			return
+		}
 		// A cancelled construction site was never registered as a
 		// Warehouse or given a resident (see finishConstruction), so none
 		// of the kind-specific protections below apply. Any materials
 		// already delivered go back to the stockpile, exactly like a
 		// cancelled haul returns carried cargo elsewhere.
-		g.stock.Add(resource.Plank, b.InputBuffer[resource.Plank])
-		g.stock.Add(resource.StoneBlock, b.InputBuffer[resource.StoneBlock])
+		for _, material := range building.ConstructionMaterialTypes() {
+			g.stock.Add(material, b.InputBuffer[material])
+		}
 		g.builders.CancelRouteTo(b)
 		g.logi.CancelAllJobs(g.stock)
 		for i, candidate := range g.buildings {
@@ -1720,6 +1920,64 @@ func (g *Game) buildingConnected(b *building.Building) bool {
 	_, connected := pathfind.FindPath(g.buildings, warehouse, b)
 	g.connectionCache[b] = connected
 	return connected
+}
+
+// updateAutomaticGates changes only the visible/open state of auto gates.
+// Pathfinding treats an automatic gate as routeable even while it is visually
+// closed, so a unit can approach it and make this pass open it on the next
+// simulation tick. Manual closed gates are excluded from routes.
+func (g *Game) updateAutomaticGates() {
+	for _, gate := range g.buildings {
+		if gate == nil || gate.Kind != building.Gate || gate.ConstructionStage != building.ConstructionNone || !gate.GateAuto {
+			continue
+		}
+		gate.GateOpen = g.alliedUnitNear(gate.X, gate.Y, 2)
+	}
+}
+
+func (g *Game) alliedUnitNear(x, y, radius int) bool {
+	near := func(unitX, unitY int) bool {
+		if unitX < x-radius || unitX > x+radius || unitY < y-radius || unitY > y+radius {
+			return false
+		}
+		return true
+	}
+	for _, v := range g.vills.Villagers {
+		if v.VisibleOnMap() && near(v.X, v.Y) {
+			return true
+		}
+	}
+	for _, s := range g.logi.Serfs {
+		if near(s.X, s.Y) {
+			return true
+		}
+	}
+	for _, j := range g.jacks.Lumberjacks {
+		if near(j.X, j.Y) {
+			return true
+		}
+	}
+	for _, f := range g.fishers.Fishermen {
+		if f.VisibleOnMap() && near(f.X, f.Y) {
+			return true
+		}
+	}
+	for _, q := range g.quarry.Quarrymen {
+		if near(q.X, q.Y) {
+			return true
+		}
+	}
+	for _, b := range g.builders.Builders {
+		if near(b.X, b.Y) {
+			return true
+		}
+	}
+	for _, m := range g.miners.Miners {
+		if near(m.X, m.Y) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Game) invalidateConnectionCache() {
@@ -4055,7 +4313,7 @@ func priorityEligible(kind building.Kind) bool {
 // is what actually caused the "high CPU load, game hangs" symptom.
 func showsAccessMarker(kind building.Kind) bool {
 	switch kind {
-	case building.Road, building.Tree, building.Fish, building.Warehouse,
+	case building.Road, building.StoneWall, building.Gate, building.Tree, building.Fish, building.Warehouse,
 		building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
 		return false
 	default:

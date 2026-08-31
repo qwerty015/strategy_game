@@ -30,6 +30,8 @@ func NewPalette() *Palette {
 		building.MeatWorkshop,
 		building.Tavern,
 		building.Road,
+		building.StoneWall,
+		building.Gate,
 		building.Warehouse,
 		building.LumberjackHut,
 		building.CarpentryWorkshop,

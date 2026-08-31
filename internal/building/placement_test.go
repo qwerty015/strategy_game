@@ -3,6 +3,8 @@ package building
 import (
 	"testing"
 
+	"strategy_game/internal/resource"
+
 	"strategy_game/internal/world"
 )
 
@@ -129,5 +131,67 @@ func TestFoundationRoadReusesExistingFinishedRoad(t *testing.T) {
 	}
 	if road != nil {
 		t.Fatalf("FoundationRoad() = %#v, want nil because the existing road is reused", road)
+	}
+}
+
+// TestWallsHaveDistinctPlacementRules protects the intentionally asymmetric
+// gap rule: wall segments can form a continuous run, but player buildings stay
+// one tile away whichever of the two was placed first. Gates are upgrades, not
+// bare-ground palette objects.
+func TestWallsHaveDistinctPlacementRules(t *testing.T) {
+	grid := testGrid()
+	if !CanPlace(grid, nil, StoneWall, 6, 6) {
+		t.Fatal("free stone-wall tile rejected")
+	}
+	existingWall := []*Building{{Kind: StoneWall, X: 6, Y: 6}}
+	if !CanPlace(grid, existingWall, StoneWall, 7, 6) {
+		t.Fatal("adjacent wall section rejected; continuous walls must be allowed")
+	}
+	if CanPlace(grid, []*Building{{Kind: Mill, X: 4, Y: 4}}, StoneWall, 5, 4) {
+		t.Fatal("wall adjacent to an ordinary building was accepted")
+	}
+	if CanPlace(grid, existingWall, Mill, 7, 6) {
+		t.Fatal("ordinary building adjacent to a wall was accepted")
+	}
+	if CanPlace(grid, nil, Gate, 2, 2) {
+		t.Fatal("bare-ground gate was accepted")
+	}
+}
+
+func TestGateConstructionCostIncludesIron(t *testing.T) {
+	gate := NewConstructionSite(Gate, 3, 3)
+	if got := gate.ConstructionMaterialCost(resource.Plank); got != 5 {
+		t.Fatalf("gate plank cost = %d, want 5", got)
+	}
+	if got := gate.ConstructionMaterialCost(resource.StoneBlock); got != 3 {
+		t.Fatalf("gate stone cost = %d, want 3", got)
+	}
+	if got := gate.ConstructionMaterialCost(resource.Iron); got != 3 {
+		t.Fatalf("gate iron cost = %d, want 3", got)
+	}
+	gate.AddConstructionMaterial(resource.Plank, 5)
+	gate.AddConstructionMaterial(resource.StoneBlock, 3)
+	if gate.ConstructionMaterialsReady() {
+		t.Fatal("gate was ready without its required iron")
+	}
+	gate.AddConstructionMaterial(resource.Iron, 3)
+	if !gate.ConstructionMaterialsReady() {
+		t.Fatal("fully supplied gate was not ready")
+	}
+}
+
+func TestWallAxisAtRequiresStraightCompletedSegment(t *testing.T) {
+	line := []*Building{
+		{Kind: StoneWall, X: 2, Y: 3},
+		{Kind: StoneWall, X: 3, Y: 3},
+		{Kind: StoneWall, X: 4, Y: 3},
+	}
+	axis, ok := WallAxisAt(line, 3, 3)
+	if !ok || axis != WallHorizontal {
+		t.Fatalf("horizontal segment axis = %v, %v; want horizontal, true", axis, ok)
+	}
+	line = append(line, &Building{Kind: StoneWall, X: 3, Y: 2}, &Building{Kind: StoneWall, X: 3, Y: 4})
+	if _, ok := WallAxisAt(line, 3, 3); ok {
+		t.Fatal("corner/cross segment was accepted as a gate location")
 	}
 }

@@ -10,6 +10,12 @@ import "strategy_game/internal/world"
 // from that visual gap: roads still need to meet a door, while a worker hut
 // may reasonably stand beside a tree or deposit it is meant to service.
 func CanPlace(g *world.Grid, existing []*Building, kind Kind, x, y int) bool {
+	// Gates are installed over an existing completed straight wall by the game
+	// layer. Rejecting bare placement here makes accidental standalone gates
+	// impossible for every caller, including future map tools.
+	if kind == Gate {
+		return false
+	}
 	bt := Types[kind]
 
 	for dy := 0; dy < bt.Footprint; dy++ {
@@ -39,7 +45,7 @@ func CanPlace(g *world.Grid, existing []*Building, kind Kind, x, y int) bool {
 		if footprintsOverlap(x, y, bt.Footprint, b.X, b.Y, otherSize) {
 			return false
 		}
-		if requiresBuildingGap(kind) && requiresBuildingGap(b.Kind) &&
+		if requiresGapBetween(kind, b.Kind) &&
 			footprintsOverlap(x-1, y-1, bt.Footprint+2, b.X, b.Y, otherSize) {
 			return false
 		}
@@ -76,9 +82,20 @@ func FoundationRoad(g *world.Grid, existing []*Building, kind Kind, x, y int) (*
 	return nil, false
 }
 
+// requiresGapBetween preserves the one empty tile around ordinary structures
+// while allowing wall sections to touch one another. A wall remains one tile
+// away from any player building whichever is placed first; roads and natural
+// deposits retain their existing exceptions.
+func requiresGapBetween(a, b Kind) bool {
+	if requiresBuildingGap(a) && requiresBuildingGap(b) {
+		return true
+	}
+	return (IsWallKind(a) && requiresBuildingGap(b)) || (IsWallKind(b) && requiresBuildingGap(a))
+}
+
 func requiresBuildingGap(kind Kind) bool {
 	switch kind {
-	case Road, Tree, Fish, StoneDeposit, CoalDeposit, GoldOreDeposit, IronOreDeposit:
+	case Road, Tree, Fish, StoneDeposit, CoalDeposit, GoldOreDeposit, IronOreDeposit, StoneWall, Gate:
 		return false
 	default:
 		return true

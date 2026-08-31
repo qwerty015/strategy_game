@@ -180,7 +180,7 @@ func ConstructionMaterialShortage(site *building.Building) (Tip, bool) {
 	if site == nil || site.ConstructionStage == building.ConstructionNone {
 		return Tip{}, false
 	}
-	for _, kind := range [...]resource.Type{resource.Plank, resource.StoneBlock} {
+	for _, kind := range building.ConstructionMaterialTypes() {
 		missing := site.ConstructionMaterialCost(kind) - site.InputBuffer[kind]
 		if missing > 0 {
 			return Tip{Kind: KindConstructionMaterialsMissing, Building: site, Resource: kind, Missing: missing}, true

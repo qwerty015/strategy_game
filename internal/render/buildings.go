@@ -107,6 +107,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			drawOreDeposit(screen, sx, sy, tilePixels, b.Kind, b.Reserve)
 		}
 	}
+	drawWalls(screen, buildings, cam)
 
 	// Wildlife belongs over flat landscape detail: a fox or hare should not
 	// vanish beneath cobblestones or a low boulder deposit. Keep it before the
@@ -120,7 +121,8 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 	standingBuildings := make([]*building.Building, 0, len(buildings))
 	for _, b := range buildings {
 		if b == nil || b.Kind == building.Road || b.Kind == building.StoneDeposit ||
-			b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit {
+			b.Kind == building.CoalDeposit || b.Kind == building.GoldOreDeposit || b.Kind == building.IronOreDeposit ||
+			((b.Kind == building.StoneWall || b.Kind == building.Gate) && b.ConstructionStage == building.ConstructionNone) {
 			continue
 		}
 		if visible.Intersects(b.X, b.Y, building.Types[b.Kind].Footprint) {
@@ -285,6 +287,43 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		case disconnected[b], buildingStallReason(b) != stallNone:
 			drawIdleBubble(screen, b.Kind, sx, sy, tilePixels)
 		}
+	}
+}
+
+// drawWalls paints completed wall pieces after the road/deposit ground pass and
+// before wildlife and tall buildings. The dedicated horizontal/vertical art is
+// selected from real neighbouring wall cells; gates retain their installation
+// axis in Building.GateAxis even after a neighbouring segment is removed.
+func drawWalls(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
+	visible := cam.VisibleTileBounds(1)
+	tilePixels := cam.TilePixels()
+	for _, b := range buildings {
+		if b == nil || b.ConstructionStage != building.ConstructionNone || !building.IsWallKind(b.Kind) || !visible.Intersects(b.X, b.Y, 1) {
+			continue
+		}
+		axis := b.GateAxis
+		if b.Kind == building.StoneWall {
+			axis = building.WallRenderAxis(buildings, b.X, b.Y)
+		}
+		var art *ebiten.Image
+		if b.Kind == building.StoneWall {
+			art = assets.StoneWallHorizontal
+			if axis == building.WallVertical {
+				art = assets.StoneWallVertical
+			}
+		} else if b.GateOpen {
+			art = assets.GateHorizontalOpen
+			if axis == building.WallVertical {
+				art = assets.GateVerticalOpen
+			}
+		} else {
+			art = assets.GateHorizontalClosed
+			if axis == building.WallVertical {
+				art = assets.GateVerticalClosed
+			}
+		}
+		sx, sy := cam.TileToScreen(b.X, b.Y)
+		drawFootprintAtScale(screen, art, sx, sy, 1, tilePixels)
 	}
 }
 

@@ -184,6 +184,9 @@ const (
 	inspectorRemoveMargin      = 18
 	inspectorRemoveBottomGap   = 12
 	inspectorRemovePriorityGap = 26
+	gateControlHeight          = 30
+	gateControlGap             = 8
+	gateControlTop             = 224
 )
 
 const (
@@ -298,6 +301,29 @@ func (l Layout) InspectorRemoveRect(showPriority bool) image.Rectangle {
 // removal button. Callers must first check CanRemoveSelection.
 func (l Layout) InspectorRemoveAt(x, y int, showPriority bool) bool {
 	return image.Pt(x, y).In(l.InspectorRemoveRect(showPriority))
+}
+
+// GateControlRects returns the manual-open and automatic-mode controls for a
+// selected finished gate. They are deliberately near the gate's short info
+// block instead of bottom-docked beside demolition, so their state is visible
+// and reachable without scrolling past the minimap.
+func (l Layout) GateControlRects() (toggle, auto image.Rectangle) {
+	r := l.RightPanel()
+	left, right := r.Min.X+inspectorRemoveMargin, r.Max.X-inspectorRemoveMargin
+	toggle = image.Rect(left, gateControlTop, right, gateControlTop+gateControlHeight)
+	autoTop := toggle.Max.Y + gateControlGap
+	auto = image.Rect(left, autoTop, right, autoTop+gateControlHeight)
+	return toggle, auto
+}
+
+func (l Layout) GateToggleAt(x, y int) bool {
+	toggle, _ := l.GateControlRects()
+	return image.Pt(x, y).In(toggle)
+}
+
+func (l Layout) GateAutoAt(x, y int) bool {
+	_, auto := l.GateControlRects()
+	return image.Pt(x, y).In(auto)
 }
 
 // PriorityLevelAt returns the supply-priority segment under the cursor,

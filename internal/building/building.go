@@ -102,6 +102,12 @@ const (
 	// which one runs is decided per production cycle, not fixed at
 	// placement, by whichever ore is actually on hand.
 	Smeltery
+
+	// StoneWall and Gate are appended to retain the numeric values written by
+	// existing saves. A gate replaces one completed wall segment in place;
+	// see WallAxisAt and the placement flow in cmd/game.
+	StoneWall
+	Gate
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -173,6 +179,7 @@ type Type struct {
 	// through the normal construction flow (Tree, Fish, StoneDeposit).
 	PlankCost int
 	StoneCost int
+	IronCost  int
 
 	// ConstructionFoundationTicks/ConstructionBuildTicks are how long a
 	// Builder spends on each of the two construction phases -- see
@@ -302,6 +309,17 @@ type Building struct {
 	// recipe starts after it instead of always preferring index 0 -- see
 	// economy.pickRecipe's doc comment for why that fairness matters.
 	ActiveRecipe int
+
+	// GateOpen and GateAuto describe a completed Gate's traffic state. Gates
+	// are stored as ordinary Buildings, therefore these fields automatically
+	// survive a save/load without a separate migration. GateAxis is fixed on
+	// installation, so removing a neighbouring wall segment cannot rotate a
+	// gate sprite. GateReplacesWall lets cancellation restore the original
+	// finished wall rather than leaving an accidental breach.
+	GateOpen         bool
+	GateAuto         bool
+	GateAxis         WallAxis
+	GateReplacesWall bool
 }
 
 // ConstructionStage is where a placed-but-unfinished building or road
@@ -353,6 +371,8 @@ func (b *Building) ConstructionMaterialCost(t resource.Type) int {
 		return Types[b.Kind].PlankCost
 	case resource.StoneBlock:
 		return Types[b.Kind].StoneCost
+	case resource.Iron:
+		return Types[b.Kind].IronCost
 	default:
 		return 0
 	}
@@ -362,7 +382,9 @@ func (b *Building) ConstructionMaterialCost(t resource.Type) int {
 // StoneBlock unit has already been delivered to this site.
 func (b *Building) ConstructionMaterialsReady() bool {
 	t := Types[b.Kind]
-	return b.InputBuffer[resource.Plank] >= t.PlankCost && b.InputBuffer[resource.StoneBlock] >= t.StoneCost
+	return b.InputBuffer[resource.Plank] >= t.PlankCost &&
+		b.InputBuffer[resource.StoneBlock] >= t.StoneCost &&
+		b.InputBuffer[resource.Iron] >= t.IronCost
 }
 
 // ConstructionProgress returns a clamped 0..1 value across both

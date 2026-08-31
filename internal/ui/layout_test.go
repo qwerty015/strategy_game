@@ -109,6 +109,8 @@ func TestPalettePlacesTheWholeFoodChainFirst(t *testing.T) {
 		building.MeatWorkshop,
 		building.Tavern,
 		building.Road,
+		building.StoneWall,
+		building.Gate,
 		building.Warehouse,
 		building.LumberjackHut,
 		building.CarpentryWorkshop,
@@ -210,5 +212,21 @@ func TestDemolitionModeHitAreaMatchesItsRectangle(t *testing.T) {
 	}
 	if layout.DemolitionModeAt(r.Max.X, r.Min.Y+r.Dy()/2) {
 		t.Fatal("point outside demolition button is clickable")
+	}
+}
+
+// TestGateControlRects keeps the rendered gate controls and their hit testing
+// coupled through Layout, just like the removal confirmation and priorities.
+func TestGateControlRects(t *testing.T) {
+	layout := NewLayout(1024, 768)
+	toggle, auto := layout.GateControlRects()
+	if !layout.GateToggleAt(toggle.Min.X+toggle.Dx()/2, toggle.Min.Y+toggle.Dy()/2) {
+		t.Fatal("gate toggle center did not hit its control")
+	}
+	if !layout.GateAutoAt(auto.Min.X+auto.Dx()/2, auto.Min.Y+auto.Dy()/2) {
+		t.Fatal("gate auto center did not hit its control")
+	}
+	if layout.GateToggleAt(toggle.Min.X, toggle.Min.Y-1) || layout.GateAutoAt(auto.Max.X, auto.Max.Y) {
+		t.Fatal("outside gate control edge was accepted")
 	}
 }

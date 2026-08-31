@@ -56,6 +56,7 @@ func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Poi
 	// densely-decorated map (hundreds of stone/ore deposits, each its own
 	// Building).
 	blocked := buildingOccupancy(buildings)
+	barriers := wallBarrierOccupancy(buildings)
 
 	visited := map[Point]Point{from: from}
 	queue := []Point{from}
@@ -67,7 +68,7 @@ func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Poi
 			break
 		}
 		for _, n := range neighbors(p) {
-			if _, seen := visited[n]; seen || !landWalkable(grid, blocked, n, from, to) {
+			if _, seen := visited[n]; seen || (diagonal(p, n) && crossesWallBarrier(barriers, p, n)) || !landWalkable(grid, blocked, n, from, to) {
 				continue
 			}
 			visited[n] = p
@@ -144,7 +145,7 @@ func FindWaterPath(grid *world.Grid, from, to Point) ([]Point, bool) {
 func buildingOccupancy(buildings []*building.Building) map[Point]bool {
 	blocked := make(map[Point]bool, len(buildings))
 	for _, b := range buildings {
-		if b == nil || b.Kind == building.Road {
+		if b == nil || b.Kind == building.Road || building.GatePassable(b) {
 			continue
 		}
 		footprint := building.Types[b.Kind].Footprint
@@ -155,6 +156,33 @@ func buildingOccupancy(buildings []*building.Building) map[Point]bool {
 		}
 	}
 	return blocked
+}
+
+// wallBarrierOccupancy is narrower than buildingOccupancy: it contains only
+// solid wall pieces and manual closed gates. It exists solely to prevent a
+// diagonal path from clipping through the corner between two wall tiles. Auto
+// gates stay routeable, so a unit can approach one and make it open.
+func wallBarrierOccupancy(buildings []*building.Building) map[Point]bool {
+	barriers := make(map[Point]bool)
+	for _, b := range buildings {
+		if b == nil {
+			continue
+		}
+		if b.Kind == building.StoneWall || (b.Kind == building.Gate && !building.GatePassable(b)) {
+			barriers[Point{X: b.X, Y: b.Y}] = true
+		}
+	}
+	return barriers
+}
+
+// crossesWallBarrier rejects the two possible corner cuts for a diagonal step.
+// Ordinary objects retain the game's existing diagonal movement behaviour;
+// only an intentional defensive wall gets this stricter rule.
+func crossesWallBarrier(barriers map[Point]bool, from, to Point) bool {
+	if !diagonal(from, to) {
+		return false
+	}
+	return barriers[Point{X: to.X, Y: from.Y}] || barriers[Point{X: from.X, Y: to.Y}]
 }
 
 func landWalkable(grid *world.Grid, blocked map[Point]bool, p, start, goal Point) bool {
@@ -173,6 +201,7 @@ func findPathBetween(buildings []*building.Building, start, goal Point, requireR
 	walkable[goal] = true
 
 	roads := roadSet(buildings)
+	barriers := wallBarrierOccupancy(buildings)
 	// A saved unit can start on a Road, where leaving diagonally is normal.
 	// A building access tile is not a Road, however: its first/last step has
 	// to be cardinal so a road cannot activate a building by just touching the
@@ -197,7 +226,7 @@ func findPathBetween(buildings []*building.Building, start, goal Point, requireR
 			break
 		}
 		for _, n := range neighbors(p) {
-			if diagonal(p, n) && ((p == start && restrictStartDiagonal) || (n == goal && restrictGoalDiagonal)) {
+			if diagonal(p, n) && ((p == start && restrictStartDiagonal) || (n == goal && restrictGoalDiagonal) || crossesWallBarrier(barriers, p, n)) {
 				continue
 			}
 			if _, seen := visited[n]; seen {
@@ -238,7 +267,10 @@ func accessPoint(b *building.Building) Point {
 func roadSet(buildings []*building.Building) map[Point]bool {
 	set := make(map[Point]bool)
 	for _, b := range buildings {
-		if b.Kind == building.Road && b.ConstructionStage == building.ConstructionNone {
+		if b == nil {
+			continue
+		}
+		if (b.Kind == building.Road && b.ConstructionStage == building.ConstructionNone) || building.GatePassable(b) {
 			set[Point{b.X, b.Y}] = true
 		}
 	}

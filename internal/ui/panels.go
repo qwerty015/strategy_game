@@ -145,6 +145,11 @@ func drawBuildCost(screen *ebiten.Image, kind building.Kind, x, y int) {
 	if cost.StoneCost > 0 {
 		drawResourceIcon(screen, resource.StoneBlock, x, y)
 		DrawCompactMenuText(screen, fmt.Sprintf("%d", cost.StoneCost), float64(x+resourceIconSize+4), float64(y))
+		x += 32
+	}
+	if cost.IronCost > 0 {
+		drawResourceIcon(screen, resource.Iron, x, y)
+		DrawCompactMenuText(screen, fmt.Sprintf("%d", cost.IronCost), float64(x+resourceIconSize+4), float64(y))
 	}
 }
 
@@ -335,6 +340,10 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	case SelectionMiner:
 		drawMinerInspector(screen, r.Min.X+18, inspectorBodyY, selection.Miner)
 	}
+	if selection.Kind == SelectionBuilding && selection.Building != nil &&
+		selection.Building.Kind == building.Gate && selection.Building.ConstructionStage == building.ConstructionNone {
+		drawGateControls(screen, layout, selection.Building)
+	}
 	if CanRemoveSelection(selection) {
 		drawRemoveButton(screen, layout, selection, showPriority)
 	}
@@ -452,6 +461,30 @@ func drawPriorityControl(screen *ebiten.Image, layout Layout, current int) {
 // road's stage, delivered materials, and overall progress -- see package
 // builder. Called instead of the rest of drawBuildingInspector for any
 // building still under construction, regardless of what it will become.
+func drawGateControls(screen *ebiten.Image, layout Layout, gate *building.Building) {
+	t := i18n.T()
+	toggle, auto := layout.GateControlRects()
+	toggleLabel := t.GateOpenButton
+	if gate.GateOpen {
+		toggleLabel = t.GateCloseButton
+	}
+	autoLabel := t.GateAutoOnButton
+	if gate.GateAuto {
+		autoLabel = t.GateAutoOffButton
+	}
+	fill := panelColor
+	if gate.GateOpen {
+		fill = selectedColor
+	}
+	vector.FillRect(screen, float32(toggle.Min.X), float32(toggle.Min.Y), float32(toggle.Dx()), float32(toggle.Dy()), fill, false)
+	vector.FillRect(screen, float32(auto.Min.X), float32(auto.Min.Y), float32(auto.Dx()), float32(auto.Dy()), panelColor, false)
+	if gate.GateAuto {
+		vector.FillRect(screen, float32(auto.Min.X), float32(auto.Max.Y-3), float32(auto.Dx()), 3, selectedColor, false)
+	}
+	DrawInspectorText(screen, toggleLabel, float64(toggle.Min.X+8), float64(toggle.Min.Y+8))
+	DrawInspectorText(screen, autoLabel, float64(auto.Min.X+8), float64(auto.Min.Y+8))
+}
+
 func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Building, bt building.Type) {
 	t := i18n.T()
 	stage := t.ConstructionFoundationLabel
@@ -471,6 +504,10 @@ func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Build
 	}
 	if bt.StoneCost > 0 {
 		drawResourceRow(screen, x, y, resource.StoneBlock, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.InputBuffer[resource.StoneBlock], bt.StoneCost))
+		y += 18
+	}
+	if bt.IronCost > 0 {
+		drawResourceRow(screen, x, y, resource.Iron, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Iron], b.InputBuffer[resource.Iron], bt.IronCost))
 	}
 }
 
@@ -481,6 +518,23 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	y += 24
 	if b.ConstructionStage != building.ConstructionNone {
 		drawConstructionInspector(screen, x, y, b, bt)
+		return
+	}
+	if b.Kind == building.StoneWall {
+		return
+	}
+	if b.Kind == building.Gate {
+		state := t.GateClosedLabel
+		if b.GateOpen {
+			state = t.GateOpenLabel
+		}
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.GateStateLabel, state), float64(x), float64(y))
+		y += 20
+		auto := t.GateAutoOffButton
+		if b.GateAuto {
+			auto = t.GateAutoOnButton
+		}
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.GateAutoLabel, auto), float64(x), float64(y))
 		return
 	}
 	if b.Kind == building.Tree {
@@ -1085,6 +1139,10 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.Tavern
 	case building.Road:
 		img = assets.Road
+	case building.StoneWall:
+		img = assets.StoneWallHorizontal
+	case building.Gate:
+		img = assets.GateHorizontalClosed
 	case building.Warehouse:
 		img = assets.Warehouse
 	case building.LumberjackHut:

@@ -223,3 +223,44 @@ func TestFindPathFromPoint_StartsAtSavedRoadTile(t *testing.T) {
 		t.Fatalf("path starts at %v, want saved point (2,0)", first)
 	}
 }
+
+// TestFindLandPath_WallBlocksAndGateOpens proves a closed wall is a real
+// obstacle, while an open or automatic gate becomes a valid route tile.
+func TestFindLandPath_WallBlocksAndGateOpens(t *testing.T) {
+	grid := world.NewGrid(5, 3)
+	from, to := Point{X: 0, Y: 1}, Point{X: 4, Y: 1}
+	wall := []*building.Building{
+		{Kind: building.StoneWall, X: 2, Y: 0},
+		{Kind: building.StoneWall, X: 2, Y: 1},
+		{Kind: building.StoneWall, X: 2, Y: 2},
+	}
+	if _, ok := FindLandPath(grid, wall, from, to); ok {
+		t.Fatal("path crossed a complete wall without a gate")
+	}
+	wall[1] = &building.Building{Kind: building.Gate, X: 2, Y: 1, GateAxis: building.WallHorizontal}
+	if _, ok := FindLandPath(grid, wall, from, to); ok {
+		t.Fatal("path crossed a manually closed gate")
+	}
+	wall[1].GateOpen = true
+	if _, ok := FindLandPath(grid, wall, from, to); !ok {
+		t.Fatal("open gate did not restore a land path")
+	}
+	wall[1].GateOpen = false
+	wall[1].GateAuto = true
+	if _, ok := FindLandPath(grid, wall, from, to); !ok {
+		t.Fatal("automatic gate was not routeable for an approaching unit")
+	}
+}
+
+// TestWallCornerCannotBeCutDiagonally keeps a closed wall enclosure meaningful
+// even though all normal land movement supports diagonal steps.
+func TestWallCornerCannotBeCutDiagonally(t *testing.T) {
+	grid := world.NewGrid(2, 2)
+	walls := []*building.Building{
+		{Kind: building.StoneWall, X: 1, Y: 0},
+		{Kind: building.StoneWall, X: 0, Y: 1},
+	}
+	if _, ok := FindLandPath(grid, walls, Point{X: 0, Y: 0}, Point{X: 1, Y: 1}); ok {
+		t.Fatal("diagonal movement cut through a wall corner")
+	}
+}
