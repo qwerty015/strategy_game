@@ -32,6 +32,7 @@ import (
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
 	"strategy_game/internal/world"
+	"strategy_game/internal/worldclock"
 )
 
 const (
@@ -568,6 +569,9 @@ func (g *Game) Update() error {
 		g.tickAutosave()
 		g.tickAdvisor()
 		g.tickAudioCues()
+		g.tickBuildingAmbientSounds()
+		g.tickWeatherAmbientSounds()
+		g.tickDayNightAmbientSounds()
 	}
 
 	return nil
@@ -1938,21 +1942,155 @@ const (
 // for why this isn't one sound per worker. Called once per simulation
 // tick (see the loop in Update), so pausing already silences it for free:
 // no new calls happen while the world isn't ticking.
+//
+// Per the user's explicit request, every cue here only plays for a worker
+// currently on screen -- buildingVisible checks the worker's own X,Y
+// (where they're actively chopping/mining/building, not their home hut)
+// against the camera's viewport, the same TileBounds.Intersects check
+// render already uses to decide what's worth drawing.
 func (g *Game) tickAudioCues() {
 	if g.worldTicks%audioChopPeriod == 0 && anyMatch(g.jacks.Lumberjacks, func(j *lumberjack.Lumberjack) bool {
-		return j.State() == lumberjack.StateChopping
+		return j.State() == lumberjack.StateChopping && g.buildingVisible(j.X, j.Y, 1)
 	}) {
 		audio.PlayChop()
 	}
 	if g.worldTicks%audioMinePeriod == 0 &&
-		(anyMatch(g.quarry.Quarrymen, func(q *quarry.Quarryman) bool { return q.State() == quarry.StateMining }) ||
-			anyMatch(g.miners.Miners, func(m *miner.Miner) bool { return m.State() == miner.StateMining })) {
+		(anyMatch(g.quarry.Quarrymen, func(q *quarry.Quarryman) bool {
+			return q.State() == quarry.StateMining && g.buildingVisible(q.X, q.Y, 1)
+		}) ||
+			anyMatch(g.miners.Miners, func(m *miner.Miner) bool {
+				return m.State() == miner.StateMining && g.buildingVisible(m.X, m.Y, 1)
+			})) {
 		audio.PlayMining()
 	}
 	if g.worldTicks%audioHammerPeriod == 0 && anyMatch(g.builders.Builders, func(b *builder.Builder) bool {
-		return b.State() == builder.StateFoundation || b.State() == builder.StateFinishing
+		return (b.State() == builder.StateFoundation || b.State() == builder.StateFinishing) && g.buildingVisible(b.X, b.Y, 1)
 	}) {
 		audio.PlayHammer()
+	}
+}
+
+// buildingVisible reports whether any tile of a size×size footprint at
+// (x, y) is currently inside the camera's viewport. Shared by every new
+// audio cue in this file -- see tickAudioCues/tickBuildingAmbientSounds --
+// so sound only plays for what's actually on screen, per the user's
+// explicit request. Reuses the same TileBounds.Intersects check render
+// already relies on (see e.g. internal/render/lumberjacks.go), just from
+// cmd/game instead of the render package.
+func (g *Game) buildingVisible(x, y, size int) bool {
+	return g.camera.VisibleTileBounds(1).Intersects(x, y, size)
+}
+
+// buildingAmbientPeriod paces each building kind's ambient work cue --
+// same "not too frequent" reasoning as audioChopPeriod/audioMinePeriod/
+// audioHammerPeriod above (see their doc comment), picked by ear per
+// building rather than tied to its real production cycle length (which,
+// per internal/economy/simulator.go, keeps "spinning" even when a
+// building is starved of inputs -- not a reliable "is it actually
+// working" signal, so this package doesn't try to check that; a
+// periodic cue while the building is finished and visible is the same
+// "feels alive" approximation internal/render/ambient.go already uses
+// for wildlife). PigFarm's period is deliberately long: the user asked
+// for its oink specifically not to be too frequent.
+var buildingAmbientPeriod = map[building.Kind]int{
+	building.Farm:              150,
+	building.Mill:              100,
+	building.Bakery:            150,
+	building.Winery:            150,
+	building.PigFarm:           400,
+	building.MeatWorkshop:      150,
+	building.CarpentryWorkshop: 120,
+	building.Smeltery:          120,
+	building.FisherHut:         200,
+	building.Warehouse:         250,
+	building.Tavern:            250,
+}
+
+// buildingAmbientSound is buildingAmbientPeriod's matching Play function
+// per Kind.
+var buildingAmbientSound = map[building.Kind]func(){
+	building.Farm:              audio.PlayScythe,
+	building.Mill:              audio.PlayMillWork,
+	building.Bakery:            audio.PlayBakery,
+	building.Winery:            audio.PlaySquish,
+	building.PigFarm:           audio.PlayPigOink,
+	building.MeatWorkshop:      audio.PlayMeatChop,
+	building.CarpentryWorkshop: audio.PlaySaw,
+	building.Smeltery:          audio.PlayForge,
+	building.FisherHut:         audio.PlayOarSplash,
+	building.Warehouse:         audio.PlayCartCreak,
+	building.Tavern:            audio.PlayTavernChatter,
+}
+
+// tickBuildingAmbientSounds plays each finished, on-screen building's
+// flavor cue on its own period (see buildingAmbientPeriod). Buildings
+// without an entry (LumberjackHut/QuarryHut/MinerHut already play through
+// tickAudioCues above, tied to the worker's actual state; Road/Tree/Fish/
+// deposits aren't player structures at all) are silently skipped.
+func (g *Game) tickBuildingAmbientSounds() {
+	for _, b := range g.buildings {
+		if b.ConstructionStage != building.ConstructionNone {
+			continue
+		}
+		period, ok := buildingAmbientPeriod[b.Kind]
+		if !ok || g.worldTicks%period != 0 {
+			continue
+		}
+		footprint := building.Types[b.Kind].Footprint
+		if !g.buildingVisible(b.X, b.Y, footprint) {
+			continue
+		}
+		buildingAmbientSound[b.Kind]()
+	}
+}
+
+// weatherAmbientPeriod/dayNightAmbientPeriod pace the two ambient layers
+// below -- not per-building, so buildingVisible doesn't apply to them
+// directly (tickWeatherAmbientSounds scans the camera's own viewport
+// instead; tickDayNightAmbientSounds is global, like rain/fireflies
+// already are).
+const (
+	weatherAmbientPeriod  = 90
+	dayNightAmbientPeriod = 200
+)
+
+// tickWeatherAmbientSounds plays a seagull cue whenever the camera's
+// current viewport contains at least one water tile -- the user's
+// "если камера около воды" request. Scanning is limited to the on-screen
+// tiles (not the whole map) and only runs once every weatherAmbientPeriod
+// ticks, so this stays cheap even on a large map.
+func (g *Game) tickWeatherAmbientSounds() {
+	if g.worldTicks%weatherAmbientPeriod != 0 {
+		return
+	}
+	bounds := g.camera.VisibleTileBounds(0)
+	minX, minY := max(bounds.MinX, 0), max(bounds.MinY, 0)
+	maxX, maxY := min(bounds.MaxX, g.grid.Width-1), min(bounds.MaxY, g.grid.Height-1)
+	for y := minY; y <= maxY; y++ {
+		for x := minX; x <= maxX; x++ {
+			if g.grid.At(x, y).Terrain == world.Water {
+				audio.PlaySeagull()
+				return
+			}
+		}
+	}
+}
+
+// tickDayNightAmbientSounds plays crickets at night and a lighter day
+// ambience during the day -- a global atmospheric layer independent of
+// camera position, the same way rain/fireflies already are (see
+// internal/render/atmosphere.go, internal/render/ambient.go). Sunrise and
+// Sunset stay silent here: they're short transitional phases and nothing
+// was specifically requested for them.
+func (g *Game) tickDayNightAmbientSounds() {
+	if g.worldTicks%dayNightAmbientPeriod != 0 {
+		return
+	}
+	switch render.CurrentDayPhase() {
+	case worldclock.Night:
+		audio.PlayCricket()
+	case worldclock.Day:
+		audio.PlayDayAmbience()
 	}
 }
 

@@ -62,6 +62,20 @@ func TestPlayFunctionsDoNotPanicAtZeroVolume(t *testing.T) {
 	PlayChop()
 	PlayHammer()
 	PlayMining()
+	PlayScythe()
+	PlayMillWork()
+	PlayBakery()
+	PlaySquish()
+	PlayPigOink()
+	PlayMeatChop()
+	PlaySaw()
+	PlayForge()
+	PlayOarSplash()
+	PlayCartCreak()
+	PlayTavernChatter()
+	PlaySeagull()
+	PlayCricket()
+	PlayDayAmbience()
 }
 
 // TestLoadOGGSetSkipsMissingFilesInsteadOfPanicking is the core contract
@@ -91,14 +105,20 @@ func TestLoadMusicLoopReturnsNilInsteadOfPanickingWhenMissing(t *testing.T) {
 // go test's own working directory before this test ever runs).
 func TestRealAssetsLoadSuccessfully(t *testing.T) {
 	dir := repoAssetDir(t)
-	if got := loadOGGSet(dir, "chop", 5); len(got) != 5 {
-		t.Errorf("loadOGGSet(chop) = %d of 5 real assets/audio/sfx/chop_*.ogg files", len(got))
+	sets := []struct {
+		name string
+		n    int
+	}{
+		{"chop", 5}, {"hammer", 5}, {"mining", 5},
+		{"scythe", 5}, {"millwork", 3}, {"bakery", 2}, {"squish", 2},
+		{"pigoink", 3}, {"meatchop", 4}, {"saw", 4}, {"forge", 5},
+		{"oarsplash", 2}, {"cartcreak", 4}, {"tavernchatter", 4},
+		{"seagull", 3}, {"cricket", 1}, {"dayambience", 1},
 	}
-	if got := loadOGGSet(dir, "hammer", 5); len(got) != 5 {
-		t.Errorf("loadOGGSet(hammer) = %d of 5 real assets/audio/sfx/hammer_*.ogg files", len(got))
-	}
-	if got := loadOGGSet(dir, "mining", 5); len(got) != 5 {
-		t.Errorf("loadOGGSet(mining) = %d of 5 real assets/audio/sfx/mining_*.ogg files", len(got))
+	for _, set := range sets {
+		if got := loadOGGSet(dir, set.name, set.n); len(got) != set.n {
+			t.Errorf("loadOGGSet(%s) = %d of %d real assets/audio/sfx/%s_*.ogg files", set.name, len(got), set.n, set.name)
+		}
 	}
 	if p := loadMusicLoop(dir, "village.wav"); p == nil {
 		t.Error("loadMusicLoop(village.wav) returned nil -- assets/audio/music/village.wav did not load")

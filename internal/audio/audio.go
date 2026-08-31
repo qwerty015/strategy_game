@@ -54,6 +54,29 @@ var (
 	hammerSFX [][]byte
 	miningSFX [][]byte
 
+	// Building ambient cues (see cmd/game's tickBuildingAmbientSounds) --
+	// one set per building Kind that got a distinct sound in this round.
+	// LumberjackHut/QuarryHut/MinerHut aren't here: they already play
+	// through chopSFX/miningSFX above, tied to the worker's own state
+	// rather than a fixed period.
+	scytheSFX        [][]byte // Farm
+	millWorkSFX      [][]byte // Mill
+	bakerySFX        [][]byte // Bakery
+	squishSFX        [][]byte // Winery
+	pigOinkSFX       [][]byte // PigFarm
+	meatChopSFX      [][]byte // MeatWorkshop
+	sawSFX           [][]byte // CarpentryWorkshop
+	forgeSFX         [][]byte // Smeltery
+	oarSplashSFX     [][]byte // FisherHut
+	cartCreakSFX     [][]byte // Warehouse
+	tavernChatterSFX [][]byte // Tavern
+
+	// Weather/time-of-day ambient cues -- not tied to any one building,
+	// see cmd/game's tickWeatherAmbientSounds/tickDayNightAmbientSounds.
+	seagullSFX     [][]byte // camera is looking at water
+	cricketSFX     [][]byte // night
+	dayAmbienceSFX [][]byte // day
+
 	musicPlayer *audio.Player
 )
 
@@ -61,6 +84,23 @@ func init() {
 	chopSFX = loadOGGSet(assetDir, "chop", 5)
 	hammerSFX = loadOGGSet(assetDir, "hammer", 5)
 	miningSFX = loadOGGSet(assetDir, "mining", 5)
+
+	scytheSFX = loadOGGSet(assetDir, "scythe", 5)
+	millWorkSFX = loadOGGSet(assetDir, "millwork", 3)
+	bakerySFX = loadOGGSet(assetDir, "bakery", 2)
+	squishSFX = loadOGGSet(assetDir, "squish", 2)
+	pigOinkSFX = loadOGGSet(assetDir, "pigoink", 3)
+	meatChopSFX = loadOGGSet(assetDir, "meatchop", 4)
+	sawSFX = loadOGGSet(assetDir, "saw", 4)
+	forgeSFX = loadOGGSet(assetDir, "forge", 5)
+	oarSplashSFX = loadOGGSet(assetDir, "oarsplash", 2)
+	cartCreakSFX = loadOGGSet(assetDir, "cartcreak", 4)
+	tavernChatterSFX = loadOGGSet(assetDir, "tavernchatter", 4)
+
+	seagullSFX = loadOGGSet(assetDir, "seagull", 3)
+	cricketSFX = loadOGGSet(assetDir, "cricket", 1)
+	dayAmbienceSFX = loadOGGSet(assetDir, "dayambience", 1)
+
 	musicPlayer = loadMusicLoop(assetDir, "village.wav")
 	if musicPlayer != nil {
 		musicPlayer.SetVolume(musicVolume)
@@ -141,6 +181,48 @@ func PlayHammer() { playRandom(hammerSFX) }
 // PlayMining plays one randomly chosen pickaxe/mining sound, shared by
 // both the quarry and miner professions -- see cmd/game's tickAudioCues.
 func PlayMining() { playRandom(miningSFX) }
+
+// PlayScythe plays a Farm's harvest cue.
+func PlayScythe() { playRandom(scytheSFX) }
+
+// PlayMillWork plays a Mill's grinding-machinery cue.
+func PlayMillWork() { playRandom(millWorkSFX) }
+
+// PlayBakery plays a Bakery's cue.
+func PlayBakery() { playRandom(bakerySFX) }
+
+// PlaySquish plays a Winery's grape-stomping cue.
+func PlaySquish() { playRandom(squishSFX) }
+
+// PlayPigOink plays a PigFarm's cue.
+func PlayPigOink() { playRandom(pigOinkSFX) }
+
+// PlayMeatChop plays a MeatWorkshop's cue.
+func PlayMeatChop() { playRandom(meatChopSFX) }
+
+// PlaySaw plays a CarpentryWorkshop's cue.
+func PlaySaw() { playRandom(sawSFX) }
+
+// PlayForge plays a Smeltery's cue.
+func PlayForge() { playRandom(forgeSFX) }
+
+// PlayOarSplash plays a FisherHut's cue.
+func PlayOarSplash() { playRandom(oarSplashSFX) }
+
+// PlayCartCreak plays a Warehouse's cue.
+func PlayCartCreak() { playRandom(cartCreakSFX) }
+
+// PlayTavernChatter plays a Tavern's cue.
+func PlayTavernChatter() { playRandom(tavernChatterSFX) }
+
+// PlaySeagull plays when the camera's viewport contains a water tile.
+func PlaySeagull() { playRandom(seagullSFX) }
+
+// PlayCricket plays during the night, regardless of camera position.
+func PlayCricket() { playRandom(cricketSFX) }
+
+// PlayDayAmbience plays during the day, regardless of camera position.
+func PlayDayAmbience() { playRandom(dayAmbienceSFX) }
 
 func playRandom(set [][]byte) {
 	if len(set) == 0 || sfxVolume <= 0 {
