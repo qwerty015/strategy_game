@@ -1,25 +1,52 @@
-// Package assets embeds the game's terrain, building and unit art and
-// decodes it into ready-to-draw *ebiten.Image values once at startup. The
-// generated sprites are normalized to small 64x64 pixel-art canvases before
-// they reach the GPU. Some source PNGs retain high-resolution originals, but
-// keeping those full-size textures alive wastes memory for 24-pixel tiles.
-// See CREDITS.md for provenance.
+// Package assets loads the game's terrain, building and unit art from the
+// external assets/sprites folder beside the executable and decodes it into
+// ready-to-draw *ebiten.Image values once at startup. Source-tree loading is
+// retained as a development fallback for `go run` and tests. The generated
+// sprites are normalized to small 64x64 pixel-art canvases before they reach
+// the GPU. Some source PNGs retain high-resolution originals, but keeping
+// those full-size textures alive wastes memory for 24-pixel tiles. See
+// CREDITS.md for provenance.
 package assets
 
 import (
-	"bytes"
-	"embed"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
 	"math"
+	"os"
+	"path/filepath"
+	"runtime"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
-//go:embed tiles/*.png units/*.png generated/*.png
-var files embed.FS
+// spriteDir is normally assets/sprites beside strategy_game.exe. The source
+// fallback keeps development commands independent of their current directory.
+var spriteDir = resolveSpriteDir()
+
+func resolveSpriteDir() string {
+	executableCandidate := filepath.Join("assets", "sprites")
+	if executable, err := os.Executable(); err == nil {
+		executableCandidate = filepath.Join(filepath.Dir(executable), "assets", "sprites")
+		if directoryExists(executableCandidate) {
+			return executableCandidate
+		}
+	}
+	if _, thisFile, _, ok := runtime.Caller(0); ok {
+		sourceCandidate := filepath.Dir(thisFile)
+		if directoryExists(sourceCandidate) {
+			return sourceCandidate
+		}
+	}
+	return executableCandidate
+}
+
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
 
 // TileSize is the pixel width/height of every source sprite's canvas in
 // this package, before the render package scales it up to the screen's
@@ -136,13 +163,16 @@ var (
 )
 
 func mustDecode(name string) image.Image {
-	data, err := files.ReadFile(name)
+	path := filepath.Join(spriteDir, filepath.FromSlash(name))
+	file, err := os.Open(path)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("assets: cannot open %q; keep assets\\sprites beside the executable: %v", path, err))
 	}
-	img, err := png.Decode(bytes.NewReader(data))
+	defer file.Close()
+
+	img, err := png.Decode(file)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("assets: cannot decode %q: %v", path, err))
 	}
 	return img
 }

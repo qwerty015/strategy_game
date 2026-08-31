@@ -1,112 +1,83 @@
 <#
 .SYNOPSIS
-    Builds the game into a standalone Windows distribution folder.
+    Собирает готовую папку Windows-дистрибутива игры.
 
 .DESCRIPTION
-    Compiles cmd/game into bin\strategy_game.exe and makes sure bin\saves\
-    exists next to it. That's the whole distribution: assets (every PNG
-    under internal/assets) are embedded into the binary at compile time via
-    go:embed, so the exe needs nothing else to run -- bin\ can be zipped and
-    handed to someone as-is. bin\saves\ isn't strictly required (the game
-    creates it itself on the first save, see internal/save.Save's
-    os.MkdirAll), but it's created ahead of time so the folder looks right
-    to a player who goes looking for their save files before ever saving.
-
-.PARAMETER Release
-    Strip debug symbols and the DWARF table (-ldflags "-s -w") for a
-    smaller exe. Off by default: this project is still under active
-    development, and stripped binaries produce much less useful panic
-    stack traces -- worth the extra few MB while bugs are still expected.
-
-.PARAMETER Clean
-    Delete bin\ before building, instead of building on top of whatever
-    is already there.
+    Скрипт всегда очищает bin\, компилирует strategy_game.exe и копирует
+    рядом с ним внешние игровые ассеты. PNG-спрайты и звук намеренно не
+    вшиваются в exe: для запуска и распространения нужна вся папка bin\.
 
 .EXAMPLE
     .\tools\build.ps1
-    Ordinary development build.
-
-.EXAMPLE
-    .\tools\build.ps1 -Release -Clean
-    Fresh stripped build, for handing bin\ to someone else.
 #>
-[CmdletBinding()]
-param(
-    [switch]$Release,
-    [switch]$Clean
-)
-
 $ErrorActionPreference = 'Stop'
 
-# tools\build.ps1 -> repo root is this script's parent directory.
-$repoRoot = Split-Path -Parent $PSScriptRoot
+# tools\build.ps1 -> repository root.
+$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $binDir = Join-Path $repoRoot 'bin'
 $exePath = Join-Path $binDir 'strategy_game.exe'
-$savesDir = Join-Path $binDir 'saves'
+$spriteSource = Join-Path $repoRoot 'internal\assets'
+$audioSource = Join-Path $repoRoot 'assets\audio'
+$assetsDir = Join-Path $binDir 'assets'
+$spriteDestination = Join-Path $assetsDir 'sprites'
 
-function Write-Step($message) {
-    Write-Host "==> $message" -ForegroundColor Cyan
+function Write-Step([string]$Message) {
+    Write-Host "==> $Message" -ForegroundColor Cyan
+}
+
+function Copy-RequiredDirectory([string]$Source, [string]$Destination) {
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+        throw "Required asset folder is missing: $Source"
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
 }
 
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-    Write-Host "go was not found on PATH. Install Go (https://go.dev/dl/) and reopen this shell." -ForegroundColor Red
-    exit 1
+    throw 'Go was not found on PATH. Install Go (https://go.dev/dl/) and reopen this shell.'
+}
+
+# The output is intentionally a fixed, verified child of the repository.
+# Never let the cleanup resolve to a broad or user-supplied path.
+$expectedBinDir = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'bin'))
+if ($binDir -ne $expectedBinDir) {
+    throw "Unsafe build directory: $binDir"
 }
 
 Push-Location $repoRoot
 try {
-    if ($Clean -and (Test-Path $binDir)) {
-        Write-Step "Removing existing bin\"
-        Remove-Item -Recurse -Force $binDir
+    if (Test-Path -LiteralPath $binDir) {
+        Write-Step 'Cleaning bin\\'
+        Remove-Item -LiteralPath $binDir -Recurse -Force
     }
-    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+    New-Item -ItemType Directory -Path $binDir | Out-Null
 
-    # A previous run of the exe (or Explorer previewing it) can hold the
-    # file open on Windows; go build's own error for that is a generic
-    # "Access is denied", easy to mistake for something else. Fail with a
-    # clearer message before even trying.
-    if (Test-Path $exePath) {
-        try {
-            $stream = [System.IO.File]::Open($exePath, 'Open', 'Write', 'None')
-            $stream.Close()
-        } catch {
-            Write-Host "$exePath is in use -- close the running game first, then re-run this script." -ForegroundColor Red
-            exit 1
-        }
-    }
-
-    $ldflags = ''
-    $mode = 'development'
-    if ($Release) {
-        $ldflags = '-s -w'
-        $mode = 'release (stripped)'
-    }
-
-    Write-Step "Building $mode binary"
-    $buildArgs = @('build')
-    if ($ldflags) { $buildArgs += @('-ldflags', $ldflags) }
-    $buildArgs += @('-o', $exePath, './cmd/game')
-
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    & go @buildArgs
+    Write-Step 'Compiling strategy_game.exe'
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    & go build -o $exePath ./cmd/game
     $exitCode = $LASTEXITCODE
-    $sw.Stop()
-
+    $timer.Stop()
     if ($exitCode -ne 0) {
-        Write-Host "Build failed (go exit code $exitCode)." -ForegroundColor Red
-        exit $exitCode
+        throw "Build failed (go exit code $exitCode)."
     }
 
-    Write-Step "Preparing bin\saves\"
-    New-Item -ItemType Directory -Force -Path $savesDir | Out-Null
+    Write-Step 'Copying external sprites'
+    New-Item -ItemType Directory -Path $spriteDestination -Force | Out-Null
+    foreach ($folder in 'tiles', 'units', 'generated') {
+        Copy-RequiredDirectory (Join-Path $spriteSource $folder) $spriteDestination
+    }
 
-    $sizeMB = [Math]::Round((Get-Item $exePath).Length / 1MB, 1)
-    Write-Host ""
-    Write-Host "Build complete in $([Math]::Round($sw.Elapsed.TotalSeconds, 1))s." -ForegroundColor Green
+    Write-Step 'Copying external audio'
+    New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
+    Copy-RequiredDirectory $audioSource $assetsDir
+
+    $sizeMB = [Math]::Round((Get-Item -LiteralPath $exePath).Length / 1MB, 1)
+    Write-Host ''
+    Write-Host "Build complete in $([Math]::Round($timer.Elapsed.TotalSeconds, 1))s." -ForegroundColor Green
     Write-Host "  $exePath ($sizeMB MB)"
-    Write-Host "  $savesDir\"
-    Write-Host ""
-    Write-Host "bin\ is a complete, standalone copy -- zip it and hand it to anyone; nothing else is needed."
+    Write-Host "  $spriteDestination\\"
+    Write-Host "  $(Join-Path $assetsDir 'audio')\\"
+    Write-Host ''
+    Write-Host 'Keep the complete bin\ folder together when distributing the game.'
 } finally {
     Pop-Location
 }

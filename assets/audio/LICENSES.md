@@ -76,3 +76,28 @@ CC0".)
 Все файлы этого раздела перекодированы в ogg/vorbis через `ffmpeg` для
 единообразия с остальными `sfx/*.ogg` — оригинальные wav/mp3 не хранятся
 в репозитории.
+
+## Звук мира: шум воды (`sfx/`, третий заход)
+
+**[OpenGameArt — 40 CC0 water / splash / slime SFX](https://opengameart.org/content/40-cc0-water-splash-slime-sfx)**
+by rubberduck, `water-splash-slime-sfx.zip`. Лицензия: CC0. Уже готовые
+ogg-файлы, без перекодирования.
+
+- `waterwaves_000..002.ogg` — из `loop_water_01..03.ogg` (плеск/шум воды,
+  играет вместе с чайками, когда в кадре камеры есть вода).
+
+## Звук мира: ветер (`sfx/`, четвёртый заход)
+
+Общий фоновый эмбиент, не привязан к камере или времени суток.
+
+- [OpenGameArt — Wind Loop (whoosh)](https://opengameart.org/content/wind-whoosh-loop) →
+  `wind_000.ogg`. Лицензия: CC0.
+- [Freesound — felix.blume, Wind blowing in the countryside during spring, Tall Grass Prairie, Oklahoma, USA](https://freesound.org/people/felix.blume/sounds/215414/) →
+  `wind_001.ogg` (обрезан до 15 сек). Лицензия: CC0 (проверена
+  индивидуально на странице звука).
+- [Freesound — felix.blume, Wind is blowing in the grass of a patagonian plain (Tierra del Fuego, Argentina)](https://freesound.org/people/felix.blume/sounds/139337/) →
+  `wind_002.ogg` (обрезан до 15 сек). Лицензия: CC0 (проверена
+  индивидуально).
+
+(Кандидат "Wind Loop" на OpenGameArt — `wind-01_0.ogg` — сознательно не
+взят: лицензия у него CC-BY, не CC0, не подходит под конвенцию проекта.)

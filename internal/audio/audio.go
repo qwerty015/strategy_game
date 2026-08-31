@@ -5,9 +5,9 @@
 //
 // Per the user's explicit instruction, sound files are not baked into
 // the binary: only source code and the engine belong in the executable.
-// Every file here is read from the assets/audio/ folder on disk at
-// runtime (see assetDir), the same relative-path convention cmd/game's
-// save slots already use (saves/panel_slot_%d.json) -- this package has
+// Every file here is read from assets/audio/ beside the executable at
+// runtime (see assetDir). A source-tree fallback keeps `go run` and tests
+// working from any current directory; this package has
 // no embed directive anywhere. A missing file (someone copied just the
 // .exe without the assets folder) is logged and that one sound is
 // skipped; it must never crash the game.
@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/audio/vorbis"
@@ -33,9 +34,32 @@ const sampleRate = 44100
 
 var context = audio.NewContext(sampleRate)
 
-// assetDir is the folder every sound is read from, relative to the
-// current working directory -- same convention as cmd/game's saves/.
-const assetDir = "assets/audio"
+// assetDir is normally assets/audio beside strategy_game.exe. The source
+// fallback lets development builds find the same files without depending on
+// the current working directory.
+var assetDir = resolveAssetDir()
+
+func resolveAssetDir() string {
+	executableCandidate := filepath.Join("assets", "audio")
+	if executable, err := os.Executable(); err == nil {
+		executableCandidate = filepath.Join(filepath.Dir(executable), "assets", "audio")
+		if directoryExists(executableCandidate) {
+			return executableCandidate
+		}
+	}
+	if _, thisFile, _, ok := runtime.Caller(0); ok {
+		sourceCandidate := filepath.Join(filepath.Dir(thisFile), "..", "..", "assets", "audio")
+		if directoryExists(sourceCandidate) {
+			return sourceCandidate
+		}
+	}
+	return executableCandidate
+}
+
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
 
 // Default volumes: music sits well under the sound effects so hammering/
 // chopping/mining reads as the foreground, the loop as background color.
@@ -72,10 +96,13 @@ var (
 	tavernChatterSFX [][]byte // Tavern
 
 	// Weather/time-of-day ambient cues -- not tied to any one building,
-	// see cmd/game's tickWeatherAmbientSounds/tickDayNightAmbientSounds.
+	// see cmd/game's tickWeatherAmbientSounds/tickDayNightAmbientSounds/
+	// tickWindAmbientSounds.
 	seagullSFX     [][]byte // camera is looking at water
+	waterWavesSFX  [][]byte // camera is looking at water
 	cricketSFX     [][]byte // night
 	dayAmbienceSFX [][]byte // day
+	windSFX        [][]byte // always -- not tied to camera or time of day
 
 	musicPlayer *audio.Player
 )
@@ -98,8 +125,10 @@ func init() {
 	tavernChatterSFX = loadOGGSet(assetDir, "tavernchatter", 4)
 
 	seagullSFX = loadOGGSet(assetDir, "seagull", 3)
+	waterWavesSFX = loadOGGSet(assetDir, "waterwaves", 3)
 	cricketSFX = loadOGGSet(assetDir, "cricket", 1)
 	dayAmbienceSFX = loadOGGSet(assetDir, "dayambience", 1)
+	windSFX = loadOGGSet(assetDir, "wind", 3)
 
 	musicPlayer = loadMusicLoop(assetDir, "village.wav")
 	if musicPlayer != nil {
@@ -116,7 +145,7 @@ func init() {
 // shared Player couldn't do. A file that fails to load is logged and
 // simply absent from the set; the set can end up smaller than n, or even
 // empty, without anything else breaking (see playRandom). dir is a
-// parameter (not read from the assetDir constant directly) so a test can
+// parameter (not read from the package assetDir directly) so a test can
 // point it at the repo's real assets folder regardless of `go test`'s
 // per-package working directory.
 func loadOGGSet(dir, name string, n int) [][]byte {
@@ -218,11 +247,19 @@ func PlayTavernChatter() { playRandom(tavernChatterSFX) }
 // PlaySeagull plays when the camera's viewport contains a water tile.
 func PlaySeagull() { playRandom(seagullSFX) }
 
+// PlayWaterWaves plays alongside PlaySeagull, same trigger -- gentle
+// water/wave ambience rather than a bird cry.
+func PlayWaterWaves() { playRandom(waterWavesSFX) }
+
 // PlayCricket plays during the night, regardless of camera position.
 func PlayCricket() { playRandom(cricketSFX) }
 
 // PlayDayAmbience plays during the day, regardless of camera position.
 func PlayDayAmbience() { playRandom(dayAmbienceSFX) }
+
+// PlayWind plays a general ambient wind cue -- not tied to camera
+// position, time of day, or any building.
+func PlayWind() { playRandom(windSFX) }
 
 func playRandom(set [][]byte) {
 	if len(set) == 0 || sfxVolume <= 0 {

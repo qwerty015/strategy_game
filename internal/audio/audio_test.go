@@ -9,8 +9,8 @@ import (
 // repoAssetDir resolves assets/audio/ relative to this test file's own
 // location rather than the current working directory: `go test` runs
 // with the package directory as its CWD, not the repo root, so the
-// package-level assetDir constant (meant to be resolved from wherever the
-// game binary is actually launched) can't be used here directly.
+// package-level assetDir (resolved once during startup, next to the executable)
+// cannot be used here directly.
 func repoAssetDir(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -74,8 +74,10 @@ func TestPlayFunctionsDoNotPanicAtZeroVolume(t *testing.T) {
 	PlayCartCreak()
 	PlayTavernChatter()
 	PlaySeagull()
+	PlayWaterWaves()
 	PlayCricket()
 	PlayDayAmbience()
+	PlayWind()
 }
 
 // TestLoadOGGSetSkipsMissingFilesInsteadOfPanicking is the core contract
@@ -113,7 +115,8 @@ func TestRealAssetsLoadSuccessfully(t *testing.T) {
 		{"scythe", 5}, {"millwork", 3}, {"bakery", 2}, {"squish", 2},
 		{"pigoink", 3}, {"meatchop", 4}, {"saw", 4}, {"forge", 5},
 		{"oarsplash", 2}, {"cartcreak", 4}, {"tavernchatter", 4},
-		{"seagull", 3}, {"cricket", 1}, {"dayambience", 1},
+		{"seagull", 3}, {"waterwaves", 3}, {"cricket", 1}, {"dayambience", 1},
+		{"wind", 3},
 	}
 	for _, set := range sets {
 		if got := loadOGGSet(dir, set.name, set.n); len(got) != set.n {

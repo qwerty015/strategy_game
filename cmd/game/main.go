@@ -572,6 +572,7 @@ func (g *Game) Update() error {
 		g.tickBuildingAmbientSounds()
 		g.tickWeatherAmbientSounds()
 		g.tickDayNightAmbientSounds()
+		g.tickWindAmbientSounds()
 	}
 
 	return nil
@@ -2052,13 +2053,15 @@ func (g *Game) tickBuildingAmbientSounds() {
 const (
 	weatherAmbientPeriod  = 90
 	dayNightAmbientPeriod = 200
+	windAmbientPeriod     = 240 // its own period so it doesn't always land on the same tick as day/night
 )
 
-// tickWeatherAmbientSounds plays a seagull cue whenever the camera's
-// current viewport contains at least one water tile -- the user's
-// "если камера около воды" request. Scanning is limited to the on-screen
-// tiles (not the whole map) and only runs once every weatherAmbientPeriod
-// ticks, so this stays cheap even on a large map.
+// tickWeatherAmbientSounds plays a seagull cue plus a gentle water/wave
+// cue whenever the camera's current viewport contains at least one water
+// tile -- the user's "если камера около воды" / "звуки мира: шум воды"
+// requests. Scanning is limited to the on-screen tiles (not the whole
+// map) and only runs once every weatherAmbientPeriod ticks, so this stays
+// cheap even on a large map.
 func (g *Game) tickWeatherAmbientSounds() {
 	if g.worldTicks%weatherAmbientPeriod != 0 {
 		return
@@ -2070,6 +2073,7 @@ func (g *Game) tickWeatherAmbientSounds() {
 		for x := minX; x <= maxX; x++ {
 			if g.grid.At(x, y).Terrain == world.Water {
 				audio.PlaySeagull()
+				audio.PlayWaterWaves()
 				return
 			}
 		}
@@ -2091,6 +2095,16 @@ func (g *Game) tickDayNightAmbientSounds() {
 		audio.PlayCricket()
 	case worldclock.Day:
 		audio.PlayDayAmbience()
+	}
+}
+
+// tickWindAmbientSounds plays a general ambient wind cue -- the user's
+// "звуки мира: ветер" request. Unlike every other ambient cue in this
+// file it isn't gated on camera position or time of day: wind is a
+// constant, map-wide presence.
+func (g *Game) tickWindAmbientSounds() {
+	if g.worldTicks%windAmbientPeriod == 0 {
+		audio.PlayWind()
 	}
 }
 
