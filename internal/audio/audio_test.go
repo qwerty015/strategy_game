@@ -80,6 +80,35 @@ func TestPlayFunctionsDoNotPanicAtZeroVolume(t *testing.T) {
 	PlayWind()
 }
 
+// TestSetSFXVolumeZeroStopsAlreadyPlayingSounds covers the user's explicit
+// "если громкость в 0 - полная тишина!" requirement: dropping SFX volume
+// to 0 must immediately silence a sound that's already mid-playback, not
+// just suppress future Play* calls -- otherwise a long clip started a
+// moment before the click keeps playing at its old volume until it
+// finishes.
+func TestSetSFXVolumeZeroStopsAlreadyPlayingSounds(t *testing.T) {
+	defer SetSFXVolume(defaultSFXVolume)
+	if len(chopSFX) == 0 {
+		t.Skip("chopSFX is empty -- real assets/audio/sfx/chop_*.ogg not available in this environment")
+	}
+
+	SetSFXVolume(defaultSFXVolume)
+	PlayChop()
+	if len(activeSFX) == 0 || !activeSFX[len(activeSFX)-1].IsPlaying() {
+		t.Fatal("PlayChop() at nonzero volume did not start a tracked, playing player -- test setup is broken")
+	}
+
+	SetSFXVolume(0)
+	for _, p := range activeSFX {
+		if p.IsPlaying() {
+			t.Error("a player from before SetSFXVolume(0) is still playing")
+		}
+	}
+	if len(activeSFX) != 0 {
+		t.Errorf("activeSFX after SetSFXVolume(0) = %d entries, want 0", len(activeSFX))
+	}
+}
+
 // TestLoadOGGSetSkipsMissingFilesInsteadOfPanicking is the core contract
 // from this package's doc comment: assets live on disk, not go:embed'd,
 // so a missing folder/file (e.g. the .exe was copied without assets/)

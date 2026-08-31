@@ -105,6 +105,15 @@ var (
 	windSFX        [][]byte // always -- not tied to camera or time of day
 
 	musicPlayer *audio.Player
+
+	// activeSFX tracks every one-shot player created by playRandom that
+	// might still be playing, so SetSFXVolume(0) can stop them immediately
+	// instead of only suppressing *future* Play* calls -- see its doc
+	// comment. Everything here (playRandom, SetSFXVolume) runs on the same
+	// single game-loop goroutine (see cmd/game's Update), so this needs no
+	// separate locking, matching the rest of this package's plain package
+	// vars.
+	activeSFX []*audio.Player
 )
 
 func init() {
@@ -269,6 +278,21 @@ func playRandom(set [][]byte) {
 	player := context.NewPlayerFromBytes(data)
 	player.SetVolume(sfxVolume)
 	player.Play()
+	activeSFX = trackSFXPlayer(activeSFX, player)
+}
+
+// trackSFXPlayer appends p, first dropping any earlier players that have
+// already finished so activeSFX doesn't grow without bound over a long
+// session -- SFX clips are short (a few seconds at most), so this list
+// normally holds at most a handful of entries.
+func trackSFXPlayer(players []*audio.Player, p *audio.Player) []*audio.Player {
+	live := players[:0]
+	for _, existing := range players {
+		if existing.IsPlaying() {
+			live = append(live, existing)
+		}
+	}
+	return append(live, p)
 }
 
 // SetMusicVolume sets the background music volume, 0 (silent, and
@@ -295,12 +319,20 @@ func SetMusicVolume(v float64) {
 func MusicVolume() float64 { return musicVolume }
 
 // SetSFXVolume sets the volume every future PlayChop/PlayHammer/
-// PlayMining call uses (existing, already-playing one-shots are
-// unaffected -- they're short enough that this never matters in
-// practice). 0 suppresses new sound effects entirely rather than playing
-// them inaudibly.
+// PlayMining (etc.) call uses. Dropping to 0 also immediately stops every
+// one-shot that's still playing right now (via activeSFX) rather than
+// just letting it finish inaudibly at its old volume -- per the user's
+// explicit "если громкость в 0 - полная тишина!" requirement, 0 must mean
+// true, instant silence, not just "no *new* sounds from here on".
 func SetSFXVolume(v float64) {
 	sfxVolume = clamp01(v)
+	if sfxVolume > 0 {
+		return
+	}
+	for _, p := range activeSFX {
+		p.Pause()
+	}
+	activeSFX = activeSFX[:0]
 }
 
 // SFXVolume returns the current sound-effect volume, for the pause menu's
