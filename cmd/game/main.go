@@ -1938,6 +1938,22 @@ const (
 	audioHammerPeriod = 20                   // construction has no natural cycle length; picked by ear
 )
 
+// onAudioPeriod reports whether this tick is due for a periodic cue with
+// the given period. g.worldTicks is pre-incremented at the top of the
+// tick loop (see Update), so it's 1 on the very first simulated tick and
+// never actually 0 -- checking "== 0" would make every cue's first
+// occurrence wait a full period after the game starts (e.g. two real
+// minutes for windAmbientPeriod=240 at 2 ticks/sec), which read as
+// "sound is off" to the user until something else coincidentally
+// happened to line up. Checking "== 1" instead keeps the exact same
+// cadence but lines up the very first hit with the first simulated tick,
+// so an unconditional cue like wind is heard within a fraction of a
+// second of a fresh game starting -- immediate, audible proof that sound
+// works, per the user's explicit request.
+func (g *Game) onAudioPeriod(period int) bool {
+	return g.worldTicks%period == 1
+}
+
 // tickAudioCues plays occasional flavor sound effects for whichever
 // professions are actively working right now -- see the constants above
 // for why this isn't one sound per worker. Called once per simulation
@@ -1950,12 +1966,12 @@ const (
 // against the camera's viewport, the same TileBounds.Intersects check
 // render already uses to decide what's worth drawing.
 func (g *Game) tickAudioCues() {
-	if g.worldTicks%audioChopPeriod == 0 && anyMatch(g.jacks.Lumberjacks, func(j *lumberjack.Lumberjack) bool {
+	if g.onAudioPeriod(audioChopPeriod) && anyMatch(g.jacks.Lumberjacks, func(j *lumberjack.Lumberjack) bool {
 		return j.State() == lumberjack.StateChopping && g.buildingVisible(j.X, j.Y, 1)
 	}) {
 		audio.PlayChop()
 	}
-	if g.worldTicks%audioMinePeriod == 0 &&
+	if g.onAudioPeriod(audioMinePeriod) &&
 		(anyMatch(g.quarry.Quarrymen, func(q *quarry.Quarryman) bool {
 			return q.State() == quarry.StateMining && g.buildingVisible(q.X, q.Y, 1)
 		}) ||
@@ -1964,7 +1980,7 @@ func (g *Game) tickAudioCues() {
 			})) {
 		audio.PlayMining()
 	}
-	if g.worldTicks%audioHammerPeriod == 0 && anyMatch(g.builders.Builders, func(b *builder.Builder) bool {
+	if g.onAudioPeriod(audioHammerPeriod) && anyMatch(g.builders.Builders, func(b *builder.Builder) bool {
 		return (b.State() == builder.StateFoundation || b.State() == builder.StateFinishing) && g.buildingVisible(b.X, b.Y, 1)
 	}) {
 		audio.PlayHammer()
@@ -2034,7 +2050,7 @@ func (g *Game) tickBuildingAmbientSounds() {
 			continue
 		}
 		period, ok := buildingAmbientPeriod[b.Kind]
-		if !ok || g.worldTicks%period != 0 {
+		if !ok || !g.onAudioPeriod(period) {
 			continue
 		}
 		footprint := building.Types[b.Kind].Footprint
@@ -2063,7 +2079,7 @@ const (
 // map) and only runs once every weatherAmbientPeriod ticks, so this stays
 // cheap even on a large map.
 func (g *Game) tickWeatherAmbientSounds() {
-	if g.worldTicks%weatherAmbientPeriod != 0 {
+	if !g.onAudioPeriod(weatherAmbientPeriod) {
 		return
 	}
 	bounds := g.camera.VisibleTileBounds(0)
@@ -2087,7 +2103,7 @@ func (g *Game) tickWeatherAmbientSounds() {
 // Sunset stay silent here: they're short transitional phases and nothing
 // was specifically requested for them.
 func (g *Game) tickDayNightAmbientSounds() {
-	if g.worldTicks%dayNightAmbientPeriod != 0 {
+	if !g.onAudioPeriod(dayNightAmbientPeriod) {
 		return
 	}
 	switch render.CurrentDayPhase() {
@@ -2103,7 +2119,7 @@ func (g *Game) tickDayNightAmbientSounds() {
 // file it isn't gated on camera position or time of day: wind is a
 // constant, map-wide presence.
 func (g *Game) tickWindAmbientSounds() {
-	if g.worldTicks%windAmbientPeriod == 0 {
+	if g.onAudioPeriod(windAmbientPeriod) {
 		audio.PlayWind()
 	}
 }
