@@ -7,7 +7,19 @@ package economy
 // AGENTS.md. The caller (cmd/game) sets Count each frame to the number
 // of actual units in play.
 type Population struct {
-	Count   int
-	Deaths  int // starvation deaths across all living unit types
-	Removed int // player-initiated building removals and completed dismissals
+	Count  int
+	Deaths int // starvation deaths across all living unit types
+
+	// BuildingsRemoved counts player-demolished structures, including every
+	// individual road tile. UnitsDismissed counts workers/serfs who completed
+	// a player-requested dismissal. Keeping them separate makes the town
+	// summary describe what actually happened instead of one mixed total.
+	BuildingsRemoved int
+	UnitsDismissed   int
+
+	// Removed is the legacy combined counter saved by formats through v3.
+	// New code does not increment it; save migration moves its best-known
+	// total into BuildingsRemoved because old saves cannot reconstruct the
+	// original split after the fact.
+	Removed int
 }

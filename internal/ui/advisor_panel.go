@@ -52,12 +52,28 @@ func (l Layout) AdvisorAcknowledgeAt(x, y int) bool {
 	return image.Pt(x, y).In(l.AdvisorAcknowledgeButtonRect())
 }
 
-// DrawAdvisorToast renders one already-localized tip line with its
-// acknowledge button. It knows nothing about advisor.Kind -- cmd/game
-// turns a Tip into text (see its own advisorTipText) so this package
-// stays as unaware of that package as every other logic package is of
-// ebiten.
-func DrawAdvisorToast(screen *ebiten.Image, layout Layout, text string) {
+// AdvisorGoToButtonRect is the optional action beside acknowledgement. It is
+// absent on an unusually narrow map area, where an empty rectangle keeps the
+// hit-test harmless while the acknowledgement button remains usable.
+func (l Layout) AdvisorGoToButtonRect() image.Rectangle {
+	r := l.AdvisorToastRect()
+	ack := l.AdvisorAcknowledgeButtonRect()
+	x := ack.Min.X - advisorButtonMargin - advisorButtonWidth
+	if x < r.Min.X+advisorButtonMargin {
+		return image.Rectangle{}
+	}
+	return image.Rect(x, ack.Min.Y, x+advisorButtonWidth, ack.Max.Y)
+}
+
+// AdvisorGoToAt reports whether the optional focus action is under the cursor.
+func (l Layout) AdvisorGoToAt(x, y int) bool {
+	return image.Pt(x, y).In(l.AdvisorGoToButtonRect())
+}
+
+// DrawAdvisorToast renders one already-localized tip line with its action
+// buttons. showGoTo is true only when the tip has a concrete building for the
+// game layer to select and center; this package remains unaware of advisor.
+func DrawAdvisorToast(screen *ebiten.Image, layout Layout, text string, showGoTo bool) {
 	r := layout.AdvisorToastRect()
 	if r.Dx() <= 0 {
 		return
@@ -66,6 +82,13 @@ func DrawAdvisorToast(screen *ebiten.Image, layout Layout, text string) {
 	vector.StrokeRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), 2, panelEdgeColor, false)
 	DrawInspectorText(screen, text, float64(r.Min.X+14), float64(r.Min.Y+10))
 
+	if showGoTo {
+		if goTo := layout.AdvisorGoToButtonRect(); !goTo.Empty() {
+			vector.FillRect(screen, float32(goTo.Min.X), float32(goTo.Min.Y), float32(goTo.Dx()), float32(goTo.Dy()), panelInnerColor, false)
+			vector.StrokeRect(screen, float32(goTo.Min.X), float32(goTo.Min.Y), float32(goTo.Dx()), float32(goTo.Dy()), 2, panelEdgeColor, false)
+			DrawMenuText(screen, i18n.T().AdvisorGoToButton, float64(goTo.Min.X+10), float64(goTo.Min.Y+7))
+		}
+	}
 	btn := layout.AdvisorAcknowledgeButtonRect()
 	vector.FillRect(screen, float32(btn.Min.X), float32(btn.Min.Y), float32(btn.Dx()), float32(btn.Dy()), selectedColor, false)
 	vector.StrokeRect(screen, float32(btn.Min.X), float32(btn.Min.Y), float32(btn.Dx()), float32(btn.Dy()), 2, panelEdgeColor, false)

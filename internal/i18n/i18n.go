@@ -24,11 +24,17 @@ const Default = RU
 type Catalog struct {
 	WindowTitle string
 
-	Population   string
-	DeathsLabel  string
-	RemovedLabel string
-	ResourceName map[resource.Type]string
-	BuildingName map[building.Kind]string
+	Population                 string
+	DeathsLabel                string
+	RemovedLabel               string
+	BuildingsRemovedLabel      string
+	UnitsDismissedLabel        string
+	BuildingsLabel             string
+	PlayTimeLabel              string
+	TownSummaryLabel           string
+	ResourcesInWarehousesLabel string
+	ResourceName               map[resource.Type]string
+	BuildingName               map[building.Kind]string
 
 	BuildMenuTitle   string
 	BuildTab         string
@@ -123,18 +129,20 @@ type Catalog struct {
 	// Every AdvisorTip* string is formatted with that tip's own numbers
 	// (ticks left, building counts, serf counts) -- see advisorTipText
 	// for the exact argument order per kind.
-	AdvisorAcknowledgeButton       string
-	AdvisorTipFoodRunningOut       string // %d ticks left
-	AdvisorTipIdleBuilding         string // %d idle buildings, %d,%d one example's coordinates
-	AdvisorTipDisconnectedBuilding string // %d disconnected buildings, %d,%d one example's coordinates
-	AdvisorTipServeCountLow        string // %d current, %d recommended
-	AdvisorTipServeCountHigh       string // %d current, %d recommended
-	AdvisorTipGatherWorkerStuck    string // %d workers stuck, %d,%d one example's coordinates
-	CannotDeleteWarehouse          string
-	CannotDeleteTree               string
-	CannotDeleteFish               string
-	CannotDeleteStoneDeposit       string
-	CatchableLabel                 string
+	AdvisorAcknowledgeButton               string
+	AdvisorGoToButton                      string
+	AdvisorTipFoodRunningOut               string // %d ticks left
+	AdvisorTipConstructionMaterialsMissing string // resource name, missing amount, example x/y
+	AdvisorTipIdleBuilding                 string // %d idle buildings, %d,%d one example's coordinates
+	AdvisorTipDisconnectedBuilding         string // %d disconnected buildings, %d,%d one example's coordinates
+	AdvisorTipServeCountLow                string // %d current, %d recommended
+	AdvisorTipServeCountHigh               string // %d current, %d recommended
+	AdvisorTipGatherWorkerStuck            string // %d workers stuck, %d,%d one example's coordinates
+	CannotDeleteWarehouse                  string
+	CannotDeleteTree                       string
+	CannotDeleteFish                       string
+	CannotDeleteStoneDeposit               string
+	CatchableLabel                         string
 
 	CantBuildHere         string
 	NotEnoughGold         string

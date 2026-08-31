@@ -42,6 +42,11 @@ type HireOption struct {
 	Limit     int
 	Available bool
 
+	// GoldCost is the exact price of hiring this unit. It is supplied by the
+	// game rules rather than duplicated by the UI, so the card always matches
+	// the amount actually deducted when the player clicks it.
+	GoldCost int
+
 	// Recommended is a suggested headcount, shown on the card when > 0.
 	// Currently only set for HireSerf (see cmd/game's
 	// recommendedServeCount), per the user's explicit request: "в меню

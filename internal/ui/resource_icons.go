@@ -32,10 +32,65 @@ var (
 	iconIron           = color.RGBA{R: 172, G: 185, B: 192, A: 255}
 )
 
-// drawResourceIcon draws a tiny pixel-style glyph without loading another
-// sprite sheet. Keeping it procedural makes the warehouse list extend to a
-// newly added resource automatically: one case is all the UI needs.
+// resourceTooltip is collected while panels render and drawn once on top of
+// all side UI at the end of the frame. That avoids a tooltip being hidden by
+// a later panel or minimap draw call.
+var resourceTooltip struct {
+	active bool
+	kind   resource.Type
+	x, y   int
+}
+
+// BeginResourceTooltips clears the previous frame's hover target. Every UI
+// frame must call it before drawing a resource icon.
+func BeginResourceTooltips() {
+	resourceTooltip.active = false
+}
+
+// DrawResourceTooltip renders the localized name of the resource under the
+// cursor. Values stay next to their icons in the panel; the tooltip's purpose
+// is to identify the compact visual glyph without duplicating every label.
+func DrawResourceTooltip(screen *ebiten.Image, layout Layout) {
+	if !resourceTooltip.active {
+		return
+	}
+	label := i18n.T().ResourceName[resourceTooltip.kind]
+	width := 28 + len([]rune(label))*8
+	if width < 92 {
+		width = 92
+	}
+	const height = 22
+	x, y := resourceTooltip.x+14, resourceTooltip.y+14
+	if x+width > layout.Width-4 {
+		x = layout.Width - width - 4
+	}
+	if y+height > layout.Height-4 {
+		y = resourceTooltip.y - height - 8
+	}
+	if x < 4 {
+		x = 4
+	}
+	if y < 4 {
+		y = 4
+	}
+	fillIconRect(screen, x, y, width, height, panelColor)
+	fillIconRect(screen, x, y, width, 1, panelEdgeColor)
+	fillIconRect(screen, x, y+height-1, width, 1, panelEdgeColor)
+	fillIconRect(screen, x, y, 1, height, panelEdgeColor)
+	fillIconRect(screen, x+width-1, y, 1, height, panelEdgeColor)
+	drawResourceIcon(screen, resourceTooltip.kind, x+4, y+4)
+	DrawInspectorText(screen, label, float64(x+resourceIconSize+10), float64(y+4))
+}
+
+// drawResourceIcon draws an authored tiny resource PNG when one is available,
+// falling back to the procedural glyph below for an incomplete asset bundle.
 func drawResourceIcon(screen *ebiten.Image, kind resource.Type, x, y int) {
+	mx, my := ebiten.CursorPosition()
+	if mx >= x && mx < x+resourceIconSize && my >= y && my < y+resourceIconSize {
+		resourceTooltip.active = true
+		resourceTooltip.kind = kind
+		resourceTooltip.x, resourceTooltip.y = mx, my
+	}
 	fillIconRect(screen, x, y, resourceIconSize, resourceIconSize, resourceIconBack)
 	fillIconRect(screen, x, y, resourceIconSize, 1, resourceIconBorder)
 	fillIconRect(screen, x, y+resourceIconSize-1, resourceIconSize, 1, resourceIconBorder)

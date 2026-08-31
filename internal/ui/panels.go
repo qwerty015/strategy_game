@@ -65,8 +65,9 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		vector.FillRect(screen, float32(x), float32(y), float32(w), float32(h), fill, false)
 		vector.FillRect(screen, float32(x), float32(y+h-3), float32(w), 3, panelEdgeColor, false)
 
-		// The former footprint line made the construction list visually noisy.
-		// A single centered label leaves room for a more readable icon and type.
+		// The building portrait identifies the card and its counter; the compact
+		// resource line below shows the same exact construction cost used by the
+		// placement code, without making the player open a separate tooltip.
 		iconSize := min(34, cardH-6)
 		iconX := x + 8
 		iconY := y + (cardH-iconSize)/2
@@ -75,7 +76,9 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		if n := builtCounts[kind]; n > 0 {
 			label = fmt.Sprintf("%s (%d)", label, n)
 		}
-		DrawMenuText(screen, label, float64(iconX+iconSize+10), float64(y+(cardH-12)/2))
+		labelX := iconX + iconSize + 10
+		DrawMenuText(screen, label, float64(labelX), float64(y+4))
+		drawBuildCost(screen, kind, labelX, y+20)
 	}
 }
 
@@ -124,16 +127,45 @@ func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {
 		iconX := x + 8
 		iconY := y + (cardH-iconSize)/2
 		drawHireIcon(screen, option.Kind, iconX, iconY, iconSize)
-		DrawMenuText(screen, hireName(option.Kind), float64(iconX+iconSize+10), float64(y+4))
-		count := fmt.Sprintf("%d", option.Current)
-		if option.Limit > 0 {
-			count = fmt.Sprintf("%d/%d", option.Current, option.Limit)
-		}
-		if option.Recommended > 0 {
-			count += " (" + fmt.Sprintf(i18n.T().RecommendedServeCountLabel, option.Recommended) + ")"
-		}
-		DrawMenuText(screen, count, float64(iconX+iconSize+10), float64(y+21))
+		labelX := iconX + iconSize + 10
+		DrawMenuText(screen, hireName(option.Kind), float64(labelX), float64(y+4))
+		drawHireCardInfo(screen, option, labelX, y+20)
 	}
+}
+
+// drawBuildCost draws the authoritative price directly below a construction
+// card's name. Resource glyphs make the line readable even at a glance.
+func drawBuildCost(screen *ebiten.Image, kind building.Kind, x, y int) {
+	cost := building.Types[kind]
+	if cost.PlankCost > 0 {
+		drawResourceIcon(screen, resource.Plank, x, y)
+		DrawCompactMenuText(screen, fmt.Sprintf("%d", cost.PlankCost), float64(x+resourceIconSize+4), float64(y))
+		x += 32
+	}
+	if cost.StoneCost > 0 {
+		drawResourceIcon(screen, resource.StoneBlock, x, y)
+		DrawCompactMenuText(screen, fmt.Sprintf("%d", cost.StoneCost), float64(x+resourceIconSize+4), float64(y))
+	}
+}
+
+// drawHireCardInfo shows both numbers carried by a hiring card: GoldCost is
+// the payment and the second portrait is the current unit count/limit.
+func drawHireCardInfo(screen *ebiten.Image, option HireOption, x, y int) {
+	if option.GoldCost > 0 {
+		drawResourceIcon(screen, resource.Gold, x, y)
+		DrawCompactMenuText(screen, fmt.Sprintf("%d", option.GoldCost), float64(x+resourceIconSize+4), float64(y))
+		x += 32
+	}
+
+	drawHireIcon(screen, option.Kind, x, y, resourceIconSize)
+	count := fmt.Sprintf("%d", option.Current)
+	if option.Limit > 0 {
+		count = fmt.Sprintf("%d/%d", option.Current, option.Limit)
+	}
+	if option.Recommended > 0 {
+		count += " (" + fmt.Sprintf(i18n.T().RecommendedServeCountLabel, option.Recommended) + ")"
+	}
+	DrawCompactMenuText(screen, count, float64(x+resourceIconSize+4), float64(y))
 }
 
 func hireName(kind HireKind) string {
@@ -265,17 +297,11 @@ const (
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation. A large centered portrait separates the selected object
 // from its data, while no selection becomes the compact town summary.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
-		x := float64(r.Min.X + 18)
-		DrawInspectorText(screen, i18n.T().InspectorHint, x, 62)
-		if pop != nil {
-			DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().Population, pop.Count), x, 92)
-			DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().DeathsLabel, pop.Deaths), x, 112)
-			DrawInspectorText(screen, fmt.Sprintf("%s: %d", i18n.T().RemovedLabel, pop.Removed), x, 132)
-		}
+		drawTownSummary(screen, r.Min.X, r.Dx(), stock, pop, townBuildings, playedFrames)
 		if dialog == DialogConfirmDemolitionMode {
 			drawConfirmDemolitionModeDialog(screen, layout)
 		}

@@ -59,6 +59,7 @@ const (
 	KindServeCountLow
 	KindServeCountHigh
 	KindGatherWorkerStuck
+	KindConstructionMaterialsMissing
 )
 
 // Tip is one actionable observation. Only the fields relevant to its Kind
@@ -81,10 +82,16 @@ type Tip struct {
 	// Recommended/Current are the serf counts KindServeCountLow/High
 	// compared.
 	Recommended, Current int
+
+	// Resource/Missing describe one construction material the representative
+	// site still lacks. They are meaningful only for
+	// KindConstructionMaterialsMissing.
+	Resource resource.Type
+	Missing  int
 }
 
 // Evaluate returns every situation currently worth a tip, in a fixed
-// order (food, idle, disconnected, serf count, gather workers stuck) so
+// order (food, construction, idle, disconnected, serf count, gather workers stuck) so
 // callers get a stable ranking without needing their own tie-breaking. It
 // has no memory of what was already shown or when -- that policy
 // (cooldowns, the display queue, how often to even call this) belongs to
@@ -103,6 +110,9 @@ func Evaluate(buildings []*building.Building, stock *resource.Stockpile, pop *ec
 	var tips []Tip
 
 	if tip, ok := evaluateFoodRunway(buildings, stock, pop); ok {
+		tips = append(tips, tip)
+	}
+	if tip, ok := evaluateConstructionMaterials(buildings); ok {
 		tips = append(tips, tip)
 	}
 	if tip, ok := evaluateSinceMap(KindIdleBuilding, idleSince, currentTick, IdleBuildingWarningTicks); ok {
@@ -162,6 +172,48 @@ func evaluateFoodRunway(buildings []*building.Building, stock *resource.Stockpil
 // continuously since a given tick, and if that's lasted at least
 // warningTicks, it's reported aggregated into a single tip (Count total,
 // Building one example) rather than one per building.
+// ConstructionMaterialShortage reports the first material still missing from
+// one placed construction site. InputBuffer holds resources reserved at
+// placement time as well as goods delivered later by serfs, so this check is
+// both accurate before a builder arrives and stable across save/load.
+func ConstructionMaterialShortage(site *building.Building) (Tip, bool) {
+	if site == nil || site.ConstructionStage == building.ConstructionNone {
+		return Tip{}, false
+	}
+	for _, kind := range [...]resource.Type{resource.Plank, resource.StoneBlock} {
+		missing := site.ConstructionMaterialCost(kind) - site.InputBuffer[kind]
+		if missing > 0 {
+			return Tip{Kind: KindConstructionMaterialsMissing, Building: site, Resource: kind, Missing: missing}, true
+		}
+	}
+	return Tip{}, false
+}
+
+// evaluateConstructionMaterials aggregates sites lacking the same first
+// material, retaining one example so the UI can take the player there.
+func evaluateConstructionMaterials(buildings []*building.Building) (Tip, bool) {
+	var example *building.Building
+	var missingType resource.Type
+	count, totalMissing := 0, 0
+	for _, site := range buildings {
+		tip, short := ConstructionMaterialShortage(site)
+		if !short {
+			continue
+		}
+		if example == nil {
+			example, missingType = site, tip.Resource
+		}
+		if tip.Resource == missingType {
+			count++
+			totalMissing += tip.Missing
+		}
+	}
+	if example == nil {
+		return Tip{}, false
+	}
+	return Tip{Kind: KindConstructionMaterialsMissing, Building: example, Count: count, Resource: missingType, Missing: totalMissing}, true
+}
+
 func evaluateSinceMap(kind Kind, since map[*building.Building]int, currentTick, warningTicks int) (Tip, bool) {
 	count := 0
 	var example *building.Building

@@ -18,12 +18,16 @@ import (
 
 // FormatVersion is the current persisted schema. Version 1 remains readable:
 // its 180-tick hunger gauge is migrated proportionally to the 1000-tick
-// satiety model introduced in version 2.
-const FormatVersion = 2
+// satiety model introduced in version 2. Version 3 additionally persists
+// the player's active play time; version 4 separates demolition and unit
+// dismissal counters in Population.
+const FormatVersion = 4
 
 const (
-	previousFormatVersion = 1
-	previousHungerTicks   = 180
+	firstFormatVersion     = 1
+	playTimeFormatVersion  = 2
+	separateRemovalStatsV3 = 3
+	previousHungerTicks    = 180
 )
 
 // GameState is the full serializable snapshot of a running game.
@@ -44,6 +48,11 @@ type GameState struct {
 	Stockpile resource.Stockpile
 
 	Population economy.Population
+
+	// PlayedFrames is active play time measured in 60Hz update frames. It is
+	// excluded while paused and is independent of the simulation speed, so it
+	// represents the time the player actually spent in this settlement.
+	PlayedFrames int
 
 	// Units stores the persistent part of every unit. Current routes are
 	// intentionally rebuilt after loading, but the roster, position and hunger
@@ -225,13 +234,21 @@ func Load(path string) (GameState, error) {
 		return GameState{}, fmt.Errorf("save: decode: %w", err)
 	}
 	switch state.Version {
-	case previousFormatVersion:
+	case firstFormatVersion:
 		migrateV1Hunger(&state)
+		migrateLegacyRemovalCounter(&state)
+		state.Version = FormatVersion
+	case playTimeFormatVersion:
+		// Version 2 has no play-time field; JSON leaves it at zero.
+		migrateLegacyRemovalCounter(&state)
+		state.Version = FormatVersion
+	case separateRemovalStatsV3:
+		migrateLegacyRemovalCounter(&state)
 		state.Version = FormatVersion
 	case FormatVersion:
 		// Current schema needs no migration.
 	default:
-		return GameState{}, fmt.Errorf("save: unsupported save format version %d (want %d or %d)", state.Version, previousFormatVersion, FormatVersion)
+		return GameState{}, fmt.Errorf("save: unsupported save format version %d (want %d, %d, %d, or %d)", state.Version, firstFormatVersion, playTimeFormatVersion, separateRemovalStatsV3, FormatVersion)
 	}
 	return state, nil
 }
@@ -244,6 +261,16 @@ func Load(path string) (GameState, error) {
 // hunger.MaxTicks. Scaling onto MaxTicks instead would put a merely
 // hungry unit exactly at the new death threshold, killing it the instant
 // the save loads.
+// migrateLegacyRemovalCounter preserves the only historical total available in
+// pre-v4 saves. They did not distinguish demolition from dismissal, so the
+// value is shown as demolished structures rather than discarded silently.
+func migrateLegacyRemovalCounter(state *GameState) {
+	if state.Population.BuildingsRemoved == 0 && state.Population.UnitsDismissed == 0 {
+		state.Population.BuildingsRemoved = state.Population.Removed
+	}
+	state.Population.Removed = 0
+}
+
 func migrateV1Hunger(state *GameState) {
 	for i := range state.Units {
 		ticks := state.Units[i].HungerTicks

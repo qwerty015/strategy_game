@@ -323,10 +323,15 @@ type Game struct {
 
 	// worldTicks is the game clock (see internal/worldclock): total
 	// simulation ticks elapsed, incremented once per tick inside the
-	// g.sim.Advance() loop in Update. Deliberately not part of save.GameState
-	// (same call as rain/clouds, see AGENTS.md) -- a loaded game simply
-	// resumes the day/night cycle from tick 0 rather than persisting it.
+	// g.sim.Advance() loop in Update. It drives visual ambient effects only;
+	// playedFrames below is the player-facing, persisted play-time counter.
 	worldTicks int
+
+	// playedFrames counts active play updates at Ebiten's fixed 60 TPS. It is
+	// deliberately independent of simulation speed: playing at 16x advances
+	// the settlement faster, but does not claim the player spent sixteen times
+	// longer in the game. Pause screens and title/help screens do not add time.
+	playedFrames int
 }
 
 // autosaveIntervalTicks is how often (in simulation ticks, not render
@@ -436,6 +441,7 @@ func (g *Game) Update() error {
 		g.openPauseMenu()
 		return nil
 	}
+	g.playedFrames++
 	g.handleCameraPan()
 	g.handleCameraZoom()
 
@@ -501,7 +507,7 @@ func (g *Game) Update() error {
 			step.run()
 		}
 		g.pop.Deaths += serfResult.Deaths + villagerDeaths
-		g.pop.Removed += serfResult.Dismissed
+		g.pop.UnitsDismissed += serfResult.Dismissed
 		for _, event := range jackEvents {
 			switch event.Kind {
 			case lumberjack.TreeCut:
@@ -545,7 +551,7 @@ func (g *Game) Update() error {
 			case builder.WorkerDied:
 				g.pop.Deaths++
 			case builder.WorkerDismissed:
-				g.pop.Removed++
+				g.pop.UnitsDismissed++
 			}
 		}
 		for _, event := range minerEvents {
@@ -688,6 +694,25 @@ func (g *Game) finishedBuildingCounts() map[building.Kind]int {
 	return counts
 }
 
+// completedTownBuildingCount reports finished player structures for the town
+// summary. Roads and naturally generated objects are deliberately excluded:
+// the number answers "how many buildings does my town have?", not "how many
+// occupied map cells exist?".
+func (g *Game) completedTownBuildingCount() int {
+	count := 0
+	for _, b := range g.buildings {
+		if b.ConstructionStage != building.ConstructionNone {
+			continue
+		}
+		switch b.Kind {
+		case building.Road, building.Tree, building.Fish, building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 // hireOptions reports the current headcount, building-based limit, and
 // availability for every hireable unit kind, for the left panel's Hire tab.
 // Serfs are the only unlimited option; every profession is capped at one
@@ -719,10 +744,10 @@ func (g *Game) hireOptions() []ui.HireOption {
 	afford := g.canAffordHire()
 	limited := func(kind ui.HireKind, bKind building.Kind, current int) ui.HireOption {
 		limit := countBuildings(bKind)
-		return ui.HireOption{Kind: kind, Current: current, Limit: limit, Available: current < limit && afford}
+		return ui.HireOption{Kind: kind, Current: current, Limit: limit, Available: current < limit && afford, GoldCost: unitHireCost}
 	}
 	return []ui.HireOption{
-		{Kind: ui.HireSerf, Current: len(g.logi.Serfs), Limit: 0, Available: afford, Recommended: g.recommendedServeCount()},
+		{Kind: ui.HireSerf, Current: len(g.logi.Serfs), Limit: 0, Available: afford, Recommended: g.recommendedServeCount(), GoldCost: unitHireCost},
 		limited(ui.HireFarmer, building.Farm, countProfession(villagers.Farmer)),
 		limited(ui.HireBaker, building.Bakery, countProfession(villagers.Baker)),
 		limited(ui.HireWinemaker, building.Winery, countProfession(villagers.Winemaker)),
@@ -732,7 +757,7 @@ func (g *Game) hireOptions() []ui.HireOption {
 		limited(ui.HireButcher, building.MeatWorkshop, countProfession(villagers.Butcher)),
 		limited(ui.HireCarpenter, building.CarpentryWorkshop, countProfession(villagers.Carpenter)),
 		limited(ui.HireQuarryman, building.QuarryHut, len(g.quarry.Quarrymen)),
-		{Kind: ui.HireBuilder, Current: len(g.builders.Builders), Limit: maxBuilders, Available: len(g.builders.Builders) < maxBuilders && afford},
+		{Kind: ui.HireBuilder, Current: len(g.builders.Builders), Limit: maxBuilders, Available: len(g.builders.Builders) < maxBuilders && afford, GoldCost: unitHireCost},
 		limited(ui.HireMiner, building.MinerHut, len(g.miners.Miners)),
 		limited(ui.HireSmelter, building.Smeltery, countProfession(villagers.Smelter)),
 	}
@@ -1180,9 +1205,15 @@ func (g *Game) handleLeftClick(mx, my int) {
 	// first, ahead of even the minimap: it's drawn on top of everything
 	// else, so a click there should never fall through to whatever
 	// happens to be underneath it on the map.
-	if g.advisorVisible != nil && g.layout.AdvisorAcknowledgeAt(mx, my) {
-		g.acknowledgeAdvisorTip()
-		return
+	if g.advisorVisible != nil {
+		if g.advisorVisible.Building != nil && g.layout.AdvisorGoToAt(mx, my) {
+			g.focusAdvisorBuilding()
+			return
+		}
+		if g.layout.AdvisorAcknowledgeAt(mx, my) {
+			g.acknowledgeAdvisorTip()
+			return
+		}
 	}
 	// The minimap centers the camera on the clicked point instead of
 	// selecting anything -- checked first so it always wins over whatever
@@ -1292,12 +1323,36 @@ func (g *Game) handleLeftClick(mx, my int) {
 	// acts as a logistics endpoint until a Builder actually finishes it;
 	// see finishConstruction.
 	placed := building.NewConstructionSite(kind, tx, ty)
+	g.reserveConstructionMaterials(placed)
 	g.buildings = append(g.buildings, placed)
 	if starterRoad != nil {
 		g.buildings = append(g.buildings, starterRoad)
 	}
 	g.invalidateConnectionCache()
 	g.statusMsg = ""
+	if tip, missing := advisor.ConstructionMaterialShortage(placed); missing {
+		g.queueAdvisorTip(tip)
+	}
+}
+
+// reserveConstructionMaterials moves everything currently affordable out of
+// the shared warehouse stockpile into a new site's construction buffer. The
+// site therefore owns those materials immediately, even before a Builder has
+// reached its foundation; cancellation already returns that buffer to stock.
+// Anything unavailable stays short and ordinary logistics supplies it later.
+func (g *Game) reserveConstructionMaterials(site *building.Building) {
+	if site == nil || g.stock == nil {
+		return
+	}
+	for _, kind := range [...]resource.Type{resource.Plank, resource.StoneBlock} {
+		need := site.ConstructionMaterialCost(kind)
+		available := g.stock.Amount(kind)
+		reserved := min(need, available)
+		if reserved <= 0 || !g.stock.Remove(kind, reserved) {
+			continue
+		}
+		site.AddConstructionMaterial(kind, reserved)
+	}
 }
 
 // canAffordHire reports whether the stockpile can currently cover one more
@@ -1376,6 +1431,9 @@ func (g *Game) deleteSelectedBuilding() {
 			}
 			g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
 			g.invalidateConnectionCache()
+			if g.pop != nil {
+				g.pop.BuildingsRemoved++
+			}
 			g.selection.Clear()
 			g.statusMsg = i18n.T().Deleted
 			return
@@ -1425,7 +1483,7 @@ func (g *Game) deleteSelectedBuilding() {
 		g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
 		g.invalidateConnectionCache()
 		if g.pop != nil {
-			g.pop.Removed++
+			g.pop.BuildingsRemoved++
 		}
 		g.selection.Clear()
 		g.statusMsg = i18n.T().Deleted
@@ -1846,24 +1904,27 @@ func (g *Game) tickAdvisor() {
 	g.advisorCheckTicks = 0
 
 	tips := advisor.Evaluate(g.buildings, g.stock, g.pop, g.disconnectedBuildings(), g.advisorIdleSince, g.advisorGatherStuckSince, g.worldTicks, g.recommendedServeCount(), len(g.logi.Serfs))
-
-	queued := map[advisor.Kind]bool{}
-	if g.advisorVisible != nil {
-		queued[g.advisorVisible.Kind] = true
-	}
-	for _, t := range g.advisorQueue {
-		queued[t.Kind] = true
-	}
 	for _, tip := range tips {
-		if queued[tip.Kind] {
-			continue
-		}
-		if readyAt, onCooldown := g.advisorCooldowns[tip.Kind]; onCooldown && g.worldTicks < readyAt {
-			continue
-		}
-		g.advisorQueue = append(g.advisorQueue, tip)
-		queued[tip.Kind] = true
+		g.queueAdvisorTip(tip)
 	}
+}
+
+// queueAdvisorTip keeps one visible/queued tip of each kind and respects the
+// acknowledgement cooldown. Placement calls it immediately for a newly
+// unaffordable construction site; periodic evaluation uses the same path.
+func (g *Game) queueAdvisorTip(tip advisor.Tip) {
+	if g.advisorVisible != nil && g.advisorVisible.Kind == tip.Kind {
+		return
+	}
+	for _, queued := range g.advisorQueue {
+		if queued.Kind == tip.Kind {
+			return
+		}
+	}
+	if readyAt, onCooldown := g.advisorCooldowns[tip.Kind]; onCooldown && g.worldTicks < readyAt {
+		return
+	}
+	g.advisorQueue = append(g.advisorQueue, tip)
 	g.advisorPumpQueue()
 }
 
@@ -1882,6 +1943,33 @@ func (g *Game) advisorPumpQueue() {
 // acknowledgeAdvisorTip handles a click on the toast's "Ознакомлен"
 // button: puts the just-shown tip's Kind on cooldown and shows the next
 // queued one, if any.
+// focusAdvisorBuilding selects the representative building from the active
+// advisor tip and centers it in the map viewport. Ebiten does not move the OS
+// pointer, so the visible selection marker becomes the in-world focus cursor.
+func (g *Game) focusAdvisorBuilding() {
+	if g.advisorVisible == nil || g.advisorVisible.Building == nil {
+		return
+	}
+	b := g.advisorVisible.Building
+	present := false
+	for _, candidate := range g.buildings {
+		if candidate == b {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return
+	}
+	g.buildMode = false
+	g.demolitionMode = false
+	g.selection = ui.Selection{Kind: ui.SelectionBuilding, Building: b}
+	footprint := building.Types[b.Kind].Footprint
+	centerX := (float64(b.X) + float64(footprint)/2) * render.TileSize
+	centerY := (float64(b.Y) + float64(footprint)/2) * render.TileSize
+	g.camera.CenterOn(centerX, centerY, g.grid.Width, g.grid.Height)
+}
+
 func (g *Game) acknowledgeAdvisorTip() {
 	if g.advisorVisible == nil {
 		return
@@ -1918,6 +2006,8 @@ func advisorTipText(tip advisor.Tip) string {
 		return fmt.Sprintf(t.AdvisorTipServeCountHigh, tip.Current, tip.Recommended)
 	case advisor.KindGatherWorkerStuck:
 		return fmt.Sprintf(t.AdvisorTipGatherWorkerStuck, tip.Count, exampleX, exampleY)
+	case advisor.KindConstructionMaterialsMissing:
+		return fmt.Sprintf(t.AdvisorTipConstructionMaterialsMissing, t.ResourceName[tip.Resource], tip.Missing, exampleX, exampleY)
 	default:
 		return ""
 	}
@@ -2346,6 +2436,7 @@ func (g *Game) buildSaveState(name string) save.GameState {
 		Buildings:          dereferenceBuildings(g.buildings),
 		Stockpile:          *g.stock,
 		Population:         *g.pop,
+		PlayedFrames:       g.playedFrames,
 		Units:              g.serializeUnits(),
 		BuildingPriority:   g.serializeBuildingPriorities(),
 		TreeRegrowth:       g.serializeTreeRegrowth(),
@@ -2403,6 +2494,7 @@ func (g *Game) loadGame(path string) error {
 	g.stock = &stock
 	pop := state.Population
 	g.pop = &pop
+	g.playedFrames = state.PlayedFrames
 	g.treeRegrowth = restoreTreeRegrowth(state.TreeRegrowth)
 	g.treeSeed = state.TreeSeed
 	if g.treeSeed == 0 {
@@ -4089,19 +4181,21 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			priorityLevel = g.logi.Priority(g.selection.Building.Kind)
 		}
 	}
+	ui.BeginResourceTooltips()
 	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts())
 	trimServesPrompt := ""
 	if g.dialog == ui.DialogConfirmTrimServes {
 		trimServesPrompt = fmt.Sprintf(i18n.T().TrimServesConfirmPrompt, len(g.logi.Serfs), g.recommendedServeCount())
 	}
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt)
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt)
 	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
+	ui.DrawResourceTooltip(screen, g.layout)
 
 	if g.statusMsg != "" {
 		ui.DrawText(screen, g.statusMsg, float64(g.layout.LeftWidth+12), 10)
 	}
 	if g.advisorVisible != nil {
-		ui.DrawAdvisorToast(screen, g.layout, advisorTipText(*g.advisorVisible))
+		ui.DrawAdvisorToast(screen, g.layout, advisorTipText(*g.advisorVisible), g.advisorVisible.Building != nil)
 	}
 	if g.paused {
 		g.drawPauseMenu(screen)

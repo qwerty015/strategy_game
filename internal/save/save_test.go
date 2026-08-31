@@ -31,8 +31,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 			{Kind: building.LumberjackHut, X: 8, Y: 4, OutputBuffer: map[resource.Type]int{resource.Log: 2}},
 			{Kind: building.Tree, X: 10, Y: 4, GrowthTicks: 33, GrowthTargetTicks: 240},
 		},
-		Stockpile:  *stock,
-		Population: economy.Population{Count: 4},
+		Stockpile:    *stock,
+		Population:   economy.Population{Count: 4},
+		PlayedFrames: 54321,
 		Units: []UnitState{
 			{Kind: UnitSerf, X: 7, Y: 8, HomeIndex: -1, HungerTicks: 12, Starving: true},
 			{Kind: UnitFarmer, X: 4, Y: 5, HomeIndex: 0, HungerTicks: 21, State: 0},
@@ -102,7 +103,7 @@ func TestLoad_MigratesV1HungerToSatietyScale(t *testing.T) {
 	if err := Save(path, state); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	writeVersion(t, path, previousFormatVersion)
+	writeVersion(t, path, firstFormatVersion)
 
 	got, err := Load(path)
 	if err != nil {
