@@ -239,6 +239,13 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		case building.Barracks:
 			drawBuildingBody(screen, b, assets.Barracks, sx, sy, tilePixels)
 
+		case building.Armory:
+			// No dedicated sprite yet -- reuse the Barracks body as a
+			// placeholder, the same "never block on missing art" precedent
+			// already used for the WatchTower/Barracks/Sentry before their
+			// own art arrived.
+			drawBuildingBody(screen, b, assets.Barracks, sx, sy, tilePixels)
+
 		case building.FisherHut:
 			frame := 0 // source sprite's pier points south
 			if water, ok := building.WaterAccessPoint(grid, b); ok {

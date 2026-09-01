@@ -24,6 +24,21 @@ func TestTenHitsDestroyAFullHealthBuilding(t *testing.T) {
 	}
 }
 
+// TestTwoHitsKillAFullHealthUnit covers the user's explicit unit-damage
+// rule (50% per hit, unlike a structure's 10%): two hits kill.
+func TestTwoHitsKillAFullHealthUnit(t *testing.T) {
+	hp := MaxHP
+	for i := range 2 {
+		if IsDestroyed(hp) {
+			t.Fatalf("destroyed after only %d hits, want exactly 2", i)
+		}
+		hp = ApplyDamage(hp, UnitDamagePerHit)
+	}
+	if !IsDestroyed(hp) {
+		t.Fatalf("hp = %d after 2 hits, want destroyed", hp)
+	}
+}
+
 func TestRepairClampsAtMaxHP(t *testing.T) {
 	if got := Repair(MaxHP-5, 50); got != MaxHP {
 		t.Fatalf("Repair(%d, 50) = %d, want %d (clamped)", MaxHP-5, got, MaxHP)

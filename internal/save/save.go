@@ -114,20 +114,23 @@ type GameState struct {
 type UnitKind string
 
 const (
-	UnitSerf       UnitKind = "serf"
-	UnitFarmer     UnitKind = "farmer"
-	UnitBaker      UnitKind = "baker"
-	UnitLumberjack UnitKind = "lumberjack"
-	UnitWinemaker  UnitKind = "winemaker"
-	UnitFisherman  UnitKind = "fisherman"
-	UnitSwineherd  UnitKind = "swineherd"
-	UnitButcher    UnitKind = "butcher"
-	UnitCarpenter  UnitKind = "carpenter"
-	UnitQuarryman  UnitKind = "quarryman"
-	UnitBuilder    UnitKind = "builder"
-	UnitMiner      UnitKind = "miner"
-	UnitSmelter    UnitKind = "smelter"
-	UnitSentry     UnitKind = "sentry"
+	UnitSerf        UnitKind = "serf"
+	UnitFarmer      UnitKind = "farmer"
+	UnitBaker       UnitKind = "baker"
+	UnitLumberjack  UnitKind = "lumberjack"
+	UnitWinemaker   UnitKind = "winemaker"
+	UnitFisherman   UnitKind = "fisherman"
+	UnitSwineherd   UnitKind = "swineherd"
+	UnitButcher     UnitKind = "butcher"
+	UnitCarpenter   UnitKind = "carpenter"
+	UnitQuarryman   UnitKind = "quarryman"
+	UnitBuilder     UnitKind = "builder"
+	UnitMiner       UnitKind = "miner"
+	UnitSmelter     UnitKind = "smelter"
+	UnitSentry      UnitKind = "sentry"
+	UnitWeaponsmith UnitKind = "weaponsmith"
+	UnitArcher      UnitKind = "archer"
+	UnitSwordsman   UnitKind = "swordsman"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the
@@ -157,6 +160,14 @@ type UnitState struct {
 	// save from before this field existed loads with no special handling.
 	QuotaIndex    int
 	QuotaProgress int
+
+	// HP is meaningful only for combat units (UnitArcher/UnitSwordsman) --
+	// see package soldier. Zero in a save from before combat units
+	// existed is harmless: that unit kind simply never appears in an old
+	// save at all. An active attack order is deliberately not persisted
+	// (package enemy's own debug roster isn't saved either -- see
+	// AGENTS.md); a restored soldier just starts idle.
+	HP int
 }
 
 // TreeRegrowthState is the persistent part of one delayed tree respawn.

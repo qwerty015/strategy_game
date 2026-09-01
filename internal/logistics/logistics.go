@@ -43,6 +43,7 @@ import (
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
+	"strategy_game/internal/soldier"
 	"strategy_game/internal/world"
 )
 
@@ -107,6 +108,19 @@ type Serf struct {
 	// of requiring a road -- see startConstructionLeg's doc comment for why.
 	construction bool
 
+	// soldierTarget is set for a food delivery to a hungry Archer/Swordsman
+	// (see findSoldierDeliveryJob/startSoldierLeg) instead of an ordinary
+	// building dropoff -- dropoff stays nil for this trip. Both legs cross
+	// open land like a construction delivery, per the user's explicit
+	// "доставка провизии... даёт слугам право свободного передвижения по
+	// карте аналогично доставке стройматериалов". soldierTargetPoint is the
+	// soldier's position at the moment the trip started: the serf walks
+	// there without re-tracking the (possibly still moving) soldier, the
+	// same simplification already accepted for a sentry's stone-flight
+	// target.
+	soldierTarget      *soldier.Soldier
+	soldierTargetPoint pathfind.Point
+
 	ticksSinceMeal int
 	dismissing     bool
 
@@ -155,9 +169,16 @@ func (s *Serf) PickupBuilding() *building.Building {
 	return s.pickup
 }
 
-// DropoffBuilding returns the current job's destination, if any.
+// DropoffBuilding returns the current job's destination, if any. nil while
+// delivering food to a soldier -- see SoldierTarget.
 func (s *Serf) DropoffBuilding() *building.Building {
 	return s.dropoff
+}
+
+// SoldierTarget returns the Archer/Swordsman this serf is currently
+// carrying food to, or nil for every other trip.
+func (s *Serf) SoldierTarget() *soldier.Soldier {
+	return s.soldierTarget
 }
 
 // Cargo returns the resource and amount currently assigned to the serf. The
@@ -210,6 +231,7 @@ func (s *Serf) reset() {
 	s.amount = 0
 	s.eating = false
 	s.construction = false
+	s.soldierTarget = nil
 }
 
 // Controller owns every serf and the warehouse they work out of.
@@ -472,10 +494,24 @@ func (c *Controller) MaxWaitingHunger() int {
 // movement step. Call once per simulation tick (see economy.Simulator),
 // after every controller sharing ledger has had a chance to Reserve its
 // own pre-existing in-flight units. grid is only used for the off-road
-// construction-material delivery leg (see startConstructionLeg); every
-// other job still routes exclusively over the road network.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) TickResult {
+// construction-material delivery leg (see startConstructionLeg) and the
+// soldier food-delivery leg (see startSoldierLeg); every other job still
+// routes exclusively over the road network. soldiers lists every current
+// Archer/Swordsman so a hungry one can be found (NeedsDelivery) --
+// nil/empty is fine before the Barracks has hired any.
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, soldiers []*soldier.Soldier) TickResult {
 	c.tickConstructionBackoff()
+
+	// A soldier already claimed by a serf en route must not be picked
+	// again by another idle serf later in this same loop -- recomputed
+	// fresh every tick (nothing to persist between ticks) and mutated in
+	// place as assign() commits new deliveries below.
+	claimedSoldiers := map[*soldier.Soldier]bool{}
+	for _, s := range c.Serfs {
+		if s.soldierTarget != nil {
+			claimedSoldiers[s.soldierTarget] = true
+		}
+	}
 
 	var result TickResult
 	remaining := c.Serfs[:0]
@@ -500,7 +536,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stoc
 		}
 		if s.ph == idle {
 			if !c.tryStartMeal(s, buildings, ledger) {
-				c.assign(s, grid, buildings, stock, ledger)
+				c.assign(s, grid, buildings, stock, ledger, soldiers, claimedSoldiers)
 			}
 		}
 		c.advance(s, grid, buildings, stock)
@@ -642,20 +678,30 @@ func (c *Controller) tryStartMeal(s *Serf, buildings []*building.Building, ledge
 }
 
 // assign gives an idle serf a job, if one exists that it can currently
-// reach, in priority order: keep the Tavern supplied first, then top up any
-// construction site waiting on materials -- straight from a producer's
-// OutputBuffer if one has enough on hand (findConstructionDirectJob),
-// falling back to the Warehouse only if not (findConstructionSupplyJob) --
-// then direct producer->consumer haul for the ordinary production chain,
-// then drain leftover OutputBuffer to the Warehouse, then pull from the
-// Warehouse to cover a shortage no producer can. Construction is placed
-// second (right after hunger, ahead of the ordinary production chain)
-// because a stalled build is what the player is actively watching, and
-// because a road that only gets built "when a serf is otherwise idle" would
-// make the very first road -- the one everything else's connectivity
-// depends on -- unreasonably slow to appear.
-func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) {
+// reach, in priority order: a hungry soldier waiting on food comes first
+// (highest priority, per the user's explicit request), then keep the
+// Tavern supplied, then top up any construction site waiting on materials
+// -- straight from a producer's OutputBuffer if one has enough on hand
+// (findConstructionDirectJob), falling back to the Warehouse only if not
+// (findConstructionSupplyJob) -- then direct producer->consumer haul for
+// the ordinary production chain, then drain leftover OutputBuffer to the
+// Warehouse, then pull from the Warehouse to cover a shortage no producer
+// can. Construction is placed right after hunger and soldier delivery,
+// ahead of the ordinary production chain, because a stalled build is what
+// the player is actively watching, and because a road that only gets
+// built "when a serf is otherwise idle" would make the very first road --
+// the one everything else's connectivity depends on -- unreasonably slow
+// to appear.
+func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, soldiers []*soldier.Soldier, claimedSoldiers map[*soldier.Soldier]bool) {
 	from := pathfind.Point{X: s.X, Y: s.Y}
+	if target, food, ok := findSoldierDeliveryJob(soldiers, claimedSoldiers, stock, ledger); ok {
+		destPoint := pathfind.Point{X: target.X, Y: target.Y}
+		if warehouse, path, ok := nearestReachableWarehouseOverLandToPoint(grid, buildings, c.warehouses(), from, destPoint); ok {
+			c.startSoldierLeg(s, warehouse, target, food, path, ledger)
+			claimedSoldiers[target] = true
+			return
+		}
+	}
 	if pickup, dropoff, t, n, path, ok := findTavernSupplyJob(buildings, c.warehouses(), stock, ledger, from); ok {
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
 		return
@@ -1073,6 +1119,49 @@ func findConstructionDirectJob(grid *world.Grid, buildings []*building.Building,
 	return nil, nil, 0, 0, nil, false
 }
 
+// findSoldierDeliveryJob returns the first living, hungry
+// (NeedsDelivery()==true) soldier not already claimed by another serf this
+// tick, together with a food resource currently available in the shared
+// stockpile. Soldiers are tried in a fixed order (whatever order the
+// caller's slice holds), not by whoever is hungriest -- with the 30%
+// threshold applying to every soldier, and delivery already the top
+// priority job of all, a fancier tie-break isn't worth the complexity.
+func findSoldierDeliveryJob(soldiers []*soldier.Soldier, claimed map[*soldier.Soldier]bool, stock *resource.Stockpile, ledger *reservations.Ledger) (target *soldier.Soldier, food resource.Type, ok bool) {
+	for _, sd := range soldiers {
+		if sd == nil || !sd.Alive() || !sd.NeedsDelivery() || claimed[sd] {
+			continue
+		}
+		for _, f := range resource.FoodTypes() {
+			if ledger.AvailableStock(stock, f) > 0 {
+				return sd, f, true
+			}
+		}
+	}
+	return nil, 0, false
+}
+
+// nearestReachableWarehouseOverLandToPoint is
+// nearestReachableWarehouseOverLand's soldier-delivery counterpart: the
+// destination is a raw tile (a soldier's position at dispatch time, see
+// Serf.soldierTargetPoint) rather than a building.
+func nearestReachableWarehouseOverLandToPoint(grid *world.Grid, buildings []*building.Building, candidates []*building.Building, from, destPoint pathfind.Point) (warehouse *building.Building, path []pathfind.Point, ok bool) {
+	bestLen := -1
+	for _, w := range candidates {
+		access := w.AccessPoint()
+		p, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y})
+		if !reachable {
+			continue
+		}
+		if _, deliverable := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: access.X, Y: access.Y}, destPoint); !deliverable {
+			continue
+		}
+		if bestLen == -1 || len(p) < bestLen {
+			warehouse, path, bestLen = w, p, len(p)
+		}
+	}
+	return warehouse, path, warehouse != nil
+}
+
 // nearestReachableWarehouseOverLand is nearestReachableWarehouse's
 // construction-delivery counterpart: both legs (serf to warehouse, warehouse
 // to the site) are checked with pathfind.FindLandPath instead of the
@@ -1126,6 +1215,25 @@ func (c *Controller) startConstructionLeg(s *Serf, pickup, dropoff *building.Bui
 	s.construction = true
 	ledger.ReservePickup(pickup, t, amount)
 	ledger.ReserveDropoff(dropoff, t, amount)
+}
+
+// startSoldierLeg begins a food delivery to a hungry soldier: pickup is a
+// Warehouse (always -- there's no per-building buffer to draw from, unlike
+// every other job), target/food/amount describe what's being carried, and
+// dropoff is deliberately left nil (see arriveAtDropoff's soldierTarget
+// case). Only the pickup side is reserved in ledger; nothing building-side
+// needs reserving for the second leg, and claimedSoldiers (mutated by the
+// caller) is what stops a second serf from picking the same soldier this
+// tick.
+func (c *Controller) startSoldierLeg(s *Serf, pickup *building.Building, target *soldier.Soldier, food resource.Type, path []pathfind.Point, ledger *reservations.Ledger) {
+	const amount = 1
+	s.pickup, s.dropoff = pickup, nil
+	s.soldierTarget = target
+	s.soldierTargetPoint = pathfind.Point{X: target.X, Y: target.Y}
+	s.resource, s.amount = food, amount
+	s.path, s.pathIdx, s.tileTicks = path, 0, 0
+	s.ph = toPickup
+	ledger.ReservePickup(pickup, food, amount)
 }
 
 func (c *Controller) advance(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
@@ -1182,10 +1290,13 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 
 	var path []pathfind.Point
 	var found bool
-	if s.construction {
+	switch {
+	case s.soldierTarget != nil:
+		path, found = pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, s.soldierTargetPoint)
+	case s.construction:
 		dest := s.dropoff.AccessPoint()
 		path, found = pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: dest.X, Y: dest.Y})
-	} else {
+	default:
 		path, found = pathfind.FindPath(buildings, s.pickup, s.dropoff)
 	}
 	if !found {
@@ -1213,6 +1324,16 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 func (c *Controller) arriveAtDropoff(s *Serf, stock *resource.Stockpile) {
 	s.atBuilding = s.dropoff
 	switch {
+	case s.soldierTarget != nil:
+		// Food handed straight to the soldier rather than deposited into a
+		// building's InputBuffer. If it died, or another serf's delivery
+		// already fed it, in the meantime, the unit's worth of food goes
+		// back to the stockpile instead of silently vanishing.
+		if s.soldierTarget.Alive() {
+			s.soldierTarget.Feed()
+		} else {
+			stock.Add(s.resource, s.amount)
+		}
 	case s.dropoff.IsOperationalWarehouse():
 		stock.Add(s.resource, s.amount)
 	case s.construction:

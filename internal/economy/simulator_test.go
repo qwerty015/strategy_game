@@ -113,8 +113,39 @@ func TestTick_PigFarmConsumesFeedBeforeGrowth(t *testing.T) {
 	if got := pigFarm.OutputBuffer[resource.Carcass]; got != 1 {
 		t.Fatalf("carcasses after %d fed growth ticks = %d, want 1", recipe.TicksToProduce, got)
 	}
+	// Per the user's explicit request, a pig gives up its hide the same
+	// moment it gives up its carcass -- one animal, both products at once.
+	if got := pigFarm.OutputBuffer[resource.Hide]; got != 1 {
+		t.Fatalf("hides after %d fed growth ticks = %d, want 1 (SecondaryOutput)", recipe.TicksToProduce, got)
+	}
 	if pigFarm.ProgressTicks != 0 {
 		t.Fatalf("progress after producing a carcass = %d, want 0", pigFarm.ProgressTicks)
+	}
+}
+
+// TestTick_SecondaryOutputHeldWhenItsOwnBufferIsFull covers hasOutputRoom's
+// half of SecondaryOutput: a full Hide buffer must block the cycle from
+// even starting (PigFarm's prepaid recipe checks output room before
+// spending the feed), exactly like a full Carcass buffer already would,
+// not silently drop the hide while still growing/producing the carcass.
+func TestTick_SecondaryOutputHeldWhenItsOwnBufferIsFull(t *testing.T) {
+	pigFarm := &building.Building{Kind: building.PigFarm}
+	recipe := building.Types[building.PigFarm].Recipe
+	pigFarm.AddOutput(resource.Hide, building.BufferCapacity) // pre-fill to capacity
+
+	pigFarm.AddInput(resource.Wheat, recipe.Inputs[resource.Wheat])
+	for range recipe.TicksToProduce {
+		Tick([]*building.Building{pigFarm}, nil)
+	}
+
+	if got := pigFarm.OutputBuffer[resource.Carcass]; got != 0 {
+		t.Fatalf("carcasses while Hide buffer is full = %d, want 0 (held, not half-produced)", got)
+	}
+	if pigFarm.ProgressTicks != 0 {
+		t.Fatalf("progress while blocked on a full Hide buffer = %d, want 0 (feed never spent, growth never started)", pigFarm.ProgressTicks)
+	}
+	if got := pigFarm.InputBuffer[resource.Wheat]; got != recipe.Inputs[resource.Wheat] {
+		t.Fatalf("wheat while blocked = %d, want unchanged %d (never consumed)", got, recipe.Inputs[resource.Wheat])
 	}
 }
 

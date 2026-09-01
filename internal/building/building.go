@@ -120,6 +120,15 @@ const (
 	// other addition to this list.
 	WatchTower
 	Barracks
+
+	// Armory is where a Weaponsmith (package villagers) turns Plank/Hide/
+	// Iron+Coal into Bow/LeatherArmor/Sword, one item type at a time per
+	// player-set queue -- see Building.ProductionQueue. Unlike every other
+	// production building this doesn't run through economy.Tick at all
+	// (three parallel queued lines don't fit the single-active-recipe
+	// model); see cmd/game's tickArmories. Appended last for the same
+	// save-compatibility reason as everything above.
+	Armory
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -140,6 +149,15 @@ type Recipe struct {
 	// Not supported in combination with Type.AltRecipes -- a multi-recipe
 	// building always consumes at completion (see Building.ActiveRecipe).
 	ConsumeInputsAtStart bool
+
+	// SecondaryOutput/SecondaryOutputAmount is a second product added
+	// alongside Output in the same cycle -- currently only the PigFarm
+	// (Carcass and Hide from one pig, simultaneously, per the user's
+	// explicit request). Zero value (SecondaryOutputAmount == 0) means
+	// "no second output"; every other recipe is unaffected. See
+	// economy.hasOutputRoom/tickRecipe/tickPrepaidRecipe/tickMultiRecipe.
+	SecondaryOutput       resource.Type
+	SecondaryOutputAmount int
 }
 
 // Point is a world-grid coordinate used for building access points.
@@ -361,6 +379,14 @@ type Building struct {
 	// every newly placed building, so only a load path needs the
 	// migration.
 	HP int
+
+	// ProductionQueue is how many of each item type the player has asked
+	// an Armory to produce (Bow/LeatherArmor/Sword) -- see cmd/game's
+	// tickArmories and the queue buttons in internal/ui/panels.go. nil for
+	// every other building kind, and for a fresh Armory until the player
+	// first queues something (map access on a nil map reads as 0, exactly
+	// the right default).
+	ProductionQueue map[resource.Type]int
 }
 
 // ConstructionStage is where a placed-but-unfinished building or road

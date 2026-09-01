@@ -20,6 +20,7 @@ import (
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
 	"strategy_game/internal/sentry"
+	"strategy_game/internal/soldier"
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
 	"strategy_game/internal/world"
@@ -526,6 +527,7 @@ func TestSelectionAt_BuildingWinsOverInvisibleResident(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Baker, bakery)
@@ -556,6 +558,7 @@ func TestSelectionAt_BuildingWinsOverVisibleFarmer(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Farmer, farm)
@@ -587,6 +590,7 @@ func TestSelectionAt_ConstructionSiteWinsOverBuilder(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 		camera:    render.NewCamera(),
 	}
 	bl := game.builders.Hire(&building.Building{Kind: building.Warehouse})
@@ -614,6 +618,7 @@ func TestSelectionAt_WarehouseWinsOverSerf(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 		camera:    render.NewCamera(),
 	}
 	serf := game.logi.Serfs[0]
@@ -648,6 +653,7 @@ func TestSelectionAt_SerfOnRoadWinsOverTheRoad(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 		camera:    render.NewCamera(),
 	}
 	serf := game.logi.Serfs[0]
@@ -701,6 +707,7 @@ func TestUnitsAt_CountsAnyoneOnTheFootprintEvenWithoutADedicatedResident(t *test
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 	}
 	game.logi.Hire()
 	game.logi.Hire()
@@ -739,6 +746,7 @@ func TestSerializeAndRestorePigChainWorkers(t *testing.T) {
 			builders:  builder.NewController(),
 			miners:    miner.NewController(),
 			sentries:  sentry.NewController(),
+			soldiers:  soldier.NewController(),
 		}
 	}
 	source := makeGame()
@@ -777,6 +785,7 @@ func TestSerializeAndRestoreCarpenter(t *testing.T) {
 			builders:  builder.NewController(),
 			miners:    miner.NewController(),
 			sentries:  sentry.NewController(),
+			soldiers:  soldier.NewController(),
 		}
 	}
 	source := makeGame()
@@ -807,6 +816,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 	}
 	if !source.logi.RequestDismissal(source.logi.Serfs[0]) {
 		t.Fatal("RequestDismissal = false")
@@ -823,6 +833,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 	}
 	restored.restoreUnits(source.serializeUnits(), buildings)
 	if got := len(restored.logi.Serfs); got != 1 {
@@ -880,6 +891,7 @@ func TestDeleteWarehousePromotesRemainingWarehouse(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: first},
 	}
 	game.logi.AddWarehouse(second)
@@ -916,6 +928,7 @@ func TestDeleteLastWarehouseIsRejected(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: warehouse},
 	}
 
@@ -1077,7 +1090,7 @@ func hireOptionIndex(t *testing.T, options []ui.HireOption, kind ui.HireKind) in
 func findHireCardPoint(t *testing.T, layout ui.Layout, optionCount, wantIndex int) (int, int) {
 	t.Helper()
 	for y := 0; y < layout.Height; y++ {
-		if index, ok := layout.HireIndexAt(20, y, optionCount); ok && index == wantIndex {
+		if index, ok := layout.HireIndexAt(20, y, optionCount, 0); ok && index == wantIndex {
 			return 20, y
 		}
 	}
@@ -1105,6 +1118,7 @@ func TestHireCardServeRightClickOpensDialogOnlyWhenThereIsExcess(t *testing.T) {
 			builders:  builder.NewController(),
 			miners:    miner.NewController(),
 			sentries:  sentry.NewController(),
+			soldiers:  soldier.NewController(),
 			layout:    ui.NewLayout(1024, 768),
 			leftTab:   ui.HireTab,
 		}
@@ -1159,6 +1173,7 @@ func TestTickAdvisorQueuesAndCoolsDownTips(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 		grid:      world.NewGrid(4, 4),
 	}
 
@@ -1208,6 +1223,7 @@ func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 	}
 	game.stock.Add(resource.Gold, 10) // enough to hire a couple of units
 
@@ -1259,6 +1275,7 @@ func TestHireSerfSpendsGoldAndFailsWhenBroke(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 	}
 	game.stock.Add(resource.Gold, 1)
 
@@ -1323,6 +1340,7 @@ func TestFinishConstructionDoesNotAutoSpawnAWorker(t *testing.T) {
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 	}
 
 	game.finishConstruction(hut)
@@ -1558,6 +1576,7 @@ func TestEnclosedGatherWorkerTip(t *testing.T) {
 		quarry:    quarry.NewController(),
 		miners:    miner.NewController(),
 		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
 	}
 	game.jacks.Spawn(hut)
 	tip, blocked := game.enclosedGatherWorkerTip()

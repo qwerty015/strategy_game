@@ -142,10 +142,51 @@ func (l Layout) MenuTabAt(x, y int) (LeftTab, bool) {
 	return BuildTab, false
 }
 
-// BuildIndexAt returns the building palette card under the cursor.
-func (l Layout) BuildIndexAt(x, y int, count int) (int, bool) {
-	stride, height := l.buildCardGeometry(count)
-	return l.menuIndexAtFrom(x, y, count, leftBuildCardsStartY, stride, height)
+// leftListWindow computes a scrollable left-panel card list's geometry and
+// which slice of items is actually visible right now. cardGeometryFrom
+// already shrinks stride/height to fit everything down to
+// leftCardMinStride/leftCardMinHeight -- once a list is long enough that
+// even that floor can't fit every item in the available height, further
+// items stop shrinking and instead scroll: only as many rows as actually
+// fit (visible) are shown, starting at index start. scroll is the desired
+// first-visible index (e.g. from a mouse wheel accumulator); it is
+// clamped here, so a caller never needs to know count in advance to keep
+// it in range.
+func (l Layout) leftListWindow(startY, count, scroll int) (stride, height, start, visible int) {
+	stride, height = l.cardGeometryFrom(startY, count)
+	if count <= 0 {
+		return stride, height, 0, 0
+	}
+	available := l.Height - startY
+	rows := count
+	if available > 0 && stride > 0 {
+		rows = available / stride
+		if rows < 1 {
+			rows = 1
+		}
+	}
+	if rows >= count {
+		return stride, height, 0, count
+	}
+	start = scroll
+	if start < 0 {
+		start = 0
+	}
+	if start > count-rows {
+		start = count - rows
+	}
+	return stride, height, start, rows
+}
+
+// BuildIndexAt returns the building palette card under the cursor,
+// accounting for the current scroll offset -- see Layout.leftListWindow.
+func (l Layout) BuildIndexAt(x, y int, count, scroll int) (int, bool) {
+	stride, height, start, visible := l.leftListWindow(leftBuildCardsStartY, count, scroll)
+	local, ok := l.menuIndexAtFrom(x, y, visible, leftBuildCardsStartY, stride, height)
+	if !ok {
+		return 0, false
+	}
+	return start + local, true
 }
 
 // DemolitionModeRect is the Build-tab switch for continuous removal. Keeping
@@ -158,10 +199,15 @@ func (l Layout) DemolitionModeAt(x, y int) bool {
 	return image.Pt(x, y).In(l.DemolitionModeRect())
 }
 
-// HireIndexAt returns the hire-menu card under the cursor.
-func (l Layout) HireIndexAt(x, y int, count int) (int, bool) {
-	stride, height := l.cardGeometry(count)
-	return l.menuIndexAtFrom(x, y, count, leftCardsStartY, stride, height)
+// HireIndexAt returns the hire-menu card under the cursor, accounting for
+// the current scroll offset -- see Layout.leftListWindow.
+func (l Layout) HireIndexAt(x, y int, count, scroll int) (int, bool) {
+	stride, height, start, visible := l.leftListWindow(leftCardsStartY, count, scroll)
+	local, ok := l.menuIndexAtFrom(x, y, visible, leftCardsStartY, stride, height)
+	if !ok {
+		return 0, false
+	}
+	return start + local, true
 }
 
 func (l Layout) menuIndexAtFrom(x, y, count, startY, stride, height int) (int, bool) {
@@ -326,20 +372,138 @@ func (l Layout) GateAutoAt(x, y int) bool {
 	return image.Pt(x, y).In(auto)
 }
 
-// BarracksHireRect returns the "hire a Sentry" button for a selected
-// Barracks -- see cmd/game's Barracks hire button. Reuses GateControlRects'
-// exact slot: a building only ever shows one of these two special
-// controls at a time, since no Kind is ever both a Gate and a Barracks.
-func (l Layout) BarracksHireRect() image.Rectangle {
+// BarracksHireRects returns the three stacked hire buttons for a selected
+// Barracks -- Sentry, Archer, Swordsman, in that order -- see cmd/game's
+// Barracks hire buttons. Reuses GateControlRects' exact top slot: a
+// building only ever shows one of these special control groups at a time,
+// since no Kind is ever both a Gate and a Barracks.
+func (l Layout) BarracksHireRects() (sentry, archer, swordsman image.Rectangle) {
 	r := l.RightPanel()
 	left, right := r.Min.X+inspectorRemoveMargin, r.Max.X-inspectorRemoveMargin
-	return image.Rect(left, gateControlTop, right, gateControlTop+gateControlHeight)
+	sentry = image.Rect(left, gateControlTop, right, gateControlTop+gateControlHeight)
+	archerTop := sentry.Max.Y + gateControlGap
+	archer = image.Rect(left, archerTop, right, archerTop+gateControlHeight)
+	swordsmanTop := archer.Max.Y + gateControlGap
+	swordsman = image.Rect(left, swordsmanTop, right, swordsmanTop+gateControlHeight)
+	return
 }
 
-// BarracksHireAt reports whether the cursor is over the Barracks hire
-// button.
-func (l Layout) BarracksHireAt(x, y int) bool {
-	return image.Pt(x, y).In(l.BarracksHireRect())
+// BarracksHireIndexAt reports which hire button (0=Sentry, 1=Archer,
+// 2=Swordsman) the cursor is over, if any.
+func (l Layout) BarracksHireIndexAt(x, y int) (int, bool) {
+	sentry, archer, swordsman := l.BarracksHireRects()
+	pt := image.Pt(x, y)
+	switch {
+	case pt.In(sentry):
+		return 0, true
+	case pt.In(archer):
+		return 1, true
+	case pt.In(swordsman):
+		return 2, true
+	}
+	return 0, false
+}
+
+// FormationLinesRects returns the three "1/2/3 ranks" buttons for a
+// selected soldier group -- per the user's clarification that these are
+// panel buttons, not keyboard shortcuts ("1/2/3 - это не клавиши на
+// клавиатуре, а количество шеренг, кнопки в правой панели при выбранных
+// юнитах"). Same top slot as the Barracks/Gate/Armory controls, never
+// shown together with any of those.
+func (l Layout) FormationLinesRects() (one, two, three image.Rectangle) {
+	r := l.RightPanel()
+	left := r.Min.X + inspectorRemoveMargin
+	const size, gap = 30, 8
+	one = image.Rect(left, gateControlTop, left+size, gateControlTop+size)
+	two = image.Rect(left+size+gap, gateControlTop, left+2*size+gap, gateControlTop+size)
+	three = image.Rect(left+2*(size+gap), gateControlTop, left+3*size+2*gap, gateControlTop+size)
+	return
+}
+
+// FormationLinesAt reports which rank-count button (1, 2 or 3) the cursor
+// is over, if any.
+func (l Layout) FormationLinesAt(x, y int) (int, bool) {
+	one, two, three := l.FormationLinesRects()
+	pt := image.Pt(x, y)
+	switch {
+	case pt.In(one):
+		return 1, true
+	case pt.In(two):
+		return 2, true
+	case pt.In(three):
+		return 3, true
+	}
+	return 0, false
+}
+
+// SoldierGroupActionRects returns the "разъединить"/"отряд по виду"
+// buttons for a selected soldier group, stacked directly below
+// FormationLinesRects -- per the user's explicit request for a way to
+// split a merged group back apart, or select every soldier of one
+// profession regardless of distance.
+func (l Layout) SoldierGroupActionRects() (split, byProfession image.Rectangle) {
+	r := l.RightPanel()
+	left, right := r.Min.X+inspectorRemoveMargin, r.Max.X-inspectorRemoveMargin
+	_, _, three := l.FormationLinesRects()
+	top := three.Max.Y + gateControlGap
+	half := (right - left - gateControlGap) / 2
+	split = image.Rect(left, top, left+half, top+gateControlHeight)
+	byProfession = image.Rect(left+half+gateControlGap, top, right, top+gateControlHeight)
+	return
+}
+
+// SoldierGroupSplitAt/SoldierGroupByProfessionAt hit-test the two buttons
+// SoldierGroupActionRects lays out.
+func (l Layout) SoldierGroupSplitAt(x, y int) bool {
+	split, _ := l.SoldierGroupActionRects()
+	return image.Pt(x, y).In(split)
+}
+
+func (l Layout) SoldierGroupByProfessionAt(x, y int) bool {
+	_, byProfession := l.SoldierGroupActionRects()
+	return image.Pt(x, y).In(byProfession)
+}
+
+// armoryQueueRowHeight/armoryQueueRowGap/armoryQueueButtonWidth size the
+// three item rows drawn by drawArmoryQueueControls, stacked in the same
+// top slot as the Barracks hire buttons/Gate controls (never shown for the
+// same building at once).
+const (
+	armoryQueueRowHeight    = 28
+	armoryQueueRowGap       = 6
+	armoryQueueButtonWidth  = 24
+	armoryQueueButtonMargin = 4
+)
+
+// ArmoryQueueRowRects returns row i's (0=Bow, 1=LeatherArmor, 2=Sword --
+// see armoryQueueItems) full row rect plus its minus/plus button rects,
+// for a selected Armory's production queue.
+func (l Layout) ArmoryQueueRowRects(i int) (row, minus, plus image.Rectangle) {
+	r := l.RightPanel()
+	left, right := r.Min.X+inspectorRemoveMargin, r.Max.X-inspectorRemoveMargin
+	top := gateControlTop + i*(armoryQueueRowHeight+armoryQueueRowGap)
+	row = image.Rect(left, top, right, top+armoryQueueRowHeight)
+	plus = image.Rect(right-armoryQueueButtonWidth, top, right, top+armoryQueueRowHeight)
+	minus = image.Rect(plus.Min.X-armoryQueueButtonMargin-armoryQueueButtonWidth, top, plus.Min.X-armoryQueueButtonMargin, top+armoryQueueRowHeight)
+	return row, minus, plus
+}
+
+// ArmoryQueueButtonAt reports which row's minus (delta -1) or plus (delta
+// +1) button the cursor is over, if any -- cmd/game multiplies delta by 10
+// itself on a right-click, per the user's explicit "клик ПКМ +/- 10 штук в
+// очередь, ЛКМ +/- 1 в очередь".
+func (l Layout) ArmoryQueueButtonAt(x, y int) (row int, delta int, ok bool) {
+	pt := image.Pt(x, y)
+	for i := 0; i < 3; i++ {
+		_, minus, plus := l.ArmoryQueueRowRects(i)
+		if pt.In(minus) {
+			return i, -1, true
+		}
+		if pt.In(plus) {
+			return i, 1, true
+		}
+	}
+	return 0, 0, false
 }
 
 // PriorityLevelAt returns the supply-priority segment under the cursor,

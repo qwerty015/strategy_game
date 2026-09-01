@@ -32,6 +32,7 @@ import (
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
 	"strategy_game/internal/sentry"
+	"strategy_game/internal/soldier"
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
 	"strategy_game/internal/world"
@@ -218,6 +219,38 @@ type Game struct {
 	builders  *builder.Controller
 	miners    *miner.Controller
 	sentries  *sentry.Controller
+	soldiers  *soldier.Controller
+
+	// leftScrollBuild/leftScrollHire are the first-visible-card index for
+	// the Build/Hire tab lists, per the user's explicit request to make
+	// the left panel scrollable rather than keep shrinking cards forever
+	// as more building/unit kinds get added -- see
+	// ui.Layout.leftListWindow. Adjusted by the mouse wheel over the left
+	// panel (handleLeftPanelScroll); clamped on read, not on write, so
+	// this never needs to know the current list length in advance.
+	leftScrollBuild int
+	leftScrollHire  int
+
+	// formationLines is how many ranks a right-click move order arranges a
+	// selected soldier group into (see commandSoldierGroupTo) -- 1/2/3,
+	// toggled with the number keys while a SelectionSoldierGroup is active.
+	// Not persisted: it's an input-mode preference, the same "not real
+	// world state" reasoning as the camera's zoom-drag state.
+	formationLines int
+
+	// sightedEnemies is edge-triggered bookkeeping for checkEnemySightings
+	// -- which live enemies have already alerted the player, so the
+	// message/speed-reset fires once per sighting, not every tick while
+	// the enemy lingers within range. Not persisted -- the same "debug/
+	// session-only" reasoning as the enemies field itself.
+	sightedEnemies map[*enemy.Enemy]bool
+
+	// attackMarkerTarget draws the red square over a soldier group's
+	// current attack target (see commandSoldierGroupAttack/
+	// render.DrawAttackMarker), cleared once it dies. Not persisted -- see
+	// the enemies field's doc comment just below for why debug/
+	// session-only combat state generally isn't.
+	attackMarkerTarget *enemy.Enemy
 
 	// enemies is the debug test-attacker roster (see cmd/game's F10 spawn
 	// and internal/enemy's doc comment) -- deliberately not part of
@@ -414,26 +447,28 @@ func newGameWithSize(width, height int) *Game {
 	camera.Pan(float64(4*render.TileSize), 0, grid.Width, grid.Height, mapRect.Dx(), mapRect.Dy())
 
 	game := &Game{
-		grid:        grid,
-		buildings:   buildings,
-		stock:       stock,
-		pop:         &economy.Population{},
-		sim:         economy.NewSimulator(framesPerSimTick),
-		logi:        logistics.NewController(warehouse, startingSerfs),
-		vills:       villagers.NewController(),
-		jacks:       lumberjack.NewController(),
-		fishers:     fishing.NewController(),
-		quarry:      quarry.NewController(),
-		builders:    builder.NewController(),
-		miners:      miner.NewController(),
-		sentries:    sentry.NewController(),
-		treeSeed:    defaultTreeSeed,
-		fishSeed:    defaultFishSeed,
-		stoneSeeded: true,
-		oreSeeded:   true,
-		camera:      camera,
-		palette:     ui.NewPalette(),
-		layout:      layout,
+		grid:           grid,
+		buildings:      buildings,
+		stock:          stock,
+		pop:            &economy.Population{},
+		sim:            economy.NewSimulator(framesPerSimTick),
+		logi:           logistics.NewController(warehouse, startingSerfs),
+		vills:          villagers.NewController(),
+		jacks:          lumberjack.NewController(),
+		fishers:        fishing.NewController(),
+		quarry:         quarry.NewController(),
+		builders:       builder.NewController(),
+		miners:         miner.NewController(),
+		sentries:       sentry.NewController(),
+		soldiers:       soldier.NewController(),
+		formationLines: 2,
+		treeSeed:       defaultTreeSeed,
+		fishSeed:       defaultFishSeed,
+		stoneSeeded:    true,
+		oreSeeded:      true,
+		camera:         camera,
+		palette:        ui.NewPalette(),
+		layout:         layout,
 	}
 	game.refreshPopulation()
 	game.refreshSlotCache()
@@ -475,6 +510,7 @@ func (g *Game) Update() error {
 	g.deathEffects = render.AdvanceDeathEffects(g.deathEffects)
 	g.handleCameraPan()
 	g.handleCameraZoom()
+	g.handleLeftPanelScroll()
 
 	// A modal owns every key and click, so its destructive confirmation or
 	// save-name input cannot accidentally also change the map behind it.
@@ -493,6 +529,7 @@ func (g *Game) Update() error {
 		g.tickFishRegrowth()
 		g.updateAutomaticGates()
 		economy.TickWithConnectivity(g.buildings, g.inactiveWorkerBuildings(), g.disconnectedBuildings())
+		tickArmories(g.buildings)
 		// Controllers remove hunger deaths from their own rosters during Tick.
 		// Capture the final position one tick beforehand so every profession
 		// can use the same neutral death animation without changing its API.
@@ -532,7 +569,7 @@ func (g *Game) Update() error {
 			run    func()
 		}
 		steps := []unitStep{
-			{g.logi.MaxWaitingHunger(), func() { serfResult = g.logi.Tick(g.grid, g.buildings, g.stock, ledger) }},
+			{g.logi.MaxWaitingHunger(), func() { serfResult = g.logi.Tick(g.grid, g.buildings, g.stock, ledger, g.soldiers.Soldiers) }},
 			{g.vills.MaxWaitingHunger(), func() { villagerDeaths = g.vills.Tick(g.buildings, ledger) }},
 			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, g.buildings, ledger) }},
 			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, g.buildings, ledger) }},
@@ -545,13 +582,22 @@ func (g *Game) Update() error {
 		for _, step := range steps {
 			step.run()
 		}
+		// Soldiers don't compete for the shared ledger (they never fetch
+		// their own food -- see package soldier's doc comment), so they sit
+		// outside the fairness-ordered steps above; their combat damage
+		// still needs to land before the prune below, same as a Sentry's.
+		soldierDeaths := g.soldiers.Tick(g.grid, g.buildings, g.enemies)
 		// Enemies strike back after every Sentry has had a chance to fire
 		// this tick -- see internal/enemy's Tick. A dead one (HP reaching
 		// 0 from a Sentry's own shot, applied above) is pruned right away
 		// so no controller ever sees a stale target next tick.
 		enemy.Tick(g.enemies, g.buildings)
 		g.pruneDeadEnemies()
-		g.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryDeaths
+		g.checkEnemySightings()
+		if g.attackMarkerTarget != nil && !g.attackMarkerTarget.Alive() {
+			g.attackMarkerTarget = nil
+		}
+		g.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryDeaths + soldierDeaths
 		g.pop.UnitsDismissed += serfResult.Dismissed
 		for _, event := range jackEvents {
 			switch event.Kind {
@@ -815,6 +861,7 @@ func (g *Game) hireOptions() []ui.HireOption {
 		{Kind: ui.HireBuilder, Current: len(g.builders.Builders), Limit: maxBuilders, Available: len(g.builders.Builders) < maxBuilders && afford, GoldCost: unitHireCost},
 		limited(ui.HireMiner, building.MinerHut, len(g.miners.Miners)),
 		limited(ui.HireSmelter, building.Smeltery, countProfession(villagers.Smelter)),
+		limited(ui.HireWeaponsmith, building.Armory, countProfession(villagers.Weaponsmith)),
 	}
 }
 
@@ -923,6 +970,8 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 		g.hireVillagerInto(villagers.Carpenter, building.CarpentryWorkshop)
 	case ui.HireSmelter:
 		g.hireVillagerInto(villagers.Smelter, building.Smeltery)
+	case ui.HireWeaponsmith:
+		g.hireVillagerInto(villagers.Weaponsmith, building.Armory)
 	case ui.HireLumberjack:
 		for _, b := range g.buildings {
 			if b.Kind == building.LumberjackHut && b.ConstructionStage == building.ConstructionNone && !g.jacks.HasHome(b) {
@@ -1088,11 +1137,56 @@ func (g *Game) handleCameraZoom() {
 		g.camera.ZoomAt(wheelY, mx, my, g.grid.Width, g.grid.Height)
 	}
 }
+
+// handleLeftPanelScroll lets the mouse wheel scroll the Build/Hire card
+// list when a list has grown too long to keep shrinking cards to fit --
+// per the user's explicit request ("подумай над прокруткой, чтобы можно
+// было прокручивать список вверх и вниз"). Scrolls whichever tab is
+// currently active; Layout.leftListWindow clamps the result on every read,
+// so the raw accumulator only needs a floor at zero here.
+func (g *Game) handleLeftPanelScroll() {
+	mx, my := ebiten.CursorPosition()
+	if !image.Pt(mx, my).In(g.layout.LeftPanel()) {
+		return
+	}
+	_, wheelY := ebiten.Wheel()
+	if wheelY == 0 {
+		return
+	}
+	delta := -int(wheelY)
+	if delta == 0 {
+		if wheelY > 0 {
+			delta = -1
+		} else {
+			delta = 1
+		}
+	}
+	if g.leftTab == ui.HireTab {
+		g.leftScrollHire += delta
+		if g.leftScrollHire < 0 {
+			g.leftScrollHire = 0
+		}
+		return
+	}
+	g.leftScrollBuild += delta
+	if g.leftScrollBuild < 0 {
+		g.leftScrollBuild = 0
+	}
+}
 func (g *Game) handleMouse() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
 		mx, my := ebiten.CursorPosition()
 		if g.handleHireCardDismissRightClick(mx, my) {
 			return
+		}
+		// Per the user's explicit "клик ПКМ +/- 10 штук в очередь": a
+		// right-click on an Armory queue button moves ten instead of one.
+		if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil &&
+			g.selection.Building.Kind == building.Armory && g.selection.Building.ConstructionStage == building.ConstructionNone {
+			if row, delta, ok := g.layout.ArmoryQueueButtonAt(mx, my); ok {
+				g.adjustArmoryQueue(g.selection.Building, row, delta*10)
+				return
+			}
 		}
 		// Per the user's explicit request: select the (debug) enemy, then
 		// right-click a map tile to send it walking there -- the route
@@ -1102,6 +1196,19 @@ func (g *Game) handleMouse() {
 		// itself while an Enemy is selected, so panel buttons still work.
 		if g.selection.Kind == ui.SelectionEnemy && g.selection.Enemy != nil && image.Pt(mx, my).In(g.layout.MapRect()) {
 			g.commandSelectedEnemyTo(mx, my)
+			return
+		}
+		// Per the user's explicit request: a selected soldier group's
+		// right-click either orders an attack (cursor landed on a live
+		// enemy -- red square marker) or a formation move (empty tile) --
+		// see commandSoldierGroupAttack/commandSoldierGroupTo.
+		if g.selection.Kind == ui.SelectionSoldierGroup && len(g.selection.SoldierGroup) > 0 && image.Pt(mx, my).In(g.layout.MapRect()) {
+			tx, ty := g.camera.ScreenToTile(mx, my)
+			if target := g.enemyAt(tx, ty); target != nil {
+				g.commandSoldierGroupAttack(target)
+			} else {
+				g.commandSoldierGroupTo(mx, my)
+			}
 			return
 		}
 		g.buildMode = false
@@ -1138,7 +1245,7 @@ func (g *Game) handleHireCardDismissRightClick(mx, my int) bool {
 		return false
 	}
 	options := g.hireOptions()
-	index, ok := g.layout.HireIndexAt(mx, my, len(options))
+	index, ok := g.layout.HireIndexAt(mx, my, len(options), g.leftScrollHire)
 	if !ok || index >= len(options) {
 		return false
 	}
@@ -1299,7 +1406,7 @@ func (g *Game) handleLeftClick(mx, my int) {
 	switch g.leftTab {
 	case ui.HireTab:
 		options := g.hireOptions()
-		if index, ok := g.layout.HireIndexAt(mx, my, len(options)); ok {
+		if index, ok := g.layout.HireIndexAt(mx, my, len(options), g.leftScrollHire); ok {
 			if index < len(options) && options[index].Available {
 				g.hireFromTab(options[index].Kind)
 			}
@@ -1318,7 +1425,7 @@ func (g *Game) handleLeftClick(mx, my int) {
 			g.statusMsg = ""
 			return
 		}
-		if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds)); ok {
+		if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds), g.leftScrollBuild); ok {
 			g.palette.Select(index)
 			g.buildMode = true
 			g.clearWallAnchor()
@@ -1356,10 +1463,41 @@ func (g *Game) handleLeftClick(mx, my int) {
 		}
 	}
 	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil &&
-		g.selection.Building.Kind == building.Barracks && g.selection.Building.ConstructionStage == building.ConstructionNone &&
-		g.layout.BarracksHireAt(mx, my) {
-		g.hireSentry(g.selection.Building)
-		return
+		g.selection.Building.Kind == building.Barracks && g.selection.Building.ConstructionStage == building.ConstructionNone {
+		if index, ok := g.layout.BarracksHireIndexAt(mx, my); ok {
+			switch index {
+			case 0:
+				g.hireSentry(g.selection.Building)
+			case 1:
+				g.hireArcher(g.selection.Building)
+			case 2:
+				g.hireSwordsman(g.selection.Building)
+			}
+			return
+		}
+	}
+	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil &&
+		g.selection.Building.Kind == building.Armory && g.selection.Building.ConstructionStage == building.ConstructionNone {
+		if row, delta, ok := g.layout.ArmoryQueueButtonAt(mx, my); ok {
+			g.adjustArmoryQueue(g.selection.Building, row, delta)
+			return
+		}
+	}
+	if g.selection.Kind == ui.SelectionSoldierGroup && len(g.selection.SoldierGroup) > 0 {
+		if n, ok := g.layout.FormationLinesAt(mx, my); ok {
+			g.formationLines = n
+			return
+		}
+		if g.layout.SoldierGroupSplitAt(mx, my) {
+			if g.selection.SoldierGroupAnchor != nil {
+				g.selection.SoldierGroup = []*soldier.Soldier{g.selection.SoldierGroupAnchor}
+			}
+			return
+		}
+		if g.layout.SoldierGroupByProfessionAt(mx, my) {
+			g.selection.SoldierGroup = g.soldierGroupOfProfession(g.selection.SoldierGroup[0].Profession)
+			return
+		}
 	}
 	point := image.Pt(mx, my)
 	if point.In(g.layout.LeftPanel()) ||
@@ -1381,6 +1519,16 @@ func (g *Game) handleLeftClick(mx, my int) {
 		// or other planned building.
 		g.selection.Clear()
 	} else if selected := g.selectionAt(mx, my); selected.Kind != ui.SelectionNone {
+		// Shift+click on another soldier merges its own proximity group
+		// into the currently selected one instead of replacing it -- per
+		// the user's explicit request for a way to combine e.g. an Archer
+		// group and a Swordsman group into one squad.
+		if selected.Kind == ui.SelectionSoldierGroup && g.selection.Kind == ui.SelectionSoldierGroup &&
+			ebiten.IsKeyPressed(ebiten.KeyShift) {
+			g.selection.SoldierGroup = mergeSoldierGroups(g.selection.SoldierGroup, selected.SoldierGroup)
+			g.selection.SoldierGroupAnchor = selected.SoldierGroupAnchor
+			return
+		}
 		g.selection = selected
 		return
 	} else {
@@ -1651,6 +1799,98 @@ func (g *Game) hireSentry(barracks *building.Building) {
 	g.sentries.Spawn(tower)
 }
 
+// canHireArcher/canHireSwordsman report whether the given Barracks holds
+// enough of its own delivered equipment (see Types[Barracks].PassiveInputs)
+// to hire one -- gold plus a Bow/Sword and a LeatherArmor, per the user's
+// explicit "Лучник: лук деревянный, кожаный доспех + 1 ед золота. Мечник:
+// меч железный, кожаный доспех + 1 ед золота." Unlike a Sentry, neither
+// needs a free WatchTower: they're mobile, no "home" building at all.
+func (g *Game) canHireArcher(barracks *building.Building) bool {
+	return canHireEquippedSoldier(barracks, resource.Bow)
+}
+
+func (g *Game) canHireSwordsman(barracks *building.Building) bool {
+	return canHireEquippedSoldier(barracks, resource.Sword)
+}
+
+func canHireEquippedSoldier(barracks *building.Building, weapon resource.Type) bool {
+	if barracks == nil || barracks.Kind != building.Barracks || barracks.ConstructionStage != building.ConstructionNone {
+		return false
+	}
+	return barracks.InputBuffer[resource.Gold] >= unitHireCost &&
+		barracks.InputBuffer[weapon] >= 1 &&
+		barracks.InputBuffer[resource.LeatherArmor] >= 1
+}
+
+// hireArcher/hireSwordsman spend the Barracks' own gold + weapon + armor
+// (not the shared stockpile, same convention as hireSentry) and spawn the
+// new soldier onto a free ground tile near the Barracks -- see
+// freeGroundTileNear. A no-op if the matching canHire* would report false.
+func (g *Game) hireArcher(barracks *building.Building) {
+	g.hireEquippedSoldier(barracks, soldier.Archer, resource.Bow, g.canHireArcher)
+}
+
+func (g *Game) hireSwordsman(barracks *building.Building) {
+	g.hireEquippedSoldier(barracks, soldier.Swordsman, resource.Sword, g.canHireSwordsman)
+}
+
+func (g *Game) hireEquippedSoldier(barracks *building.Building, profession soldier.Profession, weapon resource.Type, canHire func(*building.Building) bool) {
+	if !canHire(barracks) {
+		return
+	}
+	access := barracks.AccessPoint()
+	x, y, ok := g.freeGroundTileNear(access.X, access.Y)
+	if !ok {
+		return
+	}
+	if !barracks.TakeInput(resource.Gold, unitHireCost) || !barracks.TakeInput(weapon, 1) || !barracks.TakeInput(resource.LeatherArmor, 1) {
+		return
+	}
+	g.soldiers.Spawn(profession, x, y)
+}
+
+// freeGroundTileNear searches outward in growing square rings from (cx, cy)
+// for the nearest dry tile with no building and no other unit already
+// standing on it -- used to place a freshly hired Archer/Swordsman, which
+// unlike a Sentry has no "home" building of its own to appear in.
+func (g *Game) freeGroundTileNear(cx, cy int) (int, int, bool) {
+	if g.groundTileFree(cx, cy) {
+		return cx, cy, true
+	}
+	for r := 1; r <= 8; r++ {
+		for dx := -r; dx <= r; dx++ {
+			for dy := -r; dy <= r; dy++ {
+				if dx > -r && dx < r && dy > -r && dy < r {
+					continue // interior already covered by a smaller ring
+				}
+				x, y := cx+dx, cy+dy
+				if g.groundTileFree(x, y) {
+					return x, y, true
+				}
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+func (g *Game) groundTileFree(x, y int) bool {
+	if !g.grid.InBounds(x, y) || g.grid.At(x, y).Terrain == world.Water {
+		return false
+	}
+	for _, b := range g.buildings {
+		footprint := building.Types[b.Kind].Footprint
+		if x >= b.X && x < b.X+footprint && y >= b.Y && y < b.Y+footprint {
+			return false
+		}
+	}
+	for _, s := range g.soldiers.Soldiers {
+		if s.X == x && s.Y == y {
+			return false
+		}
+	}
+	return true
+}
+
 // trySpendGold deducts unitHireCost from the stockpile and reports success.
 // On failure it leaves the stockpile untouched and sets a status message,
 // so every hire call site can just `if !g.trySpendGold() { return }` before
@@ -1851,6 +2091,34 @@ func (g *Game) clearMissingUnitSelection() {
 				return
 			}
 		}
+	case ui.SelectionSoldierGroup:
+		// A starved soldier is dropped from g.soldiers.Soldiers without its
+		// HP being touched (see soldier.Controller.Tick), so Alive() alone
+		// can't tell a departed group member from a living one -- an actual
+		// roster membership check is needed here, unlike every case above.
+		var alive []*soldier.Soldier
+		for _, sd := range g.selection.SoldierGroup {
+			for _, live := range g.soldiers.Soldiers {
+				if live == sd {
+					alive = append(alive, sd)
+					break
+				}
+			}
+		}
+		if len(alive) > 0 {
+			g.selection.SoldierGroup = alive
+			anchorAlive := false
+			for _, sd := range alive {
+				if sd == g.selection.SoldierGroupAnchor {
+					anchorAlive = true
+					break
+				}
+			}
+			if !anchorAlive {
+				g.selection.SoldierGroupAnchor = alive[0]
+			}
+			return
+		}
 	default:
 		return
 	}
@@ -1860,7 +2128,7 @@ func (g *Game) clearMissingUnitSelection() {
 // refreshPopulation rebuilds the live headcount while retaining the
 // persistent death/removal history shown in the empty inspector panel.
 func (g *Game) refreshPopulation() {
-	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners) + len(g.sentries.Sentries)
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners) + len(g.sentries.Sentries) + len(g.soldiers.Soldiers)
 }
 
 // buildingSelectionAt resolves only a building, including a Road. It is used
@@ -1953,6 +2221,12 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		m := g.miners.Miners[i]
 		if m.X == tx && m.Y == ty && m.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionMiner, Miner: m}
+		}
+	}
+	for i := len(g.soldiers.Soldiers) - 1; i >= 0; i-- {
+		sd := g.soldiers.Soldiers[i]
+		if sd.X == tx && sd.Y == ty && sd.Alive() {
+			return ui.Selection{Kind: ui.SelectionSoldierGroup, SoldierGroup: g.soldierGroupNear(sd), SoldierGroupAnchor: sd}
 		}
 	}
 	for i := len(g.enemies) - 1; i >= 0; i-- {
@@ -2986,6 +3260,7 @@ func (g *Game) loadGame(path string) error {
 	g.builders = builder.NewController()
 	g.miners = miner.NewController()
 	g.sentries = sentry.NewController()
+	g.soldiers = soldier.NewController()
 	g.enemies = nil // debug-only roster, never persisted -- see the Game struct field's doc comment
 	g.deathEffects = nil
 	if len(state.Units) == 0 {
@@ -3117,6 +3392,8 @@ func (g *Game) serializeUnits() []save.UnitState {
 			kind = save.UnitCarpenter
 		case villagers.Smelter:
 			kind = save.UnitSmelter
+		case villagers.Weaponsmith:
+			kind = save.UnitWeaponsmith
 		default:
 			kind = save.UnitFarmer
 		}
@@ -3232,6 +3509,20 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Meal:        s.Meal(),
 		})
 	}
+	for _, sd := range g.soldiers.Soldiers {
+		kind := save.UnitArcher
+		if sd.Profession == soldier.Swordsman {
+			kind = save.UnitSwordsman
+		}
+		units = append(units, save.UnitState{
+			Kind:        kind,
+			X:           sd.X,
+			Y:           sd.Y,
+			HomeIndex:   -1,
+			HungerTicks: sd.HungerTicks(),
+			HP:          sd.HP,
+		})
+	}
 	return units
 }
 
@@ -3240,7 +3531,7 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 		switch state.Kind {
 		case save.UnitSerf:
 			g.logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving, state.Dismissing)
-		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher, save.UnitCarpenter, save.UnitSmelter:
+		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher, save.UnitCarpenter, save.UnitSmelter, save.UnitWeaponsmith:
 			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) {
 				continue
 			}
@@ -3259,6 +3550,8 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				profession = villagers.Carpenter
 			case save.UnitSmelter:
 				profession = villagers.Smelter
+			case save.UnitWeaponsmith:
+				profession = villagers.Weaponsmith
 			default:
 				profession = villagers.Farmer
 			}
@@ -3268,7 +3561,8 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				(profession == villagers.Swineherd && home.Kind != building.PigFarm) ||
 				(profession == villagers.Butcher && home.Kind != building.MeatWorkshop) ||
 				(profession == villagers.Carpenter && home.Kind != building.CarpentryWorkshop) ||
-				(profession == villagers.Smelter && home.Kind != building.Smeltery) {
+				(profession == villagers.Smelter && home.Kind != building.Smeltery) ||
+				(profession == villagers.Weaponsmith && home.Kind != building.Armory) {
 				continue
 			}
 			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings, state.Meal)
@@ -3332,6 +3626,12 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				}
 			}
 			g.miners.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, miner.State(state.State), target, state.WorkTicks, state.CargoAmount, state.Cargo, state.QuotaIndex, state.QuotaProgress, g.grid, buildings, state.Meal)
+		case save.UnitArcher, save.UnitSwordsman:
+			profession := soldier.Archer
+			if state.Kind == save.UnitSwordsman {
+				profession = soldier.Swordsman
+			}
+			g.soldiers.Restore(profession, state.X, state.Y, state.HungerTicks, state.HP)
 		}
 	}
 }
@@ -3964,6 +4264,7 @@ func (g *Game) pruneDeadEnemies() {
 			continue
 		}
 		g.addDeathEffect(e.X, e.Y)
+		delete(g.sightedEnemies, e)
 	}
 	g.enemies = alive
 }
@@ -4010,6 +4311,11 @@ func (g *Game) queueStarvationDeathEffects() {
 		}
 	}
 	for _, unit := range g.sentries.Sentries {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+	for _, unit := range g.soldiers.Soldiers {
 		if unit.HungerTicks() >= diesThisTick {
 			g.addDeathEffect(unit.X, unit.Y)
 		}
@@ -4718,7 +5024,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawBuilders(screen, g.builders.Builders, g.camera)
 	render.DrawMiners(screen, g.miners.Miners, g.camera)
 	render.DrawSentries(screen, g.sentries.Sentries, g.camera)
+	render.DrawSoldiers(screen, g.soldiers.Soldiers, g.camera)
 	render.DrawEnemies(screen, g.enemies, g.camera)
+	if g.attackMarkerTarget != nil && g.attackMarkerTarget.Alive() {
+		render.DrawAttackMarker(screen, g.camera, g.attackMarkerTarget.X, g.attackMarkerTarget.Y)
+	}
 	render.DrawSentryProjectiles(screen, g.sentries.Sentries, g.camera)
 	render.DrawDeathEffects(screen, g.deathEffects, g.camera)
 	// Foreground layers (porches/fences/eaves) intentionally come after units;
@@ -4768,13 +5078,20 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 	ui.BeginResourceTooltips()
-	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts())
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts(), g.leftScrollBuild, g.leftScrollHire)
 	trimServesPrompt := ""
 	if g.dialog == ui.DialogConfirmTrimServes {
 		trimServesPrompt = fmt.Sprintf(i18n.T().TrimServesConfirmPrompt, len(g.logi.Serfs), g.recommendedServeCount())
 	}
-	canHireSentry := g.selection.Kind == ui.SelectionBuilding && g.canHireSentry(g.selection.Building)
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHireSentry)
+	var canHire ui.BarracksHireAvailability
+	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil && g.selection.Building.Kind == building.Barracks {
+		canHire = ui.BarracksHireAvailability{
+			Sentry:    g.canHireSentry(g.selection.Building),
+			Archer:    g.canHireArcher(g.selection.Building),
+			Swordsman: g.canHireSwordsman(g.selection.Building),
+		}
+	}
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHire, g.formationLines)
 	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
 	ui.DrawResourceTooltip(screen, g.layout)
 

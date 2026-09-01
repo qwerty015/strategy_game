@@ -28,6 +28,13 @@ const (
 	Butcher
 	Carpenter
 	Smelter
+
+	// Weaponsmith works the Armory -- unlike its resident there is no
+	// unique behavior at all (the Armory's queued production is ticked
+	// separately by cmd/game's tickArmories, not through economy.Tick),
+	// it just needs to "exist" here for the generic RequiresWorker/
+	// unitsAt checks, the same as every other stationary profession.
+	Weaponsmith
 )
 
 const (

@@ -37,24 +37,41 @@ const (
 	GoldOre
 	IronOre
 	Iron
+
+	// Hide is the PigFarm's second, simultaneous output alongside Carcass
+	// (see building.Recipe.SecondaryOutput) -- raw material for
+	// LeatherArmor at the Armory.
+	Hide
+
+	// Bow, LeatherArmor and Sword are the Armory's queued products (see
+	// Building.ProductionQueue), consumed by the Barracks to equip a new
+	// Archer (Bow + LeatherArmor) or Swordsman (Sword + LeatherArmor).
+	// None of the three are food.
+	Bow
+	LeatherArmor
+	Sword
 )
 
 var typeNames = map[Type]string{
-	Wheat:      "wheat",
-	Flour:      "flour",
-	Bread:      "bread",
-	Fish:       "fish",
-	Wine:       "wine",
-	Sausage:    "sausage",
-	Carcass:    "carcass",
-	Log:        "log",
-	Plank:      "plank",
-	StoneBlock: "stone_block",
-	Gold:       "gold",
-	Coal:       "coal",
-	GoldOre:    "gold_ore",
-	IronOre:    "iron_ore",
-	Iron:       "iron",
+	Wheat:        "wheat",
+	Flour:        "flour",
+	Bread:        "bread",
+	Fish:         "fish",
+	Wine:         "wine",
+	Sausage:      "sausage",
+	Carcass:      "carcass",
+	Log:          "log",
+	Plank:        "plank",
+	StoneBlock:   "stone_block",
+	Gold:         "gold",
+	Coal:         "coal",
+	GoldOre:      "gold_ore",
+	IronOre:      "iron_ore",
+	Iron:         "iron",
+	Hide:         "hide",
+	Bow:          "bow",
+	LeatherArmor: "leather_armor",
+	Sword:        "sword",
 }
 
 var namesToType = func() map[string]Type {
@@ -99,7 +116,7 @@ func (t *Type) UnmarshalText(data []byte) error {
 // are intentionally used for buffers, but UI and service logic must not
 // change order from one frame to the next.
 func AllTypes() []Type {
-	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log, Plank, StoneBlock, Gold, Coal, GoldOre, IronOre, Iron}
+	return []Type{Wheat, Flour, Bread, Fish, Wine, Sausage, Carcass, Log, Plank, StoneBlock, Gold, Coal, GoldOre, IronOre, Iron, Hide, Bow, LeatherArmor, Sword}
 }
 
 // FoodTypes returns every resource that can feed a unit in a Tavern. The

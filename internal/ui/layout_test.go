@@ -62,13 +62,49 @@ func TestLayoutKeepsPanelsAtWindowEdges(t *testing.T) {
 	}
 }
 
+// TestLeftListWindow_ScrollsOnceTheFloorStrideCantFitEverything covers the
+// user's explicit request for a scrollable left panel: a short window
+// forces even the floor stride to overflow, and scroll must reveal the
+// later items instead of everything staying permanently off-screen.
+func TestLeftListWindow_ScrollsOnceTheFloorStrideCantFitEverything(t *testing.T) {
+	layout := NewLayout(1024, 300) // short window: floor stride still overflows
+	count := 20
+
+	stride, height, start, visible := layout.leftListWindow(leftCardsStartY, count, 0)
+	if visible >= count {
+		t.Fatalf("visible = %d, want fewer than count (%d) so scrolling is actually needed", visible, count)
+	}
+	if stride < leftCardMinStride || height < leftCardMinHeight {
+		t.Fatalf("stride/height = %d/%d, want at least the floor (%d/%d)", stride, height, leftCardMinStride, leftCardMinHeight)
+	}
+	if start != 0 {
+		t.Fatalf("start at scroll=0 = %d, want 0", start)
+	}
+
+	// Scrolling past the end clamps to the last full page, not an empty tail.
+	_, _, start, visible = layout.leftListWindow(leftCardsStartY, count, count)
+	if start != count-visible {
+		t.Fatalf("start at an over-large scroll = %d, want %d (clamped to the last page)", start, count-visible)
+	}
+
+	// A point resolved via HireIndexAt at a mid-scroll offset must return
+	// an index from the scrolled window, not the unscrolled one.
+	scroll := 5
+	_, _, start, _ = layout.leftListWindow(leftCardsStartY, count, scroll)
+	x, y := 20, leftCardsStartY+4
+	got, ok := layout.HireIndexAt(x, y, count, scroll)
+	if !ok || got != start {
+		t.Fatalf("HireIndexAt at the top row with scroll=%d = (%d, %v), want (%d, true)", scroll, got, ok, start)
+	}
+}
+
 func TestBuildPaletteKeepsEveryCardClickable(t *testing.T) {
 	layout := NewLayout(1024, 768)
 	palette := NewPalette()
 	stride, _ := layout.buildCardGeometry(len(palette.Kinds))
 	for i := range palette.Kinds {
 		x, y := 20, leftBuildCardsStartY+4+i*stride
-		got, ok := layout.BuildIndexAt(x, y, len(palette.Kinds))
+		got, ok := layout.BuildIndexAt(x, y, len(palette.Kinds), 0)
 		if !ok || got != i {
 			t.Fatalf("card %d at (%d,%d) resolved to %d, %v", i, x, y, got, ok)
 		}
@@ -113,6 +149,7 @@ func TestPalettePlacesTheWholeFoodChainFirst(t *testing.T) {
 		building.Gate,
 		building.WatchTower,
 		building.Barracks,
+		building.Armory,
 		building.Warehouse,
 		building.LumberjackHut,
 		building.CarpentryWorkshop,

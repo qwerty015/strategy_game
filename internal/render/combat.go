@@ -32,3 +32,16 @@ func DrawTowerRange(screen *ebiten.Image, cam *Camera, tileX, tileY int) {
 		}
 	}
 }
+
+// attackMarkerColor is a clear "hostile target" red, distinct from every
+// other highlight color this package uses.
+var attackMarkerColor = color.RGBA{R: 220, G: 40, B: 30, A: 255}
+
+// DrawAttackMarker draws the red square outline over a selected soldier
+// group's current attack target tile -- per the user's explicit "отмечает
+// противника красной рамкой (квадрат на котором он находится)".
+func DrawAttackMarker(screen *ebiten.Image, cam *Camera, tileX, tileY int) {
+	tilePixels := float32(cam.TilePixels())
+	sx, sy := cam.TileToScreen(tileX, tileY)
+	vector.StrokeRect(screen, float32(sx), float32(sy), tilePixels, tilePixels, 3, attackMarkerColor, false)
+}

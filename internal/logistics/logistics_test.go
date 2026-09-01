@@ -19,7 +19,7 @@ import (
 func tick(c *Controller, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
 	ledger := reservations.New()
 	c.Reserve(ledger)
-	c.Tick(grid, buildings, stock, ledger)
+	c.Tick(grid, buildings, stock, ledger, nil)
 }
 
 // straightRoad returns Road buildings filling every tile from x=fromX to

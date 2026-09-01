@@ -218,11 +218,17 @@ var Types = map[Kind]Type{
 		Recipe: Recipe{
 			// Feed is consumed before growth begins: without all three units
 			// of Wheat there is no pig being raised yet.
-			Inputs:               map[resource.Type]int{resource.Wheat: 3},
-			Output:               resource.Carcass,
-			OutputAmount:         1,
-			TicksToProduce:       600,
-			ConsumeInputsAtStart: true,
+			Inputs:       map[resource.Type]int{resource.Wheat: 3},
+			Output:       resource.Carcass,
+			OutputAmount: 1,
+			// A pig gives up its hide the same moment it gives up its
+			// carcass -- one animal, both products at once, per the
+			// user's explicit request ("оба выхода с одной свиньи
+			// одновременно").
+			SecondaryOutput:       resource.Hide,
+			SecondaryOutputAmount: 1,
+			TicksToProduce:        600,
+			ConsumeInputsAtStart:  true,
 		},
 		PlankCost:                   standardPlankCost,
 		StoneCost:                   standardStoneCost,
@@ -401,11 +407,40 @@ var Types = map[Kind]Type{
 		Footprint: 1,
 		// Deliberately not RequiresWorker: nobody lives here. It's a hire
 		// point, not a workplace -- see cmd/game's Barracks inspector
-		// button. Gold delivered here (up to BufferCapacity) is spent one
-		// unit per Sentry hired, straight from this building's own
-		// InputBuffer rather than the shared stockpile every other hire
-		// draws from directly.
-		PassiveInputs:               map[resource.Type]int{resource.Gold: BufferCapacity},
+		// button. Gold, Bow, LeatherArmor and Sword delivered here (up to
+		// BufferCapacity each) are spent per hire, straight from this
+		// building's own InputBuffer rather than the shared stockpile
+		// every other hire draws from directly: a Sentry needs only gold,
+		// an Archer needs gold + Bow + LeatherArmor, a Swordsman needs
+		// gold + Sword + LeatherArmor.
+		PassiveInputs: map[resource.Type]int{
+			resource.Gold:         BufferCapacity,
+			resource.Bow:          BufferCapacity,
+			resource.LeatherArmor: BufferCapacity,
+			resource.Sword:        BufferCapacity,
+		},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
+	},
+	Armory: {
+		Kind:           Armory,
+		Name:           "Armory",
+		Footprint:      1,
+		RequiresWorker: true,
+		// Raw material for all three queued products at once (Plank for
+		// Bow, Hide for LeatherArmor, Iron+Coal for Sword) -- see
+		// cmd/game's tickArmories, which is what actually turns these
+		// into finished goods; there's no Recipe here at all (three
+		// parallel player-queued lines don't fit the single-active-recipe
+		// model economy.Tick assumes).
+		PassiveInputs: map[resource.Type]int{
+			resource.Plank: BufferCapacity,
+			resource.Hide:  BufferCapacity,
+			resource.Iron:  BufferCapacity,
+			resource.Coal:  BufferCapacity,
+		},
 		PlankCost:                   standardPlankCost,
 		StoneCost:                   standardStoneCost,
 		ConstructionFoundationTicks: standardFoundationTicks,

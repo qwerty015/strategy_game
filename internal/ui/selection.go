@@ -9,6 +9,7 @@ import (
 	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/miner"
 	"strategy_game/internal/quarry"
+	"strategy_game/internal/soldier"
 	"strategy_game/internal/villagers"
 )
 
@@ -32,6 +33,15 @@ const (
 	// user's explicit request to select and right-click-move it, meant to
 	// carry over to future player-controlled combat units too.
 	SelectionEnemy
+
+	// SelectionSoldierGroup is one or more Archers/Swordsmen of the same
+	// Profession, selected together -- see cmd/game's selectionAt, which
+	// clicking a single soldier expands into every same-profession soldier
+	// within 4 tiles (Chebyshev), per the user's explicit request ("клик
+	// на лучника - выделяются и управляются сразу все лучники в радиусе 4
+	// клеток"). A right-click then orders the whole group at once (move or
+	// attack) -- see commandSoldierGroupTo/commandSoldierGroupAttack.
+	SelectionSoldierGroup
 )
 
 // Selection is the UI-facing selection state. Only one object can be
@@ -47,6 +57,18 @@ type Selection struct {
 	Builder    *builder.Builder
 	Miner      *miner.Miner
 	Enemy      *enemy.Enemy
+
+	// SoldierGroup is set only for SelectionSoldierGroup -- see that
+	// constant's doc comment. Shift-clicking another soldier merges its
+	// own proximity group into this one (see cmd/game's mergeSoldierGroups),
+	// so a group may end up mixing Archers and Swordsmen.
+	SoldierGroup []*soldier.Soldier
+
+	// SoldierGroupAnchor is the specific soldier a plain (non-shift) click
+	// most recently selected -- the "разъединить" inspector button
+	// collapses SoldierGroup back down to just this one, per the user's
+	// explicit request for a way to split a merged group apart again.
+	SoldierGroupAnchor *soldier.Soldier
 }
 
 // Clear removes the current selection.

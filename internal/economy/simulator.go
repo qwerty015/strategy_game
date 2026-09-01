@@ -161,7 +161,7 @@ func tickRecipe(b *building.Building, recipe building.Recipe) {
 		return
 	}
 	consumeInputs(b, recipe.Inputs)
-	b.AddOutput(recipe.Output, recipe.OutputAmount)
+	addRecipeOutputs(b, recipe)
 	b.ProgressTicks = 0
 }
 
@@ -194,7 +194,7 @@ func tickMultiRecipe(b *building.Building, recipes []building.Recipe) {
 		return
 	}
 	consumeInputs(b, recipe.Inputs)
-	b.AddOutput(recipe.Output, recipe.OutputAmount)
+	addRecipeOutputs(b, recipe)
 	b.ProgressTicks = 0
 }
 
@@ -232,8 +232,20 @@ func tickPrepaidRecipe(b *building.Building, recipe building.Recipe) {
 	if b.ProgressTicks < recipe.TicksToProduce || !hasOutputRoom(b, recipe) {
 		return
 	}
-	b.AddOutput(recipe.Output, recipe.OutputAmount)
+	addRecipeOutputs(b, recipe)
 	b.ProgressTicks = 0
+}
+
+// addRecipeOutputs deposits a completed cycle's product(s): always
+// Output/OutputAmount, plus SecondaryOutput/SecondaryOutputAmount when
+// present (currently only the PigFarm's Hide alongside its Carcass -- see
+// building.Recipe.SecondaryOutput's doc comment). Room for both was
+// already confirmed by hasOutputRoom before any caller reaches this.
+func addRecipeOutputs(b *building.Building, recipe building.Recipe) {
+	b.AddOutput(recipe.Output, recipe.OutputAmount)
+	if recipe.SecondaryOutputAmount > 0 {
+		b.AddOutput(recipe.SecondaryOutput, recipe.SecondaryOutputAmount)
+	}
 }
 
 func hasAllInputs(b *building.Building, inputs map[resource.Type]int) bool {
@@ -246,7 +258,13 @@ func hasAllInputs(b *building.Building, inputs map[resource.Type]int) bool {
 }
 
 func hasOutputRoom(b *building.Building, recipe building.Recipe) bool {
-	return b.OutputBuffer[recipe.Output]+recipe.OutputAmount <= b.OutputLimit()
+	if b.OutputBuffer[recipe.Output]+recipe.OutputAmount > b.OutputLimit() {
+		return false
+	}
+	if recipe.SecondaryOutputAmount > 0 && b.OutputBuffer[recipe.SecondaryOutput]+recipe.SecondaryOutputAmount > b.OutputLimit() {
+		return false
+	}
+	return true
 }
 
 func consumeInputs(b *building.Building, inputs map[resource.Type]int) {

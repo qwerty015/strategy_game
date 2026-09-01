@@ -32,6 +32,7 @@ const (
 	HireBuilder
 	HireMiner
 	HireSmelter
+	HireWeaponsmith
 )
 
 // HireOption is the read-only state of a card in the hire menu. Limit is zero

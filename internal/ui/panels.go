@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"image/color"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -22,6 +24,7 @@ import (
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/sentry"
+	"strategy_game/internal/soldier"
 	"strategy_game/internal/villagers"
 )
 
@@ -46,19 +49,21 @@ type imageRect struct{ x, y, w, h int }
 // DrawBuildPanel renders the two always-available world actions: construction
 // and NPC hiring. Pause/options, saves and speed live behind Esc, so map input
 // remains focused on the settlement itself.
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int) {
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int, scrollBuild, scrollHire int) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
 	drawMenuTabs(screen, layout, tab)
 	if tab == HireTab {
-		drawHireCards(screen, layout, options)
+		drawHireCards(screen, layout, options, scrollHire)
 		return
 	}
 	drawDemolitionModeButton(screen, layout, demolitionMode)
-	stride, cardH := layout.buildCardGeometry(len(p.Kinds))
-	for i, kind := range p.Kinds {
-		x, y := 12, leftBuildCardsStartY+i*stride
+	stride, cardH, start, visible := layout.leftListWindow(leftBuildCardsStartY, len(p.Kinds), scrollBuild)
+	for row := 0; row < visible; row++ {
+		i := start + row
+		kind := p.Kinds[i]
+		x, y := 12, leftBuildCardsStartY+row*stride
 		w, h := layout.LeftWidth-24, cardH
 		fill := panelInnerColor
 		if i == p.Selected {
@@ -82,6 +87,32 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		DrawMenuText(screen, label, float64(labelX), float64(y+4))
 		drawBuildCost(screen, kind, labelX, y+20)
 	}
+	drawLeftScrollbar(screen, layout, leftBuildCardsStartY, len(p.Kinds), start, visible)
+}
+
+// drawLeftScrollbar draws a thin scroll indicator on the left panel's
+// right edge when a card list is actually scrolled (visible < count) --
+// see Layout.leftListWindow. Nothing is drawn when the whole list fits.
+func drawLeftScrollbar(screen *ebiten.Image, layout Layout, startY, count, start, visible int) {
+	if visible >= count || count <= 0 {
+		return
+	}
+	r := layout.LeftPanel()
+	trackX := float32(r.Max.X - 6)
+	trackTop := float32(startY)
+	trackHeight := float32(r.Max.Y - startY - 8)
+	vector.FillRect(screen, trackX, trackTop, 3, trackHeight, panelInnerColor, false)
+
+	thumbHeight := trackHeight * float32(visible) / float32(count)
+	if thumbHeight < 16 {
+		thumbHeight = 16
+	}
+	maxThumbTravel := trackHeight - thumbHeight
+	thumbY := trackTop
+	if count > visible {
+		thumbY += maxThumbTravel * float32(start) / float32(count-visible)
+	}
+	vector.FillRect(screen, trackX, thumbY, 3, thumbHeight, selectedColor, false)
 }
 
 // drawDemolitionModeButton arms or disarms continuous removal from the
@@ -113,10 +144,11 @@ func drawMenuTabs(screen *ebiten.Image, layout Layout, active LeftTab) {
 		DrawMenuText(screen, label, float64(x+4), float64(leftTabY+9))
 	}
 }
-func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {
-	stride, cardH := layout.cardGeometry(len(options))
-	for i, option := range options {
-		x, y := 12, leftCardsStartY+i*stride
+func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption, scroll int) {
+	stride, cardH, start, visible := layout.leftListWindow(leftCardsStartY, len(options), scroll)
+	for row := 0; row < visible; row++ {
+		option := options[start+row]
+		x, y := 12, leftCardsStartY+row*stride
 		w, h := layout.LeftWidth-24, cardH
 		fill := panelInnerColor
 		if !option.Available {
@@ -133,6 +165,7 @@ func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption) {
 		DrawMenuText(screen, hireName(option.Kind), float64(labelX), float64(y+4))
 		drawHireCardInfo(screen, option, labelX, y+20)
 	}
+	drawLeftScrollbar(screen, layout, leftCardsStartY, len(options), start, visible)
 }
 
 // drawBuildCost draws the authoritative price directly below a construction
@@ -202,6 +235,8 @@ func hireName(kind HireKind) string {
 		return t.UnitMiner
 	case HireSmelter:
 		return t.UnitSmelter
+	case HireWeaponsmith:
+		return t.UnitWeaponsmith
 	default:
 		return t.UnitSerf
 	}
@@ -234,6 +269,9 @@ func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
 		img = assets.Miner[0]
 	case HireSmelter:
 		img = assets.Smelter[0]
+	// HireWeaponsmith has no sprite yet -- falls through to the Serf
+	// placeholder below, the same way WatchTower/Barracks/Sentry did
+	// before real art was added for them.
 	default:
 		img = assets.Serf[0]
 	}
@@ -289,6 +327,8 @@ func hireKindForProfession(profession villagers.Profession) HireKind {
 		return HireCarpenter
 	case villagers.Smelter:
 		return HireSmelter
+	case villagers.Weaponsmith:
+		return HireWeaponsmith
 	default:
 		return HireSerf
 	}
@@ -304,7 +344,16 @@ const (
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation. A large centered portrait separates the selected object
 // from its data, while no selection becomes the compact town summary.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string, canHireSentry bool) {
+// BarracksHireAvailability bundles whether each of the three Barracks-hired
+// units can currently be hired -- see cmd/game's canHireSentry/
+// canHireArcher/canHireSwordsman. Passed as one value instead of three
+// separate bool parameters so a future recruit doesn't have to touch every
+// call site's positional args.
+type BarracksHireAvailability struct {
+	Sentry, Archer, Swordsman bool
+}
+
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string, canHire BarracksHireAvailability, formationLines int) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -343,6 +392,8 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		drawMinerInspector(screen, r.Min.X+18, inspectorBodyY, selection.Miner)
 	case SelectionEnemy:
 		drawEnemyInspector(screen, r.Min.X+18, inspectorBodyY, selection.Enemy)
+	case SelectionSoldierGroup:
+		drawSoldierGroupInspector(screen, r.Min.X+18, inspectorBodyY, selection.SoldierGroup)
 	}
 	if selection.Kind == SelectionBuilding && selection.Building != nil &&
 		selection.Building.Kind == building.Gate && selection.Building.ConstructionStage == building.ConstructionNone {
@@ -350,7 +401,15 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	}
 	if selection.Kind == SelectionBuilding && selection.Building != nil &&
 		selection.Building.Kind == building.Barracks && selection.Building.ConstructionStage == building.ConstructionNone {
-		drawBarracksHireControls(screen, layout, canHireSentry)
+		drawBarracksHireControls(screen, layout, canHire)
+	}
+	if selection.Kind == SelectionBuilding && selection.Building != nil &&
+		selection.Building.Kind == building.Armory && selection.Building.ConstructionStage == building.ConstructionNone {
+		drawArmoryQueueControls(screen, layout, selection.Building)
+	}
+	if selection.Kind == SelectionSoldierGroup && len(selection.SoldierGroup) > 0 {
+		drawFormationLinesControl(screen, layout, formationLines)
+		drawSoldierGroupActions(screen, layout)
 	}
 	if CanRemoveSelection(selection) {
 		drawRemoveButton(screen, layout, selection, showPriority)
@@ -493,27 +552,34 @@ func drawGateControls(screen *ebiten.Image, layout Layout, gate *building.Buildi
 	DrawInspectorText(screen, autoLabel, float64(auto.Min.X+8), float64(auto.Min.Y+8))
 }
 
-// drawBarracksHireControls draws the "hire a Sentry" button for a
-// selected, finished Barracks -- the only way to get a Sentry, per the
-// user's explicit request ("Найм будет осуществляться только при выборе
-// казармы"). canHire is computed by cmd/game (enough gold in this
-// Barracks' own InputBuffer, and a free finished WatchTower for the new
-// Sentry to occupy) -- this function only draws, it never decides
+// drawBarracksHireControls draws the three hire buttons for a selected,
+// finished Barracks -- Sentry, Archer, Swordsman, the only way to get any
+// of them, per the user's explicit request ("Найм будет осуществляться
+// только при выборе казармы") extended to the two new units. canHire is
+// computed by cmd/game -- this function only draws, it never decides
 // availability itself.
-func drawBarracksHireControls(screen *ebiten.Image, layout Layout, canHire bool) {
+func drawBarracksHireControls(screen *ebiten.Image, layout Layout, canHire BarracksHireAvailability) {
 	t := i18n.T()
-	r := layout.BarracksHireRect()
+	sentryRect, archerRect, swordsmanRect := layout.BarracksHireRects()
+	drawHireButton(screen, sentryRect, t.BarracksHireSentryButton, canHire.Sentry, assets.Sentry[0])
+	drawHireButton(screen, archerRect, t.BarracksHireArcherButton, canHire.Archer, assets.Serf[0])
+	drawHireButton(screen, swordsmanRect, t.BarracksHireSwordsmanButton, canHire.Swordsman, assets.Serf[0])
+}
+
+// drawHireButton is one row of drawBarracksHireControls: a filled/outline
+// button with a label and, on the right, a small static icon. img falls
+// back to the plain Serf sprite for Archer/Swordsman until they get their
+// own art -- the same "never block on a missing sprite" convention already
+// used for the WatchTower/Barracks/Sentry before their real art arrived.
+func drawHireButton(screen *ebiten.Image, r image.Rectangle, label string, canHire bool, img *ebiten.Image) {
 	fill := panelColor
 	if canHire {
 		fill = selectedColor
 	}
 	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), fill, false)
-	DrawInspectorText(screen, t.BarracksHireButton, float64(r.Min.X+8), float64(r.Min.Y+8))
+	DrawInspectorText(screen, label, float64(r.Min.X+8), float64(r.Min.Y+8))
 
-	// The static sentry pose is an inspector asset; the three-frame atlas is
-	// used only on the world map while the guard walks to eat and back.
 	iconSize := r.Dy() - 6
-	img := assets.Sentry[0]
 	bounds := img.Bounds()
 	scale := float64(iconSize) / float64(bounds.Dy())
 	options := &ebiten.DrawImageOptions{}
@@ -521,6 +587,35 @@ func drawBarracksHireControls(screen *ebiten.Image, layout Layout, canHire bool)
 	options.GeoM.Translate(float64(r.Max.X-4-iconSize), float64(r.Min.Y+3))
 	options.Blend = ebiten.BlendSourceOver
 	screen.DrawImage(img, options)
+}
+
+// armoryQueueItems is the fixed display order for drawArmoryQueueControls
+// and Layout.ArmoryQueueRowRects -- must match cmd/game's armoryOrder so a
+// row's button always affects the item it visually shows.
+var armoryQueueItems = [3]resource.Type{resource.Bow, resource.LeatherArmor, resource.Sword}
+
+// drawArmoryQueueControls draws the three production-queue rows for a
+// selected, finished Armory -- one per item (Bow/LeatherArmor/Sword), each
+// showing the queued count and a -/+ button. Per the user's explicit
+// "количество в очереди '-' количество в очереди '+' клик ПКМ +/- 10 штук
+// в очередь, ЛКМ +/- 1 в очередь", the +/- buttons only draw the ±1 (LMB)
+// affordance -- the ±10 RMB behavior lives entirely in cmd/game's click
+// handling, this is just the visual target for both.
+func drawArmoryQueueControls(screen *ebiten.Image, layout Layout, armory *building.Building) {
+	t := i18n.T()
+	names := t.ResourceName
+	for i, item := range armoryQueueItems {
+		row, minus, plus := layout.ArmoryQueueRowRects(i)
+		vector.FillRect(screen, float32(row.Min.X), float32(row.Min.Y), float32(row.Dx()), float32(row.Dy()), panelInnerColor, false)
+		DrawInspectorText(screen, names[item], float64(row.Min.X+6), float64(row.Min.Y+7))
+		count := fmt.Sprintf("%d", armory.ProductionQueue[item])
+		DrawInspectorText(screen, count, float64(minus.Max.X+(plus.Min.X-minus.Max.X)/2-6), float64(row.Min.Y+7))
+
+		vector.FillRect(screen, float32(minus.Min.X), float32(minus.Min.Y), float32(minus.Dx()), float32(minus.Dy()), panelColor, false)
+		DrawInspectorText(screen, "-", float64(minus.Min.X+minus.Dx()/2-3), float64(minus.Min.Y+4))
+		vector.FillRect(screen, float32(plus.Min.X), float32(plus.Min.Y), float32(plus.Dx()), float32(plus.Dy()), panelColor, false)
+		DrawInspectorText(screen, "+", float64(plus.Min.X+plus.Dx()/2-3), float64(plus.Min.Y+4))
+	}
 }
 
 func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Building, bt building.Type) {
@@ -971,6 +1066,66 @@ func drawEnemyInspector(screen *ebiten.Image, x, y int, e *enemy.Enemy) {
 	DrawInspectorText(screen, t.UnitEnemy, float64(x), float64(y))
 	y += 24
 	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HPLabel, e.HP), float64(x), float64(y))
+}
+
+// drawSoldierGroupInspector shows the selected squad's composition (per
+// profession -- a Shift+click merge, see cmd/game's mergeSoldierGroups,
+// can mix Archers and Swordsmen in one group) and, as a representative
+// sample (a full per-unit breakdown isn't worth the panel space for a
+// squad-level control), the first member's own HP/hunger.
+func drawSoldierGroupInspector(screen *ebiten.Image, x, y int, group []*soldier.Soldier) {
+	if len(group) == 0 {
+		return
+	}
+	t := i18n.T()
+	archers, swordsmen := 0, 0
+	for _, sd := range group {
+		if sd.Profession == soldier.Swordsman {
+			swordsmen++
+		} else {
+			archers++
+		}
+	}
+	var parts []string
+	if archers > 0 {
+		parts = append(parts, fmt.Sprintf("%s ×%d", t.UnitArcher, archers))
+	}
+	if swordsmen > 0 {
+		parts = append(parts, fmt.Sprintf("%s ×%d", t.UnitSwordsman, swordsmen))
+	}
+	DrawInspectorText(screen, strings.Join(parts, ", "), float64(x), float64(y))
+	y += 24
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HPLabel, group[0].HP), float64(x), float64(y))
+	y += 20
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, group[0].SatietyPercent()), float64(x), float64(y))
+}
+
+// drawSoldierGroupActions draws the "разъединить"/"отряд по виду" buttons
+// -- see Layout.SoldierGroupActionRects.
+func drawSoldierGroupActions(screen *ebiten.Image, layout Layout) {
+	t := i18n.T()
+	split, byProfession := layout.SoldierGroupActionRects()
+	vector.FillRect(screen, float32(split.Min.X), float32(split.Min.Y), float32(split.Dx()), float32(split.Dy()), panelColor, false)
+	DrawInspectorText(screen, t.SoldierGroupSplitButton, float64(split.Min.X+6), float64(split.Min.Y+8))
+	vector.FillRect(screen, float32(byProfession.Min.X), float32(byProfession.Min.Y), float32(byProfession.Dx()), float32(byProfession.Dy()), panelColor, false)
+	DrawInspectorText(screen, t.SoldierGroupByProfessionButton, float64(byProfession.Min.X+6), float64(byProfession.Min.Y+8))
+}
+
+// drawFormationLinesControl draws the "1/2/3 ranks" buttons for a selected
+// soldier group -- see Layout.FormationLinesRects.
+func drawFormationLinesControl(screen *ebiten.Image, layout Layout, current int) {
+	t := i18n.T()
+	one, two, three := layout.FormationLinesRects()
+	DrawInspectorText(screen, t.FormationLinesLabel, float64(one.Min.X), float64(one.Min.Y-18))
+	for i, r := range [3]image.Rectangle{one, two, three} {
+		n := i + 1
+		fill := panelColor
+		if current == n {
+			fill = selectedColor
+		}
+		vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), fill, false)
+		DrawInspectorText(screen, fmt.Sprintf("%d", n), float64(r.Min.X+r.Dx()/2-4), float64(r.Min.Y+7))
+	}
 }
 
 func drawMinerInspector(screen *ebiten.Image, x, y int, m *miner.Miner) {

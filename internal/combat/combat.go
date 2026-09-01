@@ -12,12 +12,18 @@ package combat
 // constants elsewhere in this codebase already follow.
 const MaxHP = 100
 
-// DamagePerHit is how much HP a single hit removes. Per the user's
-// explicit rule ("один удар мечом(луком) - 10%" for structures), this is
-// currently only used against buildings and the debug Enemy -- unit HP
-// is a deliberately separate, later pass (see AGENTS.md's roadmap notes:
-// there's no real attacker that could ever damage a unit yet).
+// DamagePerHit is how much HP a single hit removes from a *structure*
+// (building or wall) -- the user's explicit "один удар мечом(луком) -
+// 10%" rule.
 const DamagePerHit = 10
+
+// UnitDamagePerHit is how much HP a single hit removes from a *unit* --
+// the user's explicit "один удар мечом/стрелой лука - 50% ХП юниту" rule
+// (two hits kill), used by package soldier's Archer/Swordsman against the
+// debug Enemy. Deliberately not used the other way around yet: the debug
+// Enemy still only attacks buildings (DamagePerHit), not soldiers -- see
+// AGENTS.md's notes on this round's scope.
+const UnitDamagePerHit = 50
 
 // ApplyDamage subtracts amount from hp, clamped to [0, MaxHP].
 func ApplyDamage(hp, amount int) int {
