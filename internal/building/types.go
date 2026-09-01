@@ -6,7 +6,7 @@ import (
 )
 
 // Standard construction cost/pace for an ordinary building: a flat 5
-// planks + 5 stone, ~15s digging the foundation and ~30s finishing once
+// construction materials, ~15s digging the foundation and ~30s finishing once
 // materials arrive (60 simulation ticks/2 = 30s at the normal 2 ticks/sec
 // pace). Per the user's explicit request ("снизим стоимость зданий, все
 // здания 5 доска, 5 каменный блок"), every building costs the same flat

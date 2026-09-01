@@ -1516,3 +1516,42 @@ func TestReserveConstructionMaterialsUsesAvailableStockOnly(t *testing.T) {
 		t.Fatalf("shortage after partial reserve = %+v, %v; want remaining plank shortage", tip, short)
 	}
 }
+
+// TestEnclosedGatherWorkerTip turns a closed wall into an actionable advisor
+// message only when it affects a resource gatherer. Automatic gates make the
+// region reachable again and therefore remove the warning.
+func TestEnclosedGatherWorkerTip(t *testing.T) {
+	grid := world.NewGrid(10, 10)
+	hut := &building.Building{Kind: building.LumberjackHut, X: 4, Y: 4}
+	buildings := []*building.Building{hut}
+	for x := 2; x <= 7; x++ {
+		buildings = append(buildings, &building.Building{Kind: building.StoneWall, X: x, Y: 2})
+		buildings = append(buildings, &building.Building{Kind: building.StoneWall, X: x, Y: 7})
+	}
+	for y := 3; y <= 6; y++ {
+		buildings = append(buildings, &building.Building{Kind: building.StoneWall, X: 2, Y: y})
+		buildings = append(buildings, &building.Building{Kind: building.StoneWall, X: 7, Y: y})
+	}
+	game := &Game{
+		grid:      grid,
+		buildings: buildings,
+		jacks:     lumberjack.NewController(),
+		quarry:    quarry.NewController(),
+		miners:    miner.NewController(),
+	}
+	game.jacks.Spawn(hut)
+	tip, blocked := game.enclosedGatherWorkerTip()
+	if !blocked || tip.Kind != advisor.KindGatherWorkerEnclosed || tip.Count != 1 || tip.Building != hut {
+		t.Fatalf("enclosedGatherWorkerTip() = %+v, %v; want one lumberjack at its hut", tip, blocked)
+	}
+	for _, b := range game.buildings {
+		if b.X == 4 && b.Y == 2 {
+			b.Kind = building.Gate
+			b.GateAuto = true
+			break
+		}
+	}
+	if tip, blocked = game.enclosedGatherWorkerTip(); blocked {
+		t.Fatalf("automatic gate should clear enclosure tip, got %+v", tip)
+	}
+}

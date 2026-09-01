@@ -185,6 +185,64 @@ func crossesWallBarrier(barriers map[Point]bool, from, to Point) bool {
 	return barriers[Point{X: to.X, Y: from.Y}] || barriers[Point{X: from.X, Y: to.Y}]
 }
 
+// ClosedWallAreas returns all passable land cells inside a completed wall loop
+// with no usable gate. It uses the very same wall and diagonal rules as
+// FindLandPath, so a resource worker cannot choose a target across a sealed
+// enclosure. Automatic and open gates connect the regions; a manual closed
+// gate keeps them split. The result is calculated on demand by the advisor,
+// not every render frame.
+func ClosedWallAreas(grid *world.Grid, buildings []*building.Building) map[Point]bool {
+	enclosed := make(map[Point]bool)
+	if grid == nil {
+		return enclosed
+	}
+	barriers := wallBarrierOccupancy(buildings)
+	seen := make(map[Point]bool)
+	for y := 0; y < grid.Height; y++ {
+		for x := 0; x < grid.Width; x++ {
+			start := Point{X: x, Y: y}
+			if seen[start] || barriers[start] || !grid.At(x, y).Buildable() {
+				continue
+			}
+			component := []Point{start}
+			seen[start] = true
+			reachesEdge := x == 0 || y == 0 || x == grid.Width-1 || y == grid.Height-1
+			touchesWall := false
+			for head := 0; head < len(component); head++ {
+				current := component[head]
+				for _, next := range neighbors(current) {
+					if !grid.InBounds(next.X, next.Y) {
+						continue
+					}
+					if barriers[next] {
+						touchesWall = true
+						continue
+					}
+					if diagonal(current, next) && crossesWallBarrier(barriers, current, next) {
+						touchesWall = true
+						continue
+					}
+					if seen[next] || !grid.At(next.X, next.Y).Buildable() {
+						continue
+					}
+					if next.X == 0 || next.Y == 0 || next.X == grid.Width-1 || next.Y == grid.Height-1 {
+						reachesEdge = true
+					}
+					seen[next] = true
+					component = append(component, next)
+				}
+			}
+			if reachesEdge || !touchesWall {
+				continue
+			}
+			for _, point := range component {
+				enclosed[point] = true
+			}
+		}
+	}
+	return enclosed
+}
+
 func landWalkable(grid *world.Grid, blocked map[Point]bool, p, start, goal Point) bool {
 	if !grid.InBounds(p.X, p.Y) || !grid.At(p.X, p.Y).Buildable() {
 		return false

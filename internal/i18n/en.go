@@ -167,6 +167,7 @@ func init() {
 		AdvisorTipServeCountLow:                "Too few serfs: %d, recommended %d",
 		AdvisorTipServeCountHigh:               "More serfs than needed: %d, recommended %d",
 		AdvisorTipGatherWorkerStuck:            "A worker can't find any nearby resource: %d (e.g. at %d,%d)",
+		AdvisorTipGatherWorkerEnclosed:         "Gatherers are sealed behind a wall without a usable gate: %d (e.g. at %d,%d)",
 		CannotDeleteWarehouse:                  "The last warehouse cannot be deleted",
 		CannotDeleteTree:                       "The tree cannot be removed yet",
 		CannotDeleteFish:                       "Fish cannot be removed manually",

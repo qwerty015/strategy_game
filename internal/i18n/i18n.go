@@ -146,6 +146,7 @@ type Catalog struct {
 	AdvisorTipServeCountLow                string // %d current, %d recommended
 	AdvisorTipServeCountHigh               string // %d current, %d recommended
 	AdvisorTipGatherWorkerStuck            string // %d workers stuck, %d,%d one example's coordinates
+	AdvisorTipGatherWorkerEnclosed         string // %d workers enclosed, %d,%d one workplace
 	CannotDeleteWarehouse                  string
 	CannotDeleteTree                       string
 	CannotDeleteFish                       string

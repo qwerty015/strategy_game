@@ -167,6 +167,7 @@ func init() {
 		AdvisorTipServeCountLow:                "Слуг мало: %d, рекомендуется %d",
 		AdvisorTipServeCountHigh:               "Слуг больше, чем нужно: %d, рекомендуется %d",
 		AdvisorTipGatherWorkerStuck:            "Работник не может найти сырьё рядом: %d (например, на %d,%d)",
+		AdvisorTipGatherWorkerEnclosed:         "Добытчики заперты стеной без доступных ворот: %d (например, на %d,%d)",
 		CannotDeleteWarehouse:                  "Нельзя удалить последний склад",
 		CannotDeleteTree:                       "Дерево пока нельзя убрать",
 		CannotDeleteFish:                       "Рыбу нельзя убрать вручную",

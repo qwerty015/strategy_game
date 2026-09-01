@@ -30,6 +30,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 			{Kind: building.Mill, X: 6, Y: 4, ProgressTicks: 0},
 			{Kind: building.LumberjackHut, X: 8, Y: 4, OutputBuffer: map[resource.Type]int{resource.Log: 2}},
 			{Kind: building.Tree, X: 10, Y: 4, GrowthTicks: 33, GrowthTargetTicks: 240},
+			{Kind: building.Gate, X: 11, Y: 4, GateOpen: true, GateAuto: true, GateAxis: building.WallVertical, GateReplacesWall: true, InputBuffer: map[resource.Type]int{resource.Iron: 3}},
 		},
 		Stockpile:    *stock,
 		Population:   economy.Population{Count: 4},

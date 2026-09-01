@@ -264,3 +264,42 @@ func TestWallCornerCannotBeCutDiagonally(t *testing.T) {
 		t.Fatal("diagonal movement cut through a wall corner")
 	}
 }
+
+// TestClosedWallAreas follows the same rules as land routes: an entirely
+// closed wall isolates the inside; opening a gate or using automatic mode
+// reconnects it. This is the shared primitive used by the advisor.
+func TestClosedWallAreasRespectGateState(t *testing.T) {
+	grid := world.NewGrid(10, 10)
+	walls := make([]*building.Building, 0, 24)
+	for x := 2; x <= 7; x++ {
+		walls = append(walls, &building.Building{Kind: building.StoneWall, X: x, Y: 2})
+		walls = append(walls, &building.Building{Kind: building.StoneWall, X: x, Y: 7})
+	}
+	for y := 3; y <= 6; y++ {
+		walls = append(walls, &building.Building{Kind: building.StoneWall, X: 2, Y: y})
+		walls = append(walls, &building.Building{Kind: building.StoneWall, X: 7, Y: y})
+	}
+	inside := Point{X: 4, Y: 4}
+	if !ClosedWallAreas(grid, walls)[inside] {
+		t.Fatal("inside of a closed stone loop was not marked enclosed")
+	}
+	for _, wall := range walls {
+		if wall.X == 4 && wall.Y == 2 {
+			wall.Kind = building.Gate
+			wall.GateOpen = true
+			if ClosedWallAreas(grid, walls)[inside] {
+				t.Fatal("inside remained enclosed after an open gate was added")
+			}
+			wall.GateOpen = false
+			if !ClosedWallAreas(grid, walls)[inside] {
+				t.Fatal("inside escaped through a manually closed gate")
+			}
+			wall.GateAuto = true
+			if ClosedWallAreas(grid, walls)[inside] {
+				t.Fatal("automatic gate did not reconnect the enclosed area")
+			}
+			return
+		}
+	}
+	t.Fatal("test setup did not find the top wall segment for a gate")
+}

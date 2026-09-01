@@ -6,7 +6,7 @@
 // connected by road simply never gets serviced.
 //
 // Job queue order (see assign): keeping the Tavern fed comes first, then
-// topping up a construction site short on Plank/StoneBlock -- straight
+// topping up a construction site short on Plank/StoneBlock/Iron -- straight
 // from the Carpentry Workshop/Quarry Hut's own OutputBuffer when one has
 // enough on hand, falling back to the Warehouse only if not -- then a
 // direct producer -> consumer haul for the ordinary production chain (e.g.
@@ -101,7 +101,7 @@ type Serf struct {
 	amount     int
 	eating     bool // true: this trip is "walk to pickup (a Tavern) and eat", not haul
 
-	// construction is true for a Plank/StoneBlock delivery to a building
+	// construction is true for a Plank/StoneBlock/Iron delivery to a building
 	// site or road tile still under construction (package builder). Unlike
 	// every other haul, both legs of this trip may cross open land instead
 	// of requiring a road -- see startConstructionLeg's doc comment for why.
@@ -992,7 +992,7 @@ func findConstructionSupplyJob(buildings []*building.Building, stock *resource.S
 // generic recipe-driven consumer search -- this is its construction-site
 // counterpart, kept as a small explicit map rather than derived from
 // Recipe.Output since a producer's Recipe isn't guaranteed to exist purely
-// to make this construction material (Plank/StoneBlock happen to be each
+// to make this construction material (Plank/StoneBlock/Iron happen to be each
 // one's only output today, but that's incidental, not a rule to lean on).
 var constructionMaterialProducer = map[resource.Type]building.Kind{
 	resource.Plank:      building.CarpentryWorkshop,
@@ -1002,7 +1002,7 @@ var constructionMaterialProducer = map[resource.Type]building.Kind{
 
 // findConstructionDirectJob looks for a construction site short on Plank or
 // StoneBlock that can be supplied straight from a producer's own
-// OutputBuffer -- a Carpentry Workshop's planks or a Quarry Hut's stone
+// OutputBuffer -- a Carpentry Workshop's planks, a Quarry Hut's stone or a Smeltery's iron
 // blocks -- skipping the Warehouse entirely. Per the user's explicit
 // request ("если требуется строителям - несем их им а не на склад"), this
 // gives construction sites the same direct producer->consumer priority

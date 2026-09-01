@@ -297,28 +297,22 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 func drawWalls(screen *ebiten.Image, buildings []*building.Building, cam *Camera) {
 	visible := cam.VisibleTileBounds(1)
 	tilePixels := cam.TilePixels()
+	segments := building.FinishedWallSegments(buildings)
 	for _, b := range buildings {
 		if b == nil || b.ConstructionStage != building.ConstructionNone || !building.IsWallKind(b.Kind) || !visible.Intersects(b.X, b.Y, 1) {
 			continue
 		}
-		axis := b.GateAxis
-		if b.Kind == building.StoneWall {
-			axis = building.WallRenderAxis(buildings, b.X, b.Y)
-		}
 		var art *ebiten.Image
 		if b.Kind == building.StoneWall {
-			art = assets.StoneWallHorizontal
-			if axis == building.WallVertical {
-				art = assets.StoneWallVertical
-			}
+			art = assets.StoneWallFrame(building.WallShapeFromSegments(segments, b.X, b.Y))
 		} else if b.GateOpen {
 			art = assets.GateHorizontalOpen
-			if axis == building.WallVertical {
+			if b.GateAxis == building.WallVertical {
 				art = assets.GateVerticalOpen
 			}
 		} else {
 			art = assets.GateHorizontalClosed
-			if axis == building.WallVertical {
+			if b.GateAxis == building.WallVertical {
 				art = assets.GateVerticalClosed
 			}
 		}

@@ -173,7 +173,7 @@ type Type struct {
 	// the menu is deliberately not ordered by gameplay value.
 	AcceptedResources []resource.Type
 
-	// PlankCost/StoneCost are the Plank/StoneBlock units a Builder needs
+	// PlankCost/StoneCost/IronCost are the construction units a Builder needs
 	// delivered before finishing this building (or, for Road, before
 	// finishing one tile of it). Zero for kinds that are never placed
 	// through the normal construction flow (Tree, Fish, StoneDeposit).
@@ -298,7 +298,7 @@ type Building struct {
 	// without any migration needed. While non-zero the building performs
 	// no production and has no resident worker; ProgressTicks counts
 	// ticks within the *current* stage (reused, not a second counter),
-	// and InputBuffer holds Plank/StoneBlock delivered so far toward
+	// and InputBuffer holds Plank/StoneBlock/Iron delivered so far toward
 	// Type.PlankCost/StoneCost -- see AddConstructionMaterial.
 	ConstructionStage ConstructionStage
 
@@ -346,7 +346,7 @@ func NewConstructionSite(kind Kind, x, y int) *Building {
 }
 
 // AddConstructionMaterial deposits up to n units of a construction
-// material (Plank or StoneBlock) into a site's InputBuffer, capped by this
+// material (Plank, StoneBlock or Iron) into a site's InputBuffer, capped by this
 // building kind's total requirement -- not the usual BufferCapacity=6, a
 // build can need up to 15 planks. Any other resource type is rejected.
 // Returns how many units actually fit, like AddInput.

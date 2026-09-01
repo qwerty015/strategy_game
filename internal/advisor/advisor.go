@@ -60,6 +60,7 @@ const (
 	KindServeCountHigh
 	KindGatherWorkerStuck
 	KindConstructionMaterialsMissing
+	KindGatherWorkerEnclosed
 )
 
 // Tip is one actionable observation. Only the fields relevant to its Kind
@@ -68,7 +69,7 @@ type Tip struct {
 	Kind Kind
 
 	// Building is one representative instance for KindIdleBuilding/
-	// KindDisconnectedBuilding/KindGatherWorkerStuck -- not every
+	// KindDisconnectedBuilding/KindGatherWorkerStuck/KindGatherWorkerEnclosed -- not every
 	// offending building, just an example the player can jump to. Count
 	// is how many there are in total.
 	Building *building.Building

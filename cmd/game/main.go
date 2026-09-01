@@ -2162,9 +2162,59 @@ func (g *Game) tickAdvisor() {
 	g.advisorCheckTicks = 0
 
 	tips := advisor.Evaluate(g.buildings, g.stock, g.pop, g.disconnectedBuildings(), g.advisorIdleSince, g.advisorGatherStuckSince, g.worldTicks, g.recommendedServeCount(), len(g.logi.Serfs))
+	if tip, blocked := g.enclosedGatherWorkerTip(); blocked {
+		tips = append(tips, tip)
+	}
 	for _, tip := range tips {
 		g.queueAdvisorTip(tip)
 	}
+}
+
+// enclosedGatherWorkerTip reports the actual consequence of a sealed wall,
+// rather than merely detecting that the player drew a loop. A lumberjack,
+// quarryman or miner is actionable when either the worker or their home is in
+// a closed land region: without an open/automatic gate they cannot reliably
+// leave to collect resources or return with cargo. Future land gatherers can
+// join this list without changing the generic wall-region algorithm.
+func (g *Game) enclosedGatherWorkerTip() (advisor.Tip, bool) {
+	closed := pathfind.ClosedWallAreas(g.grid, g.buildings)
+	if len(closed) == 0 {
+		return advisor.Tip{}, false
+	}
+	count := 0
+	var example *building.Building
+	inside := func(home *building.Building, x, y int) bool {
+		if home == nil {
+			return false
+		}
+		if closed[pathfind.Point{X: x, Y: y}] {
+			return true
+		}
+		access := home.AccessPoint()
+		return closed[pathfind.Point{X: access.X, Y: access.Y}]
+	}
+	record := func(home *building.Building, x, y int) {
+		if !inside(home, x, y) {
+			return
+		}
+		count++
+		if example == nil {
+			example = home
+		}
+	}
+	for _, j := range g.jacks.Lumberjacks {
+		record(j.HomeBuilding(), j.X, j.Y)
+	}
+	for _, q := range g.quarry.Quarrymen {
+		record(q.HomeBuilding(), q.X, q.Y)
+	}
+	for _, m := range g.miners.Miners {
+		record(m.HomeBuilding(), m.X, m.Y)
+	}
+	if count == 0 {
+		return advisor.Tip{}, false
+	}
+	return advisor.Tip{Kind: advisor.KindGatherWorkerEnclosed, Building: example, Count: count}, true
 }
 
 // queueAdvisorTip keeps one visible/queued tip of each kind and respects the
@@ -2264,6 +2314,8 @@ func advisorTipText(tip advisor.Tip) string {
 		return fmt.Sprintf(t.AdvisorTipServeCountHigh, tip.Current, tip.Recommended)
 	case advisor.KindGatherWorkerStuck:
 		return fmt.Sprintf(t.AdvisorTipGatherWorkerStuck, tip.Count, exampleX, exampleY)
+	case advisor.KindGatherWorkerEnclosed:
+		return fmt.Sprintf(t.AdvisorTipGatherWorkerEnclosed, tip.Count, exampleX, exampleY)
 	case advisor.KindConstructionMaterialsMissing:
 		return fmt.Sprintf(t.AdvisorTipConstructionMaterialsMissing, t.ResourceName[tip.Resource], tip.Missing, exampleX, exampleY)
 	default:

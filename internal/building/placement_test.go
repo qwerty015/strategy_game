@@ -195,3 +195,29 @@ func TestWallAxisAtRequiresStraightCompletedSegment(t *testing.T) {
 		t.Fatal("corner/cross segment was accepted as a gate location")
 	}
 }
+
+// TestWallShapeAtUsesDedicatedCorners makes the visual topology explicit:
+// the logical per-cell wall can bend without pretending that a corner is a
+// straight horizontal/vertical segment.
+func TestWallShapeAtUsesDedicatedCorners(t *testing.T) {
+	center := &Building{Kind: StoneWall, X: 5, Y: 5}
+	cases := []struct {
+		name   string
+		around []*Building
+		want   WallShape
+	}{
+		{"north-east", []*Building{{Kind: StoneWall, X: 5, Y: 4}, {Kind: StoneWall, X: 6, Y: 5}}, WallShapeCornerNE},
+		{"north-west", []*Building{{Kind: StoneWall, X: 5, Y: 4}, {Kind: StoneWall, X: 4, Y: 5}}, WallShapeCornerNW},
+		{"south-east", []*Building{{Kind: StoneWall, X: 6, Y: 5}, {Kind: StoneWall, X: 5, Y: 6}}, WallShapeCornerSE},
+		{"south-west", []*Building{{Kind: StoneWall, X: 4, Y: 5}, {Kind: StoneWall, X: 5, Y: 6}}, WallShapeCornerSW},
+		{"cross", []*Building{{Kind: StoneWall, X: 5, Y: 4}, {Kind: StoneWall, X: 6, Y: 5}, {Kind: StoneWall, X: 5, Y: 6}, {Kind: StoneWall, X: 4, Y: 5}}, WallShapeCross},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			walls := append([]*Building{center}, tc.around...)
+			if got := WallShapeAt(walls, center.X, center.Y); got != tc.want {
+				t.Fatalf("WallShapeAt() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

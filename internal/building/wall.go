@@ -11,6 +11,25 @@ const (
 	WallVertical
 )
 
+// WallShape describes the visible connection pattern of a completed wall
+// piece. Collision remains per-cell; this only selects the correct artwork.
+type WallShape uint8
+
+const (
+	WallShapeIsolated WallShape = iota
+	WallShapeHorizontal
+	WallShapeVertical
+	WallShapeCornerNE
+	WallShapeCornerNW
+	WallShapeCornerSE
+	WallShapeCornerSW
+	WallShapeTNorth
+	WallShapeTSouth
+	WallShapeTEast
+	WallShapeTWest
+	WallShapeCross
+)
+
 // IsWallKind reports whether kind is a player-built piece of the town wall.
 func IsWallKind(kind Kind) bool {
 	return kind == StoneWall || kind == Gate
@@ -30,20 +49,33 @@ func GatePassable(b *Building) bool {
 	return b != nil && b.Kind == Gate && b.ConstructionStage == ConstructionNone && (b.GateOpen || b.GateAuto)
 }
 
+// FinishedWallSegments indexes completed walls and gates once. Renderers use
+// this instead of scanning every building for every wall tile, which keeps a
+// large fortress cheap to draw.
+func FinishedWallSegments(existing []*Building) map[Point]*Building {
+	segments := make(map[Point]*Building)
+	for _, b := range existing {
+		if IsFinishedWallSegment(b) {
+			segments[Point{X: b.X, Y: b.Y}] = b
+		}
+	}
+	return segments
+}
+
 // WallAxisAt finds the straight axis of a completed wall segment. Gates can
 // only replace a segment with neighbours on both opposite sides, never a cap
 // or a corner; that makes their orientation and placement unambiguous.
 func WallAxisAt(existing []*Building, x, y int) (WallAxis, bool) {
-	at := func(x, y int) bool {
-		for _, b := range existing {
-			if IsFinishedWallSegment(b) && b.X == x && b.Y == y {
-				return true
-			}
-		}
-		return false
-	}
-	horizontal := at(x-1, y) && at(x+1, y)
-	vertical := at(x, y-1) && at(x, y+1)
+	return wallAxisFromSegments(FinishedWallSegments(existing), x, y)
+}
+
+func wallAxisFromSegments(segments map[Point]*Building, x, y int) (WallAxis, bool) {
+	_, west := segments[Point{X: x - 1, Y: y}]
+	_, east := segments[Point{X: x + 1, Y: y}]
+	_, north := segments[Point{X: x, Y: y - 1}]
+	_, south := segments[Point{X: x, Y: y + 1}]
+	horizontal := west && east
+	vertical := north && south
 	switch {
 	case horizontal && !vertical:
 		return WallHorizontal, true
@@ -54,19 +86,67 @@ func WallAxisAt(existing []*Building, x, y int) (WallAxis, bool) {
 	}
 }
 
-// WallRenderAxis selects a stable visual for any completed wall piece. A
-// straight line gets its matching frame; corners and isolated segments fall
-// back to the horizontal silhouette until dedicated corner frames are added.
-func WallRenderAxis(existing []*Building, x, y int) WallAxis {
-	at := func(x, y int) bool {
-		for _, b := range existing {
-			if IsFinishedWallSegment(b) && b.X == x && b.Y == y {
-				return true
-			}
-		}
-		return false
+// WallShapeAt is the convenient one-off version used by tests and tools.
+func WallShapeAt(existing []*Building, x, y int) WallShape {
+	return WallShapeFromSegments(FinishedWallSegments(existing), x, y)
+}
+
+// WallShapeFromSegments selects the exact cardinal connection topology from
+// an already-indexed wall set. Diagonal neighbours intentionally do not affect
+// the shape: walls are orthogonal structures, and diagonal crossing remains
+// disallowed by pathfinding.
+func WallShapeFromSegments(segments map[Point]*Building, x, y int) WallShape {
+	_, north := segments[Point{X: x, Y: y - 1}]
+	_, east := segments[Point{X: x + 1, Y: y}]
+	_, south := segments[Point{X: x, Y: y + 1}]
+	_, west := segments[Point{X: x - 1, Y: y}]
+	mask := uint8(0)
+	if north {
+		mask |= 1
 	}
-	if at(x, y-1) || at(x, y+1) {
+	if east {
+		mask |= 2
+	}
+	if south {
+		mask |= 4
+	}
+	if west {
+		mask |= 8
+	}
+	switch mask {
+	case 0:
+		return WallShapeIsolated
+	case 1, 4, 5:
+		return WallShapeVertical
+	case 2, 8, 10:
+		return WallShapeHorizontal
+	case 3:
+		return WallShapeCornerNE
+	case 9:
+		return WallShapeCornerNW
+	case 6:
+		return WallShapeCornerSE
+	case 12:
+		return WallShapeCornerSW
+	case 11:
+		return WallShapeTNorth
+	case 14:
+		return WallShapeTSouth
+	case 7:
+		return WallShapeTEast
+	case 13:
+		return WallShapeTWest
+	default:
+		return WallShapeCross
+	}
+}
+
+// WallRenderAxis preserves the former small API for callers that only need an
+// orientation. New rendering should use WallShapeFromSegments for corners.
+func WallRenderAxis(existing []*Building, x, y int) WallAxis {
+	shape := WallShapeAt(existing, x, y)
+	if shape == WallShapeVertical || shape == WallShapeCornerNE || shape == WallShapeCornerNW ||
+		shape == WallShapeCornerSE || shape == WallShapeCornerSW || shape == WallShapeTEast || shape == WallShapeTWest {
 		return WallVertical
 	}
 	return WallHorizontal
