@@ -8,7 +8,6 @@ package sentry
 
 import (
 	"strategy_game/internal/building"
-	"strategy_game/internal/combat"
 	"strategy_game/internal/enemy"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
@@ -36,6 +35,11 @@ const (
 	// ShotCooldownTicks paces fire so a Sentry can't empty its tower's
 	// whole stone buffer in an instant once an enemy is in range.
 	ShotCooldownTicks = 20
+
+	// shotVisualLifetime is deliberately short: a sling stone crosses the
+	// small WatchTower range over six rendered simulation ticks. It is a
+	// render-only detail and is neither saved nor part of combat timing.
+	shotVisualLifetime = 6
 )
 
 type phase int
@@ -67,6 +71,12 @@ type Sentry struct {
 	// "restart the visible detail, keep what matters" tradeoff
 	// RestoreSentry already makes for the walking path.
 	shotCooldown int
+
+	// shotVisualTicks and shotTarget store only enough information for the
+	// renderer to show the most recent sling stone in flight. They never
+	// affect damage, pathing, hunger or save-game state.
+	shotVisualTicks          int
+	shotTargetX, shotTargetY int
 
 	// Starving mirrors package villagers' field of the same name: true
 	// once HungerInterval has passed and there was nowhere to actually go
@@ -111,6 +121,21 @@ func (s *Sentry) Working() bool { return s.ph == working }
 
 // Meal returns the food reserved for the current or next Tavern trip.
 func (s *Sentry) Meal() resource.Type { return s.meal }
+
+// ShotVisual reports the most recent sling shot while it is on screen. Its
+// coordinates are world tiles; progress is in (0, 1] and advances over a
+// small fixed number of simulation ticks. No state is returned once the
+// visual has expired, so loading a save never recreates a stale projectile.
+func (s *Sentry) ShotVisual() (fromX, fromY, targetX, targetY int, progress float64, ok bool) {
+	if s == nil || s.Home == nil || s.shotVisualTicks <= 0 {
+		return 0, 0, 0, 0, 0, false
+	}
+	progress = float64(shotVisualLifetime-s.shotVisualTicks+1) / float64(shotVisualLifetime)
+	if progress > 1 {
+		progress = 1
+	}
+	return s.Home.X, s.Home.Y, s.shotTargetX, s.shotTargetY, progress, true
+}
 
 // NewSentry creates a Sentry standing at its tower, on duty.
 func NewSentry(home *building.Building) *Sentry {
@@ -259,6 +284,9 @@ func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy
 	deaths := 0
 	remaining := c.Sentries[:0]
 	for _, s := range c.Sentries {
+		if s.shotVisualTicks > 0 {
+			s.shotVisualTicks--
+		}
 		s.ticksSinceMeal++
 		if hunger.Dead(s.ticksSinceMeal) {
 			deaths++
@@ -302,6 +330,11 @@ func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, enem
 // per shot -- a silent no-op with no enemy in range, no stone left, or
 // still on cooldown. There is deliberately no "aiming" animation state;
 // this package never touches rendering.
+//
+// Per the user's explicit request ("1 попадание камня в противника его
+// убивает"), a hit is an instant kill -- unlike a building, which still
+// takes combat.DamagePerHit (10%) per hit from the same stone. A stone
+// sling is lethal to a person but only chips a wall.
 func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy) {
 	if s.shotCooldown > 0 {
 		s.shotCooldown--
@@ -317,7 +350,7 @@ func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy) {
 	if !s.Home.TakeInput(resource.StoneBlock, 1) {
 		return
 	}
-	target.HP = combat.ApplyDamage(target.HP, combat.DamagePerHit)
+	target.HP = 0
 	s.shotCooldown = ShotCooldownTicks
 }
 

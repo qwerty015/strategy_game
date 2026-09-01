@@ -119,6 +119,7 @@ type Catalog struct {
 	UnitMiner                   string
 	UnitSmelter                 string
 	UnitSentry                  string
+	UnitEnemy                   string
 	HireSerf                    string
 	RemoveSelected              string
 	DismissSerf                 string

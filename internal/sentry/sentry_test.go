@@ -37,8 +37,10 @@ func TestSentry_FiresAtEnemyInRangeAndConsumesStone(t *testing.T) {
 
 	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
 
-	if e.HP != enemy.MaxHP-10 {
-		t.Fatalf("enemy HP after one tick = %d, want %d (one hit)", e.HP, enemy.MaxHP-10)
+	// Per the user's explicit request, a stone hit is an instant kill --
+	// unlike a building, which still only takes combat.DamagePerHit.
+	if e.Alive() {
+		t.Fatalf("enemy HP after one tick = %d, want dead (one hit kills)", e.HP)
 	}
 	if tower.InputBuffer[resource.StoneBlock] != building.BufferCapacity-1 {
 		t.Fatalf("tower stone = %d, want %d (one shot consumed)", tower.InputBuffer[resource.StoneBlock], building.BufferCapacity-1)
@@ -80,6 +82,10 @@ func TestSentry_DoesNotFireWithoutStone(t *testing.T) {
 	}
 }
 
+// TestSentry_RespectsShotCooldown uses two separate targets so the
+// cooldown itself is what's under test -- with a one-hit kill, reusing a
+// single already-dead target would pass for the wrong reason (nothing
+// left alive to shoot), not because the cooldown blocked a second shot.
 func TestSentry_RespectsShotCooldown(t *testing.T) {
 	tower := &building.Building{Kind: building.WatchTower, X: 10, Y: 10, ConstructionStage: building.ConstructionNone}
 	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
@@ -87,17 +93,31 @@ func TestSentry_RespectsShotCooldown(t *testing.T) {
 	c := NewController()
 	c.Spawn(tower)
 
-	e := enemy.New(tower.X+1, tower.Y)
+	first := enemy.New(tower.X+1, tower.Y)
+	second := enemy.New(tower.X+1, tower.Y+1)
+	enemies := []*enemy.Enemy{first, second}
 
-	// First tick fires.
-	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
-	if e.HP != enemy.MaxHP-10 {
-		t.Fatalf("enemy HP after first tick = %d, want %d", e.HP, enemy.MaxHP-10)
+	// First tick kills the first target and starts the cooldown.
+	tickController(c, []*building.Building{tower}, enemies)
+	if first.Alive() {
+		t.Fatal("first enemy still alive after one tick, want dead (one hit kills)")
 	}
-	// Immediately after, still on cooldown: no second shot.
-	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
-	if e.HP != enemy.MaxHP-10 {
-		t.Fatalf("enemy HP after second tick (still cooling down) = %d, want unchanged %d", e.HP, enemy.MaxHP-10)
+	if !second.Alive() {
+		t.Fatal("second enemy died on the same tick as the first -- only one shot per tick")
+	}
+
+	// Immediately after, still on cooldown: no second shot this tick.
+	tickController(c, []*building.Building{tower}, enemies)
+	if !second.Alive() {
+		t.Fatal("second enemy died while the Sentry should still be on cooldown")
+	}
+
+	// Once the cooldown fully elapses, the Sentry fires again.
+	for range ShotCooldownTicks {
+		tickController(c, []*building.Building{tower}, enemies)
+	}
+	if second.Alive() {
+		t.Fatal("second enemy still alive after the cooldown elapsed, want dead")
 	}
 }
 

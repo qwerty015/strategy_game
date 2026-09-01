@@ -146,6 +146,7 @@ func init() {
 		UnitMiner:                   "Miner",
 		UnitSmelter:                 "Smelter",
 		UnitSentry:                  "Sentry",
+		UnitEnemy:                   "Enemy",
 		HireSerf:                    "Hire serf",
 		RemoveSelected:              "Remove",
 		DismissSerf:                 "Dismiss serf",

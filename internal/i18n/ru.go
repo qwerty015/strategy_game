@@ -146,6 +146,7 @@ func init() {
 		UnitMiner:                   "Рудокоп",
 		UnitSmelter:                 "Плавильщик",
 		UnitSentry:                  "Часовой",
+		UnitEnemy:                   "Противник",
 		HireSerf:                    "Нанять слугу",
 		RemoveSelected:              "Удалить",
 		DismissSerf:                 "Уволить слугу",

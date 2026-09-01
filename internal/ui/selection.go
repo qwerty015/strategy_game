@@ -3,6 +3,7 @@ package ui
 import (
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
+	"strategy_game/internal/enemy"
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
@@ -26,6 +27,11 @@ const (
 	SelectionQuarryman
 	SelectionBuilder
 	SelectionMiner
+
+	// SelectionEnemy is the debug test-attacker (package enemy) -- see the
+	// user's explicit request to select and right-click-move it, meant to
+	// carry over to future player-controlled combat units too.
+	SelectionEnemy
 )
 
 // Selection is the UI-facing selection state. Only one object can be
@@ -40,6 +46,7 @@ type Selection struct {
 	Quarryman  *quarry.Quarryman
 	Builder    *builder.Builder
 	Miner      *miner.Miner
+	Enemy      *enemy.Enemy
 }
 
 // Clear removes the current selection.

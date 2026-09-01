@@ -1083,6 +1083,16 @@ func (g *Game) handleMouse() {
 		if g.handleHireCardDismissRightClick(mx, my) {
 			return
 		}
+		// Per the user's explicit request: select the (debug) enemy, then
+		// right-click a map tile to send it walking there -- the route
+		// draws the same way every other unit's does (ui.DrawSelectedRoute).
+		// A right-click elsewhere on the map still clears the selection as
+		// usual below; this only intercepts clicks that land on the map
+		// itself while an Enemy is selected, so panel buttons still work.
+		if g.selection.Kind == ui.SelectionEnemy && g.selection.Enemy != nil && image.Pt(mx, my).In(g.layout.MapRect()) {
+			g.commandSelectedEnemyTo(mx, my)
+			return
+		}
 		g.buildMode = false
 		g.demolitionMode = false
 		g.clearWallAnchor()
@@ -1932,6 +1942,12 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		m := g.miners.Miners[i]
 		if m.X == tx && m.Y == ty && m.VisibleOnMap() {
 			return ui.Selection{Kind: ui.SelectionMiner, Miner: m}
+		}
+	}
+	for i := len(g.enemies) - 1; i >= 0; i-- {
+		e := g.enemies[i]
+		if e.X == tx && e.Y == ty && e.Alive() {
+			return ui.Selection{Kind: ui.SelectionEnemy, Enemy: e}
 		}
 	}
 	if roadHit != nil {
@@ -3900,6 +3916,17 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 		}
 	}
 	return nil
+}
+
+// commandSelectedEnemyTo issues a move order for the currently selected
+// Enemy to the tile under the cursor -- the user's explicit "выбрал
+// противника, кликнул на точку ПКМ, противник идёт туда" request. Meant
+// to carry over to future player-controlled combat units the same way:
+// select, then right-click a point to walk there, plain map input rather
+// than an enemy-specific hack.
+func (g *Game) commandSelectedEnemyTo(mx, my int) {
+	tx, ty := g.camera.ScreenToTile(mx, my)
+	g.selection.Enemy.MoveTo(g.grid, g.buildings, tx, ty)
 }
 
 // spawnDebugEnemyAtCursor places one enemy.Enemy on the tile under the

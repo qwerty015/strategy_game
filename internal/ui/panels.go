@@ -11,6 +11,7 @@ import (
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
+	"strategy_game/internal/enemy"
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
@@ -340,6 +341,8 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		drawBuilderInspector(screen, r.Min.X+18, inspectorBodyY, selection.Builder)
 	case SelectionMiner:
 		drawMinerInspector(screen, r.Min.X+18, inspectorBodyY, selection.Miner)
+	case SelectionEnemy:
+		drawEnemyInspector(screen, r.Min.X+18, inspectorBodyY, selection.Enemy)
 	}
 	if selection.Kind == SelectionBuilding && selection.Building != nil &&
 		selection.Building.Kind == building.Gate && selection.Building.ConstructionStage == building.ConstructionNone {
@@ -959,6 +962,17 @@ func drawBuilderInspector(screen *ebiten.Image, x, y int, bld *builder.Builder) 
 	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, bld.SatietyPercent()), float64(x), float64(y))
 }
 
+// drawEnemyInspector is deliberately minimal: the debug test-attacker
+// (package enemy) has no profession, no hunger, nothing to report besides
+// confirmation of what's selected and how much health it has left --
+// enough for the player to see the right-click-move order landed.
+func drawEnemyInspector(screen *ebiten.Image, x, y int, e *enemy.Enemy) {
+	t := i18n.T()
+	DrawInspectorText(screen, t.UnitEnemy, float64(x), float64(y))
+	y += 24
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HPLabel, e.HP), float64(x), float64(y))
+}
+
 func drawMinerInspector(screen *ebiten.Image, x, y int, m *miner.Miner) {
 	t := i18n.T()
 	DrawInspectorText(screen, t.UnitMiner, float64(x), float64(y))
@@ -1087,6 +1101,11 @@ func selectedUnitTile(selection Selection) (tx, ty int, path []pathfind.Point, o
 			return 0, 0, nil, false
 		}
 		return selection.Miner.X, selection.Miner.Y, selection.Miner.RemainingPath(), true
+	case SelectionEnemy:
+		if selection.Enemy == nil {
+			return 0, 0, nil, false
+		}
+		return selection.Enemy.X, selection.Enemy.Y, selection.Enemy.RemainingPath(), true
 	default:
 		return 0, 0, nil, false
 	}
