@@ -125,15 +125,12 @@ func writeFrame(root, name string, out image.Image) {
 	}
 }
 
-// composeWall makes a corner, T or cross from the same normalised straight
-// sprites. Straight-wall artwork is perspective-biased: its horizontal band
-// sits left of the tile centre while the vertical band sits above it. A 32px
-// split therefore leaves an empty notch in every corner. The intentionally
-// wide 12px joins overlap the visible masonry bands, producing one solid
-// stone turn without changing the straight runs.
+// composeWall makes a compact, mitred junction from the same normalised
+// straight sprites. Each arm begins one quarter into the tile, so the centre
+// is reinforced by stone but does not turn into a bulky square tower.
 func composeWall(horizontal, vertical *image.NRGBA, module wallModule) *image.NRGBA {
 	out := image.NewNRGBA(image.Rect(0, 0, 64, 64))
-	const joinInset = 12
+	const joinInset = 24
 	const joinEnd = 64 - joinInset
 	if module.west {
 		copyPart(out, horizontal, image.Rect(0, 0, joinEnd, 64))
