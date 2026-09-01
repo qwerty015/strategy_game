@@ -18,6 +18,7 @@ import (
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
+	"strategy_game/internal/sentry"
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
 	"strategy_game/internal/world"
@@ -523,6 +524,7 @@ func TestSelectionAt_BuildingWinsOverInvisibleResident(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Baker, bakery)
@@ -552,6 +554,7 @@ func TestSelectionAt_BuildingWinsOverVisibleFarmer(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 		camera:    render.NewCamera(),
 	}
 	game.vills.Spawn(villagers.Farmer, farm)
@@ -582,6 +585,7 @@ func TestSelectionAt_ConstructionSiteWinsOverBuilder(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 		camera:    render.NewCamera(),
 	}
 	bl := game.builders.Hire(&building.Building{Kind: building.Warehouse})
@@ -608,6 +612,7 @@ func TestSelectionAt_WarehouseWinsOverSerf(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 		camera:    render.NewCamera(),
 	}
 	serf := game.logi.Serfs[0]
@@ -641,6 +646,7 @@ func TestSelectionAt_SerfOnRoadWinsOverTheRoad(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 		camera:    render.NewCamera(),
 	}
 	serf := game.logi.Serfs[0]
@@ -693,6 +699,7 @@ func TestUnitsAt_CountsAnyoneOnTheFootprintEvenWithoutADedicatedResident(t *test
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 	}
 	game.logi.Hire()
 	game.logi.Hire()
@@ -730,6 +737,7 @@ func TestSerializeAndRestorePigChainWorkers(t *testing.T) {
 			quarry:    quarry.NewController(),
 			builders:  builder.NewController(),
 			miners:    miner.NewController(),
+			sentries:  sentry.NewController(),
 		}
 	}
 	source := makeGame()
@@ -767,6 +775,7 @@ func TestSerializeAndRestoreCarpenter(t *testing.T) {
 			quarry:    quarry.NewController(),
 			builders:  builder.NewController(),
 			miners:    miner.NewController(),
+			sentries:  sentry.NewController(),
 		}
 	}
 	source := makeGame()
@@ -796,6 +805,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 	}
 	if !source.logi.RequestDismissal(source.logi.Serfs[0]) {
 		t.Fatal("RequestDismissal = false")
@@ -811,6 +821,7 @@ func TestSerializeAndRestoreDismissedSerf(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 	}
 	restored.restoreUnits(source.serializeUnits(), buildings)
 	if got := len(restored.logi.Serfs); got != 1 {
@@ -867,6 +878,7 @@ func TestDeleteWarehousePromotesRemainingWarehouse(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: first},
 	}
 	game.logi.AddWarehouse(second)
@@ -902,6 +914,7 @@ func TestDeleteLastWarehouseIsRejected(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 		selection: ui.Selection{Kind: ui.SelectionBuilding, Building: warehouse},
 	}
 
@@ -1090,6 +1103,7 @@ func TestHireCardServeRightClickOpensDialogOnlyWhenThereIsExcess(t *testing.T) {
 			quarry:    quarry.NewController(),
 			builders:  builder.NewController(),
 			miners:    miner.NewController(),
+			sentries:  sentry.NewController(),
 			layout:    ui.NewLayout(1024, 768),
 			leftTab:   ui.HireTab,
 		}
@@ -1143,6 +1157,7 @@ func TestTickAdvisorQueuesAndCoolsDownTips(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 		grid:      world.NewGrid(4, 4),
 	}
 
@@ -1191,6 +1206,7 @@ func TestHireOptionsCapsAtOneWorkerPerBuilding(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 	}
 	game.stock.Add(resource.Gold, 10) // enough to hire a couple of units
 
@@ -1241,6 +1257,7 @@ func TestHireSerfSpendsGoldAndFailsWhenBroke(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 	}
 	game.stock.Add(resource.Gold, 1)
 
@@ -1304,6 +1321,7 @@ func TestFinishConstructionDoesNotAutoSpawnAWorker(t *testing.T) {
 		quarry:    quarry.NewController(),
 		builders:  builder.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 	}
 
 	game.finishConstruction(hut)
@@ -1538,6 +1556,7 @@ func TestEnclosedGatherWorkerTip(t *testing.T) {
 		jacks:     lumberjack.NewController(),
 		quarry:    quarry.NewController(),
 		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
 	}
 	game.jacks.Spawn(hut)
 	tip, blocked := game.enclosedGatherWorkerTip()

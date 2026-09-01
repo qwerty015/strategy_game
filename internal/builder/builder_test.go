@@ -381,3 +381,60 @@ func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
 		t.Fatalf("builders after 50 idle ticks = %d, want 1 (worker must not vanish while merely idle)", got)
 	}
 }
+
+// TestBuilder_RepairsADamagedFinishedBuilding covers the user's explicit
+// "если здание повреждено строитель автоматически должен ремонтировать"
+// request: an idle builder with nothing new to build must walk to a
+// damaged, already-finished building and restore it to full health,
+// without treating it as a fresh construction site (no ConstructionStage
+// change, no re-triggered resident spawn).
+func TestBuilder_RepairsADamagedFinishedBuilding(t *testing.T) {
+	grid := world.NewGrid(8, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0, HP: building.MaxHP}
+	damaged := &building.Building{Kind: building.Farm, X: 3, Y: 0, ConstructionStage: building.ConstructionNone, HP: 50}
+	buildings := []*building.Building{warehouse, damaged}
+
+	controller := NewController()
+	b := controller.Hire(warehouse)
+
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, ledger)
+		if damaged.HP == building.MaxHP {
+			break
+		}
+	}
+
+	if damaged.HP != building.MaxHP {
+		t.Fatalf("damaged.HP = %d after 200 ticks, want %d (repaired)", damaged.HP, building.MaxHP)
+	}
+	if damaged.ConstructionStage != building.ConstructionNone {
+		t.Fatalf("damaged.ConstructionStage = %v, want ConstructionNone (repair must not re-trigger construction)", damaged.ConstructionStage)
+	}
+	if b.state != StateIdle {
+		t.Fatalf("builder state after repair = %v, want back to StateIdle", b.state)
+	}
+}
+
+// TestBuilder_PrefersFreshConstructionOverRepair matches the plan's
+// explicit priority: a new building always comes before patching an old
+// one.
+func TestBuilder_PrefersFreshConstructionOverRepair(t *testing.T) {
+	grid := world.NewGrid(10, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0, HP: building.MaxHP}
+	damaged := &building.Building{Kind: building.Farm, X: 2, Y: 0, ConstructionStage: building.ConstructionNone, HP: 50}
+	site := building.NewConstructionSite(building.Farm, 6, 0)
+	buildings := []*building.Building{warehouse, damaged, site}
+
+	controller := NewController()
+	b := controller.Hire(warehouse)
+
+	ledger := reservations.New()
+	controller.Reserve(ledger)
+	controller.Tick(grid, buildings, ledger)
+
+	if b.state != StateToSite || b.target != site {
+		t.Fatalf("builder target = %v (state %v), want the fresh construction site first", b.target, b.state)
+	}
+}

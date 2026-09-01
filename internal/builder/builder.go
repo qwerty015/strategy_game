@@ -25,6 +25,16 @@ const (
 	// between jobs and never interrupts an active construction stage.
 	HungerInterval = hunger.MealThresholdTicks
 	TicksPerTile   = 2
+
+	// RepairTicks is how long a builder spends at a damaged, finished
+	// building before it's back to building.MaxHP -- see StateRepairing.
+	// Repair costs no delivered materials (unlike fresh construction):
+	// the amounts involved (one combat.DamagePerHit-sized dent, 10% at a
+	// time) didn't seem worth reusing InputBuffer[Plank]/[StoneBlock] for,
+	// especially since a WatchTower already uses InputBuffer[StoneBlock]
+	// for its own ammunition -- mixing the two would be genuinely
+	// ambiguous, not just extra bookkeeping.
+	RepairTicks = 40
 )
 
 // State is the visible activity state of a builder.
@@ -37,6 +47,11 @@ const (
 	StateWaitingMaterials
 	StateFinishing
 	StateToTavern
+
+	// StateRepairing is appended last to keep every earlier State's saved
+	// int value unchanged, the same reasoning every building.Kind append
+	// in this codebase follows. See startRepairJob/repairUsable.
+	StateRepairing
 )
 
 // EventKind identifies a world change emitted by the controller.
@@ -148,12 +163,21 @@ func (c *Controller) Restore(warehouse *building.Building, x, y, hungerTicks int
 
 	switch state {
 	case StateToSite:
-		if target != nil && target.ConstructionStage != building.ConstructionNone && b.routeTo(grid, buildings, pathfind.Point{X: target.X, Y: target.Y}) {
+		// target is either a fresh construction site or a damaged,
+		// already-finished building being walked to for repair -- see
+		// startRepairJob/repairUsable.
+		validTarget := target != nil && (target.ConstructionStage != building.ConstructionNone || repairUsable(buildings, target))
+		if validTarget && b.routeTo(grid, buildings, pathfind.Point{X: target.X, Y: target.Y}) {
 			b.target = target
 			b.state = StateToSite
 		}
 	case StateFoundation, StateWaitingMaterials, StateFinishing:
 		if target != nil && target.ConstructionStage != building.ConstructionNone {
+			b.target = target
+			b.state = state
+		}
+	case StateRepairing:
+		if repairUsable(buildings, target) {
 			b.target = target
 			b.state = state
 		}
@@ -317,15 +341,39 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 				continue
 			}
 			c.startSiteJob(b, grid, buildings)
+			if b.state == StateIdle {
+				// A fresh building always takes priority over patching an
+				// old one -- only tried once startSiteJob found nothing.
+				c.startRepairJob(b, grid, buildings)
+			}
 		case StateToSite:
-			if !siteUsable(buildings, b.target) {
+			if !siteUsable(buildings, b.target) && !repairUsable(buildings, b.target) {
 				b.resetToIdle()
 				continue
 			}
 			if b.advancePath() {
-				b.state = StateFoundation
+				if b.target.ConstructionStage == building.ConstructionNone {
+					// Arrived at a damaged, already-finished building, not
+					// a fresh site -- see startRepairJob.
+					b.state = StateRepairing
+				} else {
+					b.state = StateFoundation
+				}
 				b.workTicks = 0
 			}
+		case StateRepairing:
+			if !repairUsable(buildings, b.target) {
+				b.resetToIdle()
+				continue
+			}
+			b.workTicks++
+			if b.workTicks < RepairTicks {
+				continue
+			}
+			b.target.HP = building.MaxHP
+			// No ConstructionComplete event: the resident worker (if any)
+			// never left, so cmd/game must not re-spawn one.
+			b.resetToIdle()
 		case StateFoundation:
 			if !siteUsable(buildings, b.target) {
 				b.resetToIdle()
@@ -438,6 +486,20 @@ func siteUsable(buildings []*building.Building, target *building.Building) bool 
 	return containsBuilding(buildings, target)
 }
 
+// repairUsable reports whether target is still a live, damaged, finished
+// building worth walking to or working on -- it may have been fully
+// healed by a second builder, destroyed, or removed (Delete) by the time
+// this builder's next tick runs.
+func repairUsable(buildings []*building.Building, target *building.Building) bool {
+	if target == nil || target.ConstructionStage != building.ConstructionNone {
+		return false
+	}
+	if target.HP <= 0 || target.HP >= building.MaxHP {
+		return false
+	}
+	return containsBuilding(buildings, target)
+}
+
 // nearestTavernWithFood mirrors lumberjack's helper of the same name.
 func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
@@ -545,6 +607,35 @@ func (c *Controller) siteReserved(site *building.Building, except *Builder) bool
 		}
 	}
 	return false
+}
+
+// startRepairJob finds the nearest reachable damaged, finished building
+// not already claimed by another builder (siteReserved doubles as the
+// reservation check here too: b.target means "the site or building this
+// builder is currently walking to or working on" either way). Only
+// tried once startSiteJob found no fresh construction -- see its call
+// site in Tick.
+func (c *Controller) startRepairJob(b *Builder, grid *world.Grid, buildings []*building.Building) {
+	start := pathfind.Point{X: b.X, Y: b.Y}
+	bestLength := int(^uint(0) >> 1)
+	var bestSite *building.Building
+	var bestPath []pathfind.Point
+	for _, candidate := range buildings {
+		if candidate == nil || !repairUsable(buildings, candidate) || c.siteReserved(candidate, b) {
+			continue
+		}
+		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
+		if !ok || len(path) >= bestLength {
+			continue
+		}
+		bestSite, bestPath, bestLength = candidate, path, len(path)
+	}
+	if bestSite == nil {
+		return
+	}
+	b.target = bestSite
+	b.setPath(bestPath)
+	b.state = StateToSite
 }
 
 func (b *Builder) routeTo(grid *world.Grid, buildings []*building.Building, goal pathfind.Point) bool {

@@ -380,4 +380,35 @@ var Types = map[Kind]Type{
 		ConstructionFoundationTicks: roadFoundationTicks,
 		ConstructionBuildTicks:      40,
 	},
+	WatchTower: {
+		Kind:           WatchTower,
+		Name:           "Watch Tower",
+		Footprint:      1,
+		RequiresWorker: true,
+		// No adjacency-to-wall requirement -- the player explicitly wants
+		// to place a tower behind a wall, in front of one, or with no wall
+		// at all. Range is a plain radius (package sentry), not a line of
+		// sight, so it fires over a wall too.
+		PassiveInputs:               map[resource.Type]int{resource.StoneBlock: BufferCapacity},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
+	},
+	Barracks: {
+		Kind:      Barracks,
+		Name:      "Barracks",
+		Footprint: 1,
+		// Deliberately not RequiresWorker: nobody lives here. It's a hire
+		// point, not a workplace -- see cmd/game's Barracks inspector
+		// button. Gold delivered here (up to BufferCapacity) is spent one
+		// unit per Sentry hired, straight from this building's own
+		// InputBuffer rather than the shared stockpile every other hire
+		// draws from directly.
+		PassiveInputs:               map[resource.Type]int{resource.Gold: BufferCapacity},
+		PlankCost:                   standardPlankCost,
+		StoneCost:                   standardStoneCost,
+		ConstructionFoundationTicks: standardFoundationTicks,
+		ConstructionBuildTicks:      standardBuildTicks,
+	},
 }

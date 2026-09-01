@@ -108,6 +108,18 @@ const (
 	// see WallAxisAt and the placement flow in cmd/game.
 	StoneWall
 	Gate
+
+	// WatchTower and Barracks are the first defensive buildings. A
+	// WatchTower holds one resident Sentry (package sentry) and up to
+	// BufferCapacity stone in InputBuffer as ammunition, spent one unit
+	// per shot -- see Type.PassiveInputs. A Barracks has no resident of
+	// its own; it holds gold (also via PassiveInputs) and is where the
+	// player hires a Sentry from its inspector, not from the ordinary
+	// left-panel Hire tab -- see cmd/game's Barracks hire button.
+	// Appended last for the same save-compatibility reason as every
+	// other addition to this list.
+	WatchTower
+	Barracks
 )
 
 // Recipe describes how a building turns raw resources into a product
@@ -173,6 +185,17 @@ type Type struct {
 	// the menu is deliberately not ordered by gameplay value.
 	AcceptedResources []resource.Type
 
+	// PassiveInputs are resources this building wants delivered up to
+	// BufferCapacity that economy.TickWithConnectivity never touches --
+	// unlike Recipe.Inputs, nothing auto-converts them into a production
+	// Output on a timer. InputRequirement below folds this in, which is
+	// the only thing that makes logistics deliver them at all. Used by
+	// the WatchTower's stone ammunition (spent one unit per shot by
+	// package sentry) and the Barracks' gold (spent one unit per hire by
+	// cmd/game's Barracks hire button) -- both need a steady supply
+	// without a Recipe pretending to "produce" something from it.
+	PassiveInputs map[resource.Type]int
+
 	// PlankCost/StoneCost/IronCost are the construction units a Builder needs
 	// delivered before finishing this building (or, for Road, before
 	// finishing one tile of it). Zero for kinds that are never placed
@@ -223,6 +246,9 @@ func (t Type) InputRequirement(rt resource.Type) int {
 			need = recipe.Inputs[rt]
 		}
 	}
+	if t.PassiveInputs[rt] > need {
+		need = t.PassiveInputs[rt]
+	}
 	return need
 }
 
@@ -264,6 +290,11 @@ func (t Type) CanBuildOn(tile world.Tile) bool {
 // the user asked to follow (wheat/flour/bread and other ordinary production
 // buffers hold 6 each; only the Warehouse is unlimited).
 const BufferCapacity = 6
+
+// MaxHP is a fully healthy building's HP value, 0-100. See Building.HP's
+// doc comment for why 0 in an old save means "not yet migrated", not
+// "destroyed".
+const MaxHP = 100
 
 // Building is a placed instance of a Type on the grid.
 //
@@ -320,6 +351,16 @@ type Building struct {
 	GateAuto         bool
 	GateAxis         WallAxis
 	GateReplacesWall bool
+
+	// HP is 0-100, this instance's structural health -- see package combat
+	// for how it changes (ApplyDamage/Repair operate on the plain int, so
+	// this package needs no dependency on combat). A save from before this
+	// field existed leaves it at the JSON zero value on load; see
+	// internal/save's migrateBuildingHP, which turns that into MaxHP
+	// rather than "destroyed". NewConstructionSite sets it to MaxHP for
+	// every newly placed building, so only a load path needs the
+	// migration.
+	HP int
 }
 
 // ConstructionStage is where a placed-but-unfinished building or road
@@ -342,7 +383,7 @@ const (
 // placement flow; Tree/Fish/StoneDeposit use their own dedicated
 // constructors and are never "under construction".
 func NewConstructionSite(kind Kind, x, y int) *Building {
-	return &Building{Kind: kind, X: x, Y: y, ConstructionStage: ConstructionFoundation}
+	return &Building{Kind: kind, X: x, Y: y, ConstructionStage: ConstructionFoundation, HP: MaxHP}
 }
 
 // AddConstructionMaterial deposits up to n units of a construction

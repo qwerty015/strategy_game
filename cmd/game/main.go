@@ -18,6 +18,7 @@ import (
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
+	"strategy_game/internal/enemy"
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
@@ -29,6 +30,7 @@ import (
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
+	"strategy_game/internal/sentry"
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
 	"strategy_game/internal/world"
@@ -214,6 +216,15 @@ type Game struct {
 	quarry    *quarry.Controller
 	builders  *builder.Controller
 	miners    *miner.Controller
+	sentries  *sentry.Controller
+
+	// enemies is the debug test-attacker roster (see cmd/game's F10 spawn
+	// and internal/enemy's doc comment) -- deliberately not part of
+	// save.GameState, the same "not real world state" reasoning already
+	// applied to weather/advisor state (see AGENTS.md): it's a testing
+	// tool for the defensive buildings/HP/repair foundation, not a
+	// released feature.
+	enemies []*enemy.Enemy
 
 	treeRegrowth []treeRegrowth
 	treeSeed     uint32
@@ -409,6 +420,7 @@ func newGameWithSize(width, height int) *Game {
 		quarry:      quarry.NewController(),
 		builders:    builder.NewController(),
 		miners:      miner.NewController(),
+		sentries:    sentry.NewController(),
 		treeSeed:    defaultTreeSeed,
 		fishSeed:    defaultFishSeed,
 		stoneSeeded: true,
@@ -443,6 +455,14 @@ func (g *Game) Update() error {
 	// advance. Object-confirmation dialogs still own Esc and use it to cancel.
 	if g.dialog == ui.DialogNone && inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		g.openPauseMenu()
+		return nil
+	}
+	// F10 is a debug-only hotkey, not a released feature -- see the Game
+	// struct's enemies field and internal/enemy's doc comment. It exists
+	// purely so this round's WatchTower/Sentry/HP/repair foundation can
+	// be exercised in a real session before a genuine attacker exists.
+	if g.dialog == ui.DialogNone && inpututil.IsKeyJustPressed(ebiten.KeyF10) {
+		g.spawnDebugEnemyAtCursor()
 		return nil
 	}
 	g.playedFrames++
@@ -480,6 +500,7 @@ func (g *Game) Update() error {
 		g.quarry.Reserve(ledger)
 		g.builders.Reserve(ledger)
 		g.miners.Reserve(ledger)
+		g.sentries.Reserve(ledger)
 
 		// Whichever controller's Tick runs first this simulation tick
 		// effectively wins any contention over shared Tavern food: its
@@ -494,6 +515,7 @@ func (g *Game) Update() error {
 		var minerEvents []miner.Event
 		var serfResult logistics.TickResult
 		var villagerDeaths int
+		var sentryDeaths int
 		type unitStep struct {
 			hunger int
 			run    func()
@@ -506,12 +528,19 @@ func (g *Game) Update() error {
 			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, g.buildings, ledger) }},
 			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, g.buildings, ledger) }},
 			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, g.buildings, ledger) }},
+			{g.sentries.MaxWaitingHunger(), func() { sentryDeaths = g.sentries.Tick(g.buildings, g.enemies, ledger) }},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
 		for _, step := range steps {
 			step.run()
 		}
-		g.pop.Deaths += serfResult.Deaths + villagerDeaths
+		// Enemies strike back after every Sentry has had a chance to fire
+		// this tick -- see internal/enemy's Tick. A dead one (HP reaching
+		// 0 from a Sentry's own shot, applied above) is pruned right away
+		// so no controller ever sees a stale target next tick.
+		enemy.Tick(g.enemies, g.buildings)
+		g.pruneDeadEnemies()
+		g.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryDeaths
 		g.pop.UnitsDismissed += serfResult.Dismissed
 		for _, event := range jackEvents {
 			switch event.Kind {
@@ -641,6 +670,11 @@ func (g *Game) inactiveWorkerBuildings() map[*building.Building]bool {
 			m[mn.HomeBuilding()] = !mn.AtPost()
 		}
 	}
+	for _, s := range g.sentries.Sentries {
+		if s.HomeBuilding() != nil {
+			m[s.HomeBuilding()] = !s.Working()
+		}
+	}
 	return m
 }
 
@@ -677,6 +711,11 @@ func (g *Game) unstaffedWorkerBuildings() map[*building.Building]bool {
 	for _, mn := range g.miners.Miners {
 		if mn.HomeBuilding() != nil {
 			m[mn.HomeBuilding()] = false
+		}
+	}
+	for _, s := range g.sentries.Sentries {
+		if s.HomeBuilding() != nil {
+			m[s.HomeBuilding()] = false
 		}
 	}
 	return m
@@ -1295,6 +1334,12 @@ func (g *Game) handleLeftClick(mx, my int) {
 			return
 		}
 	}
+	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil &&
+		g.selection.Building.Kind == building.Barracks && g.selection.Building.ConstructionStage == building.ConstructionNone &&
+		g.layout.BarracksHireAt(mx, my) {
+		g.hireSentry(g.selection.Building)
+		return
+	}
 	point := image.Pt(mx, my)
 	if point.In(g.layout.LeftPanel()) ||
 		point.In(g.layout.RightPanel()) {
@@ -1543,6 +1588,48 @@ func (g *Game) canAffordHire() bool {
 	return g.stock.Amount(resource.Gold) >= unitHireCost
 }
 
+// firstFreeWatchTower returns the first finished WatchTower without a
+// resident Sentry, or nil if none exists -- the same "one worker per
+// matching finished building" rule every other profession already
+// follows (see hireOptions' doc comment), just checked directly instead
+// of surfaced as a left-panel card, since a Sentry is hired from the
+// Barracks' own inspector instead (see the user's explicit request).
+func (g *Game) firstFreeWatchTower() *building.Building {
+	for _, b := range g.buildings {
+		if b.Kind == building.WatchTower && b.ConstructionStage == building.ConstructionNone && !g.sentries.HasHome(b) {
+			return b
+		}
+	}
+	return nil
+}
+
+// canHireSentry reports whether clicking the given Barracks' hire button
+// would actually succeed right now: it has its own gold delivered (not
+// the shared stockpile -- see the Barracks Type's PassiveInputs doc
+// comment) and a free WatchTower exists for the new Sentry to occupy.
+func (g *Game) canHireSentry(barracks *building.Building) bool {
+	if barracks == nil || barracks.Kind != building.Barracks || barracks.ConstructionStage != building.ConstructionNone {
+		return false
+	}
+	return barracks.InputBuffer[resource.Gold] >= unitHireCost && g.firstFreeWatchTower() != nil
+}
+
+// hireSentry spends 1 gold from the Barracks' own InputBuffer (not the
+// shared stockpile, unlike every other unit hire -- see trySpendGold) and
+// spawns a Sentry into the first free WatchTower. A no-op if
+// canHireSentry would report false, so a click site can call this
+// unconditionally after the button is drawn only when hireable.
+func (g *Game) hireSentry(barracks *building.Building) {
+	if !g.canHireSentry(barracks) {
+		return
+	}
+	tower := g.firstFreeWatchTower()
+	if tower == nil || !barracks.TakeInput(resource.Gold, unitHireCost) {
+		return
+	}
+	g.sentries.Spawn(tower)
+}
+
 // trySpendGold deducts unitHireCost from the stockpile and reports success.
 // On failure it leaves the stockpile untouched and sets a status message,
 // so every hire call site can just `if !g.trySpendGold() { return }` before
@@ -1680,6 +1767,8 @@ func (g *Game) deleteSelectedBuilding() {
 	g.builders.CancelRouteTo(b) // in case b is a Tavern a builder is mid-trip to eat at
 	g.miners.RemoveHome(b, g.stock)
 	g.miners.CancelRouteTo(b) // same, for miners
+	g.sentries.RemoveHome(b)
+	g.sentries.CancelRouteTo(b) // same, for sentries
 	for i, candidate := range g.buildings {
 		if candidate != b {
 			continue
@@ -1750,7 +1839,7 @@ func (g *Game) clearMissingUnitSelection() {
 // refreshPopulation rebuilds the live headcount while retaining the
 // persistent death/removal history shown in the empty inspector panel.
 func (g *Game) refreshPopulation() {
-	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners)
+	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners) + len(g.sentries.Sentries)
 }
 
 // buildingSelectionAt resolves only a building, including a Road. It is used
@@ -1898,6 +1987,11 @@ func (g *Game) unitsAt(b *building.Building) int {
 	}
 	for _, m := range g.miners.Miners {
 		if within(m.X, m.Y) {
+			count++
+		}
+	}
+	for _, s := range g.sentries.Sentries {
+		if within(s.X, s.Y) {
 			count++
 		}
 	}
@@ -2766,6 +2860,7 @@ func (g *Game) buildSaveState(name string) save.GameState {
 		QuarrymanMealSeed:  g.quarry.MealSeed(),
 		BuilderMealSeed:    g.builders.MealSeed(),
 		MinerMealSeed:      g.miners.MealSeed(),
+		SentryMealSeed:     g.sentries.MealSeed(),
 		CameraX:            g.camera.X,
 		CameraY:            g.camera.Y,
 		CameraZoom:         g.camera.Scale,
@@ -2863,6 +2958,8 @@ func (g *Game) loadGame(path string) error {
 	g.quarry = quarry.NewController()
 	g.builders = builder.NewController()
 	g.miners = miner.NewController()
+	g.sentries = sentry.NewController()
+	g.enemies = nil // debug-only roster, never persisted -- see the Game struct field's doc comment
 	if len(state.Units) == 0 {
 		// Saves from before unit persistence did not contain a roster.
 		// Keep those saves playable with the old sensible defaults.
@@ -2898,6 +2995,9 @@ func (g *Game) loadGame(path string) error {
 	}
 	if state.MinerMealSeed != 0 {
 		g.miners.SetMealSeed(state.MinerMealSeed)
+	}
+	if state.SentryMealSeed != 0 {
+		g.sentries.SetMealSeed(state.SentryMealSeed)
 	}
 	for _, p := range state.BuildingPriority {
 		g.logi.SetPriority(p.Kind, p.Level)
@@ -2962,7 +3062,7 @@ func (g *Game) serializeBuildingPriorities() []save.BuildingPriorityState {
 }
 
 func (g *Game) serializeUnits() []save.UnitState {
-	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen)+len(g.quarry.Quarrymen)+len(g.builders.Builders)+len(g.miners.Miners))
+	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen)+len(g.quarry.Quarrymen)+len(g.builders.Builders)+len(g.miners.Miners)+len(g.sentries.Sentries))
 	for _, s := range g.logi.Serfs {
 		units = append(units, save.UnitState{
 			Kind:        save.UnitSerf,
@@ -3092,6 +3192,18 @@ func (g *Game) serializeUnits() []save.UnitState {
 			QuotaProgress: quotaProgress,
 		})
 	}
+	for _, s := range g.sentries.Sentries {
+		units = append(units, save.UnitState{
+			Kind:        save.UnitSentry,
+			X:           s.X,
+			Y:           s.Y,
+			HomeIndex:   indexOfBuilding(g.buildings, s.HomeBuilding()),
+			HungerTicks: s.HungerTicks(),
+			Starving:    s.Starving,
+			State:       int(s.State()),
+			Meal:        s.Meal(),
+		})
+	}
 	return units
 }
 
@@ -3164,10 +3276,22 @@ func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Build
 				continue
 			}
 			var target *building.Building
-			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].ConstructionStage != building.ConstructionNone {
-				target = buildings[state.TargetIndex]
+			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) {
+				candidate := buildings[state.TargetIndex]
+				// Either a fresh construction site, or a damaged, already
+				// finished building the builder was walking to or working
+				// on repairing -- see builder.StateRepairing.
+				if candidate.ConstructionStage != building.ConstructionNone ||
+					(candidate.HP > 0 && candidate.HP < building.MaxHP) {
+					target = candidate
+				}
 			}
 			g.builders.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, builder.State(state.State), target, state.WorkTicks, g.grid, buildings, state.Meal)
+		case save.UnitSentry:
+			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.WatchTower {
+				continue
+			}
+			g.sentries.RestoreSentry(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, sentry.State(state.State), buildings, state.Meal)
 		case save.UnitMiner:
 			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.MinerHut {
 				continue
@@ -3759,6 +3883,48 @@ func ensureStoneDeposits(grid *world.Grid, buildings []*building.Building, alrea
 		return buildings
 	}
 	return seedStoneDeposits(grid, buildings, seed, warehouse, minDepositDistanceFromWarehouse)
+}
+
+// hoveredOrSelectedWatchTower returns the finished WatchTower currently
+// under the cursor (tx, ty) or currently selected, for the range-circle
+// overlay -- see its call site in Draw. nil covers "neither", which is
+// the common case and must not draw anything.
+func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
+	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil &&
+		g.selection.Building.Kind == building.WatchTower && g.selection.Building.ConstructionStage == building.ConstructionNone {
+		return g.selection.Building
+	}
+	for _, b := range g.buildings {
+		if b.Kind == building.WatchTower && b.ConstructionStage == building.ConstructionNone && b.X == tx && b.Y == ty {
+			return b
+		}
+	}
+	return nil
+}
+
+// spawnDebugEnemyAtCursor places one enemy.Enemy on the tile under the
+// cursor -- see the F10 key handler in Update.
+func (g *Game) spawnDebugEnemyAtCursor() {
+	mx, my := ebiten.CursorPosition()
+	tx, ty := g.camera.ScreenToTile(mx, my)
+	if !g.grid.InBounds(tx, ty) {
+		return
+	}
+	g.enemies = append(g.enemies, enemy.New(tx, ty))
+}
+
+// pruneDeadEnemies drops every enemy whose HP reached 0 this tick (a
+// Sentry's shot, applied inside g.sentries.Tick just before this runs).
+// Unlike a real building or unit, a dead debug enemy has nothing else to
+// clean up -- it was never part of buildings/save state to begin with.
+func (g *Game) pruneDeadEnemies() {
+	alive := g.enemies[:0]
+	for _, e := range g.enemies {
+		if e.Alive() {
+			alive = append(alive, e)
+		}
+	}
+	g.enemies = alive
 }
 
 // removeDeposit deletes an exhausted deposit from the world once its
@@ -4469,6 +4635,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.buildMode {
 		valid := building.CanPlace(g.grid, g.buildings, kind, tx, ty)
 		ui.DrawPlacementPreview(screen, g.camera, kind, tx, ty, valid)
+		if kind == building.WatchTower {
+			render.DrawTowerRange(screen, g.camera, tx, ty)
+		}
+	} else if tower := g.hoveredOrSelectedWatchTower(tx, ty); tower != nil {
+		// Per the user's explicit request, the ring shows only on hover or
+		// selection -- never unconditionally for every finished tower at
+		// once (that would clutter the map once several exist).
+		render.DrawTowerRange(screen, g.camera, tower.X, tower.Y)
 	}
 
 	ui.DrawBufferLevels(screen, g.buildings, g.camera)
@@ -4500,7 +4674,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.dialog == ui.DialogConfirmTrimServes {
 		trimServesPrompt = fmt.Sprintf(i18n.T().TrimServesConfirmPrompt, len(g.logi.Serfs), g.recommendedServeCount())
 	}
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt)
+	canHireSentry := g.selection.Kind == ui.SelectionBuilding && g.canHireSentry(g.selection.Building)
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHireSentry)
 	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
 	ui.DrawResourceTooltip(screen, g.layout)
 

@@ -130,6 +130,40 @@ func TestLoad_MigratesV1HungerToSatietyScale(t *testing.T) {
 	}
 }
 
+// TestLoad_MigratesMissingBuildingHPToFull covers migrateBuildingHP: a
+// save from before the HP field existed must load every building at full
+// health, not 0 (which would misread as "destroyed").
+func TestLoad_MigratesMissingBuildingHPToFull(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "slot1.json")
+	state := GameState{
+		GridWidth:  1,
+		GridHeight: 1,
+		Tiles:      []world.Tile{{}},
+		Buildings: []building.Building{
+			{Kind: building.Warehouse, X: 0, Y: 0},          // HP left at the Go zero value, like an old save
+			{Kind: building.WatchTower, X: 0, Y: 0, HP: 40}, // already-damaged in a save that DID have HP
+		},
+	}
+	if err := Save(path, state); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	writeVersion(t, path, buildingHPFormatVersion)
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.Version != FormatVersion {
+		t.Fatalf("Version after migration = %d, want %d", got.Version, FormatVersion)
+	}
+	if got.Buildings[0].HP != building.MaxHP {
+		t.Errorf("migrated Buildings[0].HP = %d, want %d (full health, not destroyed)", got.Buildings[0].HP, building.MaxHP)
+	}
+	if got.Buildings[1].HP != 40 {
+		t.Errorf("migrated Buildings[1].HP = %d, want unchanged 40 (was already damaged, not missing)", got.Buildings[1].HP)
+	}
+}
+
 // TestPeekName covers the side panel's slot-list use case: reading a save's
 // Name without paying for a full versioned Load, and correctly reporting
 // "not occupied" for a path that has never been saved to.

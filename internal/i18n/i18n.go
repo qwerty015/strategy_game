@@ -71,6 +71,8 @@ type Catalog struct {
 	StoneReserveLabel           string
 	DepositReserveLabel         string
 	QuotaLabel                  string
+	HPLabel                     string
+	WatchTowerRangeLabel        string
 	ConstructionProgressLabel   string
 	ConstructionFoundationLabel string
 	ConstructionWaitingLabel    string
@@ -86,6 +88,7 @@ type Catalog struct {
 	GateCloseButton             string
 	GateAutoOnButton            string
 	GateAutoOffButton           string
+	BarracksHireButton          string
 	NoCargo                     string
 	NoRoute                     string
 	StateIdle                   string
@@ -115,6 +118,7 @@ type Catalog struct {
 	UnitBuilder                 string
 	UnitMiner                   string
 	UnitSmelter                 string
+	UnitSentry                  string
 	HireSerf                    string
 	RemoveSelected              string
 	DismissSerf                 string

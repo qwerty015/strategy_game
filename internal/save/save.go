@@ -20,14 +20,15 @@ import (
 // its 180-tick hunger gauge is migrated proportionally to the 1000-tick
 // satiety model introduced in version 2. Version 2 also persists the
 // player's active play time; version 4 separates demolition and unit
-// dismissal counters in Population.
-const FormatVersion = 4
+// dismissal counters in Population; version 5 adds Building.HP.
+const FormatVersion = 5
 
 const (
-	firstFormatVersion     = 1
-	playTimeFormatVersion  = 2
-	separateRemovalStatsV3 = 3
-	previousHungerTicks    = 180
+	firstFormatVersion      = 1
+	playTimeFormatVersion   = 2
+	separateRemovalStatsV3  = 3
+	buildingHPFormatVersion = 4
+	previousHungerTicks     = 180
 )
 
 // GameState is the full serializable snapshot of a running game.
@@ -101,6 +102,7 @@ type GameState struct {
 	QuarrymanMealSeed  uint32
 	BuilderMealSeed    uint32
 	MinerMealSeed      uint32
+	SentryMealSeed     uint32
 
 	CameraX    float64
 	CameraY    float64
@@ -125,6 +127,7 @@ const (
 	UnitBuilder    UnitKind = "builder"
 	UnitMiner      UnitKind = "miner"
 	UnitSmelter    UnitKind = "smelter"
+	UnitSentry     UnitKind = "sentry"
 )
 
 // UnitState is the serializable part of a unit. HomeIndex points into the
@@ -237,20 +240,40 @@ func Load(path string) (GameState, error) {
 	case firstFormatVersion:
 		migrateV1Hunger(&state)
 		migrateLegacyRemovalCounter(&state)
+		migrateBuildingHP(&state)
 		state.Version = FormatVersion
 	case playTimeFormatVersion:
 		// Version 2 has no play-time field; JSON leaves it at zero.
 		migrateLegacyRemovalCounter(&state)
+		migrateBuildingHP(&state)
 		state.Version = FormatVersion
 	case separateRemovalStatsV3:
 		migrateLegacyRemovalCounter(&state)
+		migrateBuildingHP(&state)
+		state.Version = FormatVersion
+	case buildingHPFormatVersion:
+		migrateBuildingHP(&state)
 		state.Version = FormatVersion
 	case FormatVersion:
 		// Current schema needs no migration.
 	default:
-		return GameState{}, fmt.Errorf("save: unsupported save format version %d (want %d, %d, %d, or %d)", state.Version, firstFormatVersion, playTimeFormatVersion, separateRemovalStatsV3, FormatVersion)
+		return GameState{}, fmt.Errorf("save: unsupported save format version %d (want %d, %d, %d, %d, or %d)", state.Version, firstFormatVersion, playTimeFormatVersion, separateRemovalStatsV3, buildingHPFormatVersion, FormatVersion)
 	}
 	return state, nil
+}
+
+// migrateBuildingHP gives every building full health on load from a save
+// predating the HP field: JSON leaves an absent field at its zero value,
+// which for HP would misread as "destroyed" rather than "undamaged". A
+// legitimately mid-repair building at exactly 0 HP the instant a save
+// happened is not distinguishable from this case, but is also vanishingly
+// unlikely -- and simply gets a free heal on load, not a lasting bug.
+func migrateBuildingHP(state *GameState) {
+	for i := range state.Buildings {
+		if state.Buildings[i].HP == 0 {
+			state.Buildings[i].HP = building.MaxHP
+		}
+	}
 }
 
 // migrateLegacyRemovalCounter preserves the only historical total available in

@@ -326,6 +326,22 @@ func (l Layout) GateAutoAt(x, y int) bool {
 	return image.Pt(x, y).In(auto)
 }
 
+// BarracksHireRect returns the "hire a Sentry" button for a selected
+// Barracks -- see cmd/game's Barracks hire button. Reuses GateControlRects'
+// exact slot: a building only ever shows one of these two special
+// controls at a time, since no Kind is ever both a Gate and a Barracks.
+func (l Layout) BarracksHireRect() image.Rectangle {
+	r := l.RightPanel()
+	left, right := r.Min.X+inspectorRemoveMargin, r.Max.X-inspectorRemoveMargin
+	return image.Rect(left, gateControlTop, right, gateControlTop+gateControlHeight)
+}
+
+// BarracksHireAt reports whether the cursor is over the Barracks hire
+// button.
+func (l Layout) BarracksHireAt(x, y int) bool {
+	return image.Pt(x, y).In(l.BarracksHireRect())
+}
+
 // PriorityLevelAt returns the supply-priority segment under the cursor,
 // from the fixed five-segment control docked at the bottom of the
 // inspector panel (see DrawPriorityControl). Segments map to the five

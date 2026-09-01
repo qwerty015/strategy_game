@@ -20,6 +20,7 @@ import (
 	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
 	"strategy_game/internal/resource"
+	"strategy_game/internal/sentry"
 	"strategy_game/internal/villagers"
 )
 
@@ -302,7 +303,7 @@ const (
 // public accessors from the logic packages, keeping display formatting out of
 // the simulation. A large centered portrait separates the selected object
 // from its data, while no selection becomes the compact town summary.
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string, canHireSentry bool) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -343,6 +344,10 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	if selection.Kind == SelectionBuilding && selection.Building != nil &&
 		selection.Building.Kind == building.Gate && selection.Building.ConstructionStage == building.ConstructionNone {
 		drawGateControls(screen, layout, selection.Building)
+	}
+	if selection.Kind == SelectionBuilding && selection.Building != nil &&
+		selection.Building.Kind == building.Barracks && selection.Building.ConstructionStage == building.ConstructionNone {
+		drawBarracksHireControls(screen, layout, canHireSentry)
 	}
 	if CanRemoveSelection(selection) {
 		drawRemoveButton(screen, layout, selection, showPriority)
@@ -485,6 +490,24 @@ func drawGateControls(screen *ebiten.Image, layout Layout, gate *building.Buildi
 	DrawInspectorText(screen, autoLabel, float64(auto.Min.X+8), float64(auto.Min.Y+8))
 }
 
+// drawBarracksHireControls draws the "hire a Sentry" button for a
+// selected, finished Barracks -- the only way to get a Sentry, per the
+// user's explicit request ("Найм будет осуществляться только при выборе
+// казармы"). canHire is computed by cmd/game (enough gold in this
+// Barracks' own InputBuffer, and a free finished WatchTower for the new
+// Sentry to occupy) -- this function only draws, it never decides
+// availability itself.
+func drawBarracksHireControls(screen *ebiten.Image, layout Layout, canHire bool) {
+	t := i18n.T()
+	r := layout.BarracksHireRect()
+	fill := panelColor
+	if canHire {
+		fill = selectedColor
+	}
+	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), fill, false)
+	DrawInspectorText(screen, t.BarracksHireButton, float64(r.Min.X+8), float64(r.Min.Y+8))
+}
+
 func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Building, bt building.Type) {
 	t := i18n.T()
 	stage := t.ConstructionFoundationLabel
@@ -519,6 +542,14 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	if b.ConstructionStage != building.ConstructionNone {
 		drawConstructionInspector(screen, x, y, b, bt)
 		return
+	}
+	// Only shown while actually damaged -- a permanent "100%" line on
+	// every single building in the game would be noise for the vast
+	// majority that can never be hit yet (see AGENTS.md: unit combat and
+	// real attackers are a later pass).
+	if b.HP > 0 && b.HP < building.MaxHP {
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HPLabel, b.HP), float64(x), float64(y))
+		y += 20
 	}
 	if b.Kind == building.StoneWall {
 		return
@@ -610,6 +641,32 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 			drawResourceRow(screen, x, y, rt, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], building.BufferCapacity))
 			y += 18
 		}
+		routeState := t.Disconnected
+		if connected {
+			routeState = t.Connected
+		}
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		return
+	}
+	if b.Kind == building.WatchTower {
+		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
+		y += 20
+		drawResourceRow(screen, x, y, resource.StoneBlock, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.StoneBlock], b.InputBuffer[resource.StoneBlock], building.BufferCapacity))
+		y += 20
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d", t.WatchTowerRangeLabel, sentry.WatchTowerRange), float64(x), float64(y))
+		y += 20
+		routeState := t.Disconnected
+		if connected {
+			routeState = t.Connected
+		}
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		return
+	}
+	if b.Kind == building.Barracks {
+		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
+		y += 20
+		drawResourceRow(screen, x, y, resource.Gold, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Gold], b.InputBuffer[resource.Gold], building.BufferCapacity))
+		y += 20
 		routeState := t.Disconnected
 		if connected {
 			routeState = t.Connected

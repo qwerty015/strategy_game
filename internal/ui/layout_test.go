@@ -111,6 +111,8 @@ func TestPalettePlacesTheWholeFoodChainFirst(t *testing.T) {
 		building.Road,
 		building.StoneWall,
 		building.Gate,
+		building.WatchTower,
+		building.Barracks,
 		building.Warehouse,
 		building.LumberjackHut,
 		building.CarpentryWorkshop,
