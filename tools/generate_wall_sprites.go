@@ -125,24 +125,27 @@ func writeFrame(root, name string, out image.Image) {
 	}
 }
 
-// composeWall makes a corner, T or cross from 64px halves of the same
-// normalised straight sprites. The four-pixel overlap removes a transparent
-// seam while preserving the visible stone texture on both arms.
+// composeWall makes a corner, T or cross from the same normalised straight
+// sprites. Straight-wall artwork is perspective-biased: its horizontal band
+// sits left of the tile centre while the vertical band sits above it. A 32px
+// split therefore leaves an empty notch in every corner. The intentionally
+// wide 12px joins overlap the visible masonry bands, producing one solid
+// stone turn without changing the straight runs.
 func composeWall(horizontal, vertical *image.NRGBA, module wallModule) *image.NRGBA {
 	out := image.NewNRGBA(image.Rect(0, 0, 64, 64))
-	const middle = 32
-	const overlap = 4
+	const joinInset = 12
+	const joinEnd = 64 - joinInset
 	if module.west {
-		copyPart(out, horizontal, image.Rect(0, 0, middle+overlap, 64))
+		copyPart(out, horizontal, image.Rect(0, 0, joinEnd, 64))
 	}
 	if module.east {
-		copyPart(out, horizontal, image.Rect(middle-overlap, 0, 64, 64))
+		copyPart(out, horizontal, image.Rect(joinInset, 0, 64, 64))
 	}
 	if module.north {
-		copyPart(out, vertical, image.Rect(0, 0, 64, middle+overlap))
+		copyPart(out, vertical, image.Rect(0, 0, 64, joinEnd))
 	}
 	if module.south {
-		copyPart(out, vertical, image.Rect(0, middle-overlap, 64, 64))
+		copyPart(out, vertical, image.Rect(0, joinInset, 64, 64))
 	}
 	return out
 }
