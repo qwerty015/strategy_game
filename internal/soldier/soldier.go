@@ -52,6 +52,10 @@ const (
 	ArcherCooldownTicks    = 20
 	SwordsmanCooldownTicks = 15
 
+	// attackVisualLifetime keeps a landed blow on screen long enough for its
+	// three-frame animation, without affecting damage, movement or cooldowns.
+	attackVisualLifetime = 6
+
 	// EngageRange is the distance (Chebyshev) at which a soldier with no
 	// standing attack order automatically opens fire on the nearest enemy,
 	// without waiting for a player right-click -- per the user's explicit
@@ -80,7 +84,26 @@ type Soldier struct {
 	attackTarget   *enemy.Enemy
 	attackCooldown int
 
+	// attackVisualTicks and attackTargetX/Y are transient renderer data set
+	// only when a hit really lands. They are intentionally not saved.
+	attackVisualTicks            int
+	attackTargetX, attackTargetY int
+
 	ticksSinceMeal int
+}
+
+// AttackVisual reports a freshly landed strike for the map renderer. progress
+// runs from the wind-up to recovery over a short fixed duration; it is absent
+// while merely moving toward a target or waiting on cooldown.
+func (s *Soldier) AttackVisual() (targetX, targetY int, progress float64, ok bool) {
+	if s == nil || s.attackVisualTicks <= 0 {
+		return 0, 0, 0, false
+	}
+	progress = float64(attackVisualLifetime-s.attackVisualTicks+1) / float64(attackVisualLifetime)
+	if progress > 1 {
+		progress = 1
+	}
+	return s.attackTargetX, s.attackTargetY, progress, true
 }
 
 // New creates a soldier at (x, y) with full health, no orders.
@@ -239,6 +262,9 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 	deaths := 0
 	remaining := c.Soldiers[:0]
 	for _, s := range c.Soldiers {
+		if s.attackVisualTicks > 0 {
+			s.attackVisualTicks--
+		}
 		s.ticksSinceMeal++
 		if hunger.Dead(s.ticksSinceMeal) {
 			deaths++
@@ -297,7 +323,9 @@ func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *S
 		s.attackCooldown--
 		return
 	}
+	s.attackTargetX, s.attackTargetY = s.attackTarget.X, s.attackTarget.Y
 	s.attackTarget.HP = combat.ApplyDamage(s.attackTarget.HP, combat.UnitDamagePerHit)
+	s.attackVisualTicks = attackVisualLifetime
 	s.attackCooldown = s.cooldownTicks()
 	if !s.attackTarget.Alive() {
 		s.attackTarget = nil

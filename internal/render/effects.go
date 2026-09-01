@@ -205,7 +205,7 @@ func drawProductionWorkEffect(screen *ebiten.Image, kind building.Kind, progress
 		particle = color.RGBA{R: 219, G: 155, B: 88, A: 150}
 	case building.QuarryHut, building.MinerHut:
 		particle = color.RGBA{R: 182, G: 177, B: 160, A: 176}
-	case building.Smeltery:
+	case building.Smeltery, building.Armory:
 		particle = color.RGBA{R: 255, G: 170, B: 64, A: 205}
 	default:
 		return

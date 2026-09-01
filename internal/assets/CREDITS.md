@@ -117,3 +117,18 @@ generation tool on 2026-09-01. It is an original, profession-free transparent
 three-frame death effect (collapse, rising soul, skeleton) for every humanoid
 unit death; it is not based on, copied from, or traced from commercial game
 artwork.
+
+`building_armory.png`, `unit_weaponsmith.png`, `unit_weaponsmith_walk.png`,
+`unit_archer.png`, `unit_archer_walk.png`, `unit_archer_attack.png`,
+`unit_swordsman.png`, `unit_swordsman_walk.png` and
+`unit_swordsman_attack.png` were generated with the built-in OpenAI image
+generation tool on 2026-09-01. They are original transparent project art for
+the Armory and the first mobile combat professions. The walk and attack sheets
+contain three map-only frames, while each one-pose unit PNG is used in menus
+and inspectors. Their visual direction is broad medieval pixel-art study only;
+no commercial game art was copied, traced or modified.
+The `hide`, `bow`, `leather_armor` and `sword` icon/carry/stack PNG sets
+were refreshed on 2026-09-01 with original, readable medieval pixel-art
+items. They replace the earlier placeholder-square variants while preserving
+the same external asset paths and are not copied, traced or modified from
+commercial game assets.

@@ -15,16 +15,10 @@ import (
 // building.
 const soldierHeight = 0.90
 
-// archerTint/swordsmanTint distinguish the two professions with a color
-// tint on the shared Serf sprite -- neither has its own art yet, the same
-// "never block on a missing sprite" convention already used for the
-// WatchTower/Barracks/Sentry before their real art arrived.
-var (
-	archerTint    = color.RGBA{R: 130, G: 205, B: 120, A: 255}
-	swordsmanTint = color.RGBA{R: 150, G: 165, B: 225, A: 255}
-)
-
-// DrawSoldiers renders every living Archer/Swordsman on the map.
+// DrawSoldiers renders every living Archer/Swordsman on the map. The walking
+// loop is replaced by a short profession-specific attack loop only after an
+// actual hit lands (Soldier.AttackVisual), so aiming or waiting never looks
+// like repeated combat.
 func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
@@ -32,16 +26,36 @@ func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera
 		if sd == nil || !sd.Alive() || !visible.Intersects(sd.X, sd.Y, 1) {
 			continue
 		}
+		frames, attackFrames := assets.ArcherWalkFrames, assets.ArcherAttackFrames
+		if sd.Profession == soldier.Swordsman {
+			frames, attackFrames = assets.SwordsmanWalkFrames, assets.SwordsmanAttackFrames
+		}
+
 		sx, sy := cam.TileToScreen(sd.X, sd.Y)
 		path := sd.RemainingPath()
 		frame := walkingFrame(path, sd.X+sd.Y)
-		tint := archerTint
-		if sd.Profession == soldier.Swordsman {
-			tint = swordsmanTint
-		}
 		flip := facingLeft(sd.X, path)
-		drawStandingFacingTintedAtScale(screen, assets.Serf[frame], sx, sy, soldierHeight, tilePixels, tint, flip)
+		if targetX, _, progress, attacking := sd.AttackVisual(); attacking {
+			frames = attackFrames
+			frame = soldierAttackFrame(progress)
+			flip = targetX < sd.X
+		}
+		drawStandingFacingScaled(screen, frames[frame], sx, sy, soldierHeight, tilePixels, color.White, flip)
 		drawSoldierHealth(screen, sx, sy, tilePixels, sd.HP)
+	}
+}
+
+// soldierAttackFrame maps the visual attack interval to wind-up, impact and
+// recovery. Keeping the thresholds here makes the atlas ordering explicit and
+// independent from the simulation tick rate.
+func soldierAttackFrame(progress float64) int {
+	switch {
+	case progress < 0.34:
+		return 0
+	case progress < 0.68:
+		return 1
+	default:
+		return 2
 	}
 }
 

@@ -94,6 +94,7 @@ var (
 	Smeltery          = mustLoad("generated/building_smeltery.png")
 	WatchTower        = mustLoad("generated/building_watch_tower.png")
 	Barracks          = mustLoad("generated/building_barracks.png")
+	Armory            = mustLoad("generated/building_armory.png")
 	// Construction art is deliberately generic: the same site can scale from
 	// a one-tile road to a 3×3 farm without previewing the finished building.
 	ConstructionFoundation  = mustLoad("generated/construction_foundation_v2.png")
@@ -120,19 +121,22 @@ var (
 	// The original one-pose figures remain menu and inspector icons. Keeping
 	// them separate from WalkFrames avoids making UI cards animate or changing
 	// their already established silhouettes.
-	Serf       = staticFrames("generated/unit_serf.png")
-	Farmer     = staticFrames("generated/unit_farmer.png")
-	Baker      = staticFrames("generated/unit_baker.png")
-	Lumberjack = staticFrames("generated/unit_lumberjack.png")
-	Winemaker  = staticFrames("generated/unit_winemaker.png")
-	Fisherman  = staticFrames("generated/unit_fisherman.png")
-	Swineherd  = staticFrames("generated/unit_swineherd.png")
-	Butcher    = staticFrames("generated/unit_butcher.png")
-	Carpenter  = staticFrames("generated/unit_carpenter.png")
-	Quarryman  = staticFrames("generated/unit_quarryman.png")
-	Builder    = staticFrames("generated/unit_builder.png")
-	Miner      = staticFrames("generated/unit_miner.png")
-	Smelter    = staticFrames("generated/unit_smelter.png")
+	Serf        = staticFrames("generated/unit_serf.png")
+	Farmer      = staticFrames("generated/unit_farmer.png")
+	Baker       = staticFrames("generated/unit_baker.png")
+	Lumberjack  = staticFrames("generated/unit_lumberjack.png")
+	Winemaker   = staticFrames("generated/unit_winemaker.png")
+	Fisherman   = staticFrames("generated/unit_fisherman.png")
+	Swineherd   = staticFrames("generated/unit_swineherd.png")
+	Butcher     = staticFrames("generated/unit_butcher.png")
+	Carpenter   = staticFrames("generated/unit_carpenter.png")
+	Quarryman   = staticFrames("generated/unit_quarryman.png")
+	Builder     = staticFrames("generated/unit_builder.png")
+	Miner       = staticFrames("generated/unit_miner.png")
+	Smelter     = staticFrames("generated/unit_smelter.png")
+	Weaponsmith = staticFrames("generated/unit_weaponsmith.png")
+	Archer      = staticFrames("generated/unit_archer.png")
+	Swordsman   = staticFrames("generated/unit_swordsman.png")
 	// Sentry is the stable inspector/palette pose. The animated atlas below
 	// is deliberately map-only, like the existing worker professions.
 	Sentry = staticFrames("generated/unit_sentry.png")
@@ -140,20 +144,27 @@ var (
 
 	// WalkFrames are map-only three-step walking loops. Each atlas is reduced
 	// once at startup, so animated crowds cost no per-frame image decoding.
-	SerfWalkFrames       = mustLoadAtlasFrames("generated/unit_serf_walk.png")
-	FarmerWalkFrames     = mustLoadAtlasFrames("generated/unit_farmer_walk.png")
-	BakerWalkFrames      = mustLoadAtlasFrames("generated/unit_baker_walk.png")
-	LumberjackWalkFrames = mustLoadAtlasFrames("generated/unit_lumberjack_walk.png")
-	WinemakerWalkFrames  = mustLoadAtlasFrames("generated/unit_winemaker_walk.png")
-	FishermanWalkFrames  = mustLoadAtlasFrames("generated/unit_fisherman_walk.png")
-	SwineherdWalkFrames  = mustLoadAtlasFrames("generated/unit_swineherd_walk.png")
-	ButcherWalkFrames    = mustLoadAtlasFrames("generated/unit_butcher_walk.png")
-	CarpenterWalkFrames  = mustLoadAtlasFrames("generated/unit_carpenter_walk.png")
-	QuarrymanWalkFrames  = mustLoadAtlasFrames("generated/unit_quarryman_walk.png")
-	BuilderWalkFrames    = mustLoadAtlasFrames("generated/unit_builder_walk.png")
-	MinerWalkFrames      = mustLoadAtlasFrames("generated/unit_miner_walk.png")
-	SmelterWalkFrames    = mustLoadAtlasFrames("generated/unit_smelter_walk.png")
-	SentryWalkFrames     = mustLoadAtlasFrames("generated/unit_sentry_walk.png")
+	SerfWalkFrames        = mustLoadAtlasFrames("generated/unit_serf_walk.png")
+	FarmerWalkFrames      = mustLoadAtlasFrames("generated/unit_farmer_walk.png")
+	BakerWalkFrames       = mustLoadAtlasFrames("generated/unit_baker_walk.png")
+	LumberjackWalkFrames  = mustLoadAtlasFrames("generated/unit_lumberjack_walk.png")
+	WinemakerWalkFrames   = mustLoadAtlasFrames("generated/unit_winemaker_walk.png")
+	FishermanWalkFrames   = mustLoadAtlasFrames("generated/unit_fisherman_walk.png")
+	SwineherdWalkFrames   = mustLoadAtlasFrames("generated/unit_swineherd_walk.png")
+	ButcherWalkFrames     = mustLoadAtlasFrames("generated/unit_butcher_walk.png")
+	CarpenterWalkFrames   = mustLoadAtlasFrames("generated/unit_carpenter_walk.png")
+	QuarrymanWalkFrames   = mustLoadAtlasFrames("generated/unit_quarryman_walk.png")
+	BuilderWalkFrames     = mustLoadAtlasFrames("generated/unit_builder_walk.png")
+	MinerWalkFrames       = mustLoadAtlasFrames("generated/unit_miner_walk.png")
+	SmelterWalkFrames     = mustLoadAtlasFrames("generated/unit_smelter_walk.png")
+	WeaponsmithWalkFrames = mustLoadAtlasFrames("generated/unit_weaponsmith_walk.png")
+	ArcherWalkFrames      = mustLoadAtlasFrames("generated/unit_archer_walk.png")
+	SwordsmanWalkFrames   = mustLoadAtlasFrames("generated/unit_swordsman_walk.png")
+	// AttackFrames are map-only strike loops. They are intentionally separate
+	// from walking so UI cards remain a stable single pose.
+	ArcherAttackFrames    = mustLoadAtlasFrames("generated/unit_archer_attack.png")
+	SwordsmanAttackFrames = mustLoadAtlasFrames("generated/unit_swordsman_attack.png")
+	SentryWalkFrames      = mustLoadAtlasFrames("generated/unit_sentry_walk.png")
 	// DeathFrames is the universal, profession-free fall/soul/skeleton loop.
 	// It is a transient map effect, never an inspector or palette icon.
 	DeathFrames = mustLoadAtlasFrames("generated/unit_death_effect.png")

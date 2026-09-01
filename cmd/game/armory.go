@@ -29,12 +29,13 @@ var armoryCost = map[resource.Type]map[resource.Type]int{
 	resource.Sword:        {resource.Iron: 1, resource.Coal: 1},
 }
 
-// tickArmories advances every finished Armory's production queue by one
-// simulation tick. See armoryOrder/tickOneArmory for the single-active-item
-// model.
-func tickArmories(buildings []*building.Building) {
+// tickArmories advances every finished, staffed Armory's production queue by
+// one simulation tick. inactive is the same worker-presence map economy uses:
+// an empty Armory, or one whose Weaponsmith left to eat, must pause exactly
+// like every other worker building.
+func tickArmories(buildings []*building.Building, inactive map[*building.Building]bool) {
 	for _, b := range buildings {
-		if b == nil || b.Kind != building.Armory || b.ConstructionStage != building.ConstructionNone {
+		if b == nil || b.Kind != building.Armory || b.ConstructionStage != building.ConstructionNone || inactive[b] {
 			continue
 		}
 		tickOneArmory(b)

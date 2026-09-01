@@ -1176,3 +1176,60 @@ func TestSerf_RemainingPath(t *testing.T) {
 		t.Fatal("serf never reported a non-empty RemainingPath during its haul")
 	}
 }
+
+// TestController_DirectHaulSuppliesBarracksFromArmory ensures the generic
+// producer-to-consumer route recognises the Armory's output and the Barracks'
+// passive equipment input. Without this, finished bows would be sent to a
+// warehouse first and a ready Barracks could remain empty indefinitely.
+func TestController_DirectHaulSuppliesBarracksFromArmory(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 20}
+	armory := &building.Building{Kind: building.Armory, X: 0, Y: 0}
+	barracks := &building.Building{Kind: building.Barracks, X: 5, Y: 0}
+	armory.AddOutput(resource.Bow, 1)
+	buildings := append([]*building.Building{warehouse, armory, barracks}, straightRoad(1, 5, 0)...)
+
+	controller := NewController(warehouse, 1)
+	serf := controller.Serfs[0]
+	serf.X, serf.Y = armory.X, armory.Y
+	serf.atBuilding = armory
+	stock := resource.NewStockpile(0)
+
+	for range 500 {
+		tick(controller, nil, buildings, stock)
+		if barracks.InputBuffer[resource.Bow] > 0 {
+			break
+		}
+	}
+	if got := barracks.InputBuffer[resource.Bow]; got != 1 {
+		t.Fatalf("barracks Bow input = %d, want 1 delivered directly from Armory", got)
+	}
+	if got := armory.OutputBuffer[resource.Bow]; got != 0 {
+		t.Fatalf("armory Bow output = %d, want 0 after direct delivery", got)
+	}
+}
+
+// TestController_SuppliesArmoryInputFromWarehouse protects the other side of
+// the same chain: a queued weapon cannot ever be crafted unless the generic
+// warehouse-supply search recognises Armory.PassiveInputs (Plank, Hide, Iron
+// and Coal) as real shortages.
+func TestController_SuppliesArmoryInputFromWarehouse(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	armory := &building.Building{Kind: building.Armory, X: 4, Y: 0}
+	buildings := append([]*building.Building{warehouse, armory}, straightRoad(1, 4, 0)...)
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Plank, 1)
+
+	controller := NewController(warehouse, 1)
+	for range 160 {
+		tick(controller, nil, buildings, stock)
+		if armory.InputBuffer[resource.Plank] > 0 {
+			break
+		}
+	}
+	if got := armory.InputBuffer[resource.Plank]; got != 1 {
+		t.Fatalf("armory Plank input = %d, want 1 from warehouse supply", got)
+	}
+	if got := stock.Amount(resource.Plank); got != 0 {
+		t.Fatalf("warehouse Plank = %d, want 0 after delivery", got)
+	}
+}

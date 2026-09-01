@@ -159,6 +159,7 @@ var buildingVisuals = map[building.Kind]BuildingVisual{
 	building.Smeltery:          standardBuildingVisual("smeltery", Smeltery, 2.10),
 	building.WatchTower:        standardBuildingVisual("watch_tower", WatchTower, 2.45),
 	building.Barracks:          standardBuildingVisual("barracks", Barracks, 2.05),
+	building.Armory:            standardBuildingVisual("armory", Armory, 2.00),
 }
 
 func roadVisual() BuildingVisual {

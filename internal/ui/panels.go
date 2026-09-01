@@ -269,9 +269,8 @@ func drawHireIcon(screen *ebiten.Image, kind HireKind, x, y, size int) {
 		img = assets.Miner[0]
 	case HireSmelter:
 		img = assets.Smelter[0]
-	// HireWeaponsmith has no sprite yet -- falls through to the Serf
-	// placeholder below, the same way WatchTower/Barracks/Sentry did
-	// before real art was added for them.
+	case HireWeaponsmith:
+		img = assets.Weaponsmith[0]
 	default:
 		img = assets.Serf[0]
 	}
@@ -562,15 +561,12 @@ func drawBarracksHireControls(screen *ebiten.Image, layout Layout, canHire Barra
 	t := i18n.T()
 	sentryRect, archerRect, swordsmanRect := layout.BarracksHireRects()
 	drawHireButton(screen, sentryRect, t.BarracksHireSentryButton, canHire.Sentry, assets.Sentry[0])
-	drawHireButton(screen, archerRect, t.BarracksHireArcherButton, canHire.Archer, assets.Serf[0])
-	drawHireButton(screen, swordsmanRect, t.BarracksHireSwordsmanButton, canHire.Swordsman, assets.Serf[0])
+	drawHireButton(screen, archerRect, t.BarracksHireArcherButton, canHire.Archer, assets.Archer[0])
+	drawHireButton(screen, swordsmanRect, t.BarracksHireSwordsmanButton, canHire.Swordsman, assets.Swordsman[0])
 }
 
 // drawHireButton is one row of drawBarracksHireControls: a filled/outline
-// button with a label and, on the right, a small static icon. img falls
-// back to the plain Serf sprite for Archer/Swordsman until they get their
-// own art -- the same "never block on a missing sprite" convention already
-// used for the WatchTower/Barracks/Sentry before their real art arrived.
+// button with a label and, on the right, a small static icon.
 func drawHireButton(screen *ebiten.Image, r image.Rectangle, label string, canHire bool, img *ebiten.Image) {
 	fill := panelColor
 	if canHire {
@@ -607,7 +603,8 @@ func drawArmoryQueueControls(screen *ebiten.Image, layout Layout, armory *buildi
 	for i, item := range armoryQueueItems {
 		row, minus, plus := layout.ArmoryQueueRowRects(i)
 		vector.FillRect(screen, float32(row.Min.X), float32(row.Min.Y), float32(row.Dx()), float32(row.Dy()), panelInnerColor, false)
-		DrawInspectorText(screen, names[item], float64(row.Min.X+6), float64(row.Min.Y+7))
+		drawResourceIcon(screen, item, row.Min.X+4, row.Min.Y+5)
+		DrawInspectorText(screen, names[item], float64(row.Min.X+resourceIconSize+10), float64(row.Min.Y+7))
 		count := fmt.Sprintf("%d", armory.ProductionQueue[item])
 		DrawInspectorText(screen, count, float64(minus.Max.X+(plus.Min.X-minus.Max.X)/2-6), float64(row.Min.Y+7))
 
@@ -1400,6 +1397,8 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.WatchTower
 	case building.Barracks:
 		img = assets.Barracks
+	case building.Armory:
+		img = assets.Armory
 	case building.FisherHut:
 		img = assets.FisherHutFrames[0]
 	case building.Tree:

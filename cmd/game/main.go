@@ -528,8 +528,9 @@ func (g *Game) Update() error {
 		g.tickTreeRegrowth()
 		g.tickFishRegrowth()
 		g.updateAutomaticGates()
-		economy.TickWithConnectivity(g.buildings, g.inactiveWorkerBuildings(), g.disconnectedBuildings())
-		tickArmories(g.buildings)
+		inactiveWorkers := g.inactiveWorkerBuildings()
+		economy.TickWithConnectivity(g.buildings, inactiveWorkers, g.disconnectedBuildings())
+		tickArmories(g.buildings, inactiveWorkers)
 		// Controllers remove hunger deaths from their own rosters during Tick.
 		// Capture the final position one tick beforehand so every profession
 		// can use the same neutral death animation without changing its API.
@@ -5030,6 +5031,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		render.DrawAttackMarker(screen, g.camera, g.attackMarkerTarget.X, g.attackMarkerTarget.Y)
 	}
 	render.DrawSentryProjectiles(screen, g.sentries.Sentries, g.camera)
+	render.DrawSoldierProjectiles(screen, g.soldiers.Soldiers, g.camera)
 	render.DrawDeathEffects(screen, g.deathEffects, g.camera)
 	// Foreground layers (porches/fences/eaves) intentionally come after units;
 	// current sprites have none, but the per-building art manifest can add them
