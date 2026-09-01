@@ -317,7 +317,11 @@ func drawWalls(screen *ebiten.Image, buildings []*building.Building, cam *Camera
 			}
 		}
 		sx, sy := cam.TileToScreen(b.X, b.Y)
-		drawFootprintAtScale(screen, art, sx, sy, 1, tilePixels)
+		// Neighbouring wall art overlaps by two screen pixels on each side.
+		// This is intentionally local to walls: it hides alpha gaps between
+		// modular masonry without changing road, terrain or building bounds.
+		overlap := tilePixels * 0.04
+		drawFootprintAtScale(screen, art, sx-overlap, sy-overlap, 1, tilePixels+overlap*2)
 	}
 }
 
