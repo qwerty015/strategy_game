@@ -64,8 +64,6 @@ func main() {
 		{"buildings/wall/corner_nw.png", true, false, false, true},
 		{"buildings/wall/corner_se.png", false, true, true, false},
 		{"buildings/wall/corner_sw.png", false, false, true, true},
-		{"buildings/wall/tee.png", true, true, false, true},
-		{"buildings/wall/cross.png", true, true, true, true},
 	} {
 		writeFrame(os.Args[2], module.name, composeWall(horizontal, vertical, module))
 	}

@@ -1443,9 +1443,13 @@ func wallPath(from, to building.Point, horizontalFirst bool) []building.Point {
 
 // commitWallPath validates the entire run before adding its first foundation,
 // so a failed bend never leaves a partial accidental wall. Existing wall/gate
-// pieces are intentionally reusable: this is how a later segment closes a
-// loop or meets a gate without replacing it.
+// pieces can close a loop or extend a run, but a join may never create a
+// T/cross-shaped section: the settlement supports only straight walls and
+// 90-degree turns.
 func (g *Game) commitWallPath(path []building.Point) bool {
+	if !building.CanCreateWallTopology(g.buildings, path) {
+		return false
+	}
 	for _, point := range path {
 		if g.wallPieceAt(point.X, point.Y) {
 			continue

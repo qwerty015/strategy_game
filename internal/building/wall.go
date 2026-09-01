@@ -91,6 +91,52 @@ func WallShapeAt(existing []*Building, x, y int) WallShape {
 	return WallShapeFromSegments(FinishedWallSegments(existing), x, y)
 }
 
+// CanCreateWallTopology reports whether adding the proposed wall cells keeps
+// every touched section as either an end, a straight run or a 90-degree turn.
+// A section with three or four cardinal neighbours would require a T/cross
+// module, which the game intentionally does not support.
+func CanCreateWallTopology(existing []*Building, proposed []Point) bool {
+	segments := make(map[Point]bool)
+	for _, b := range existing {
+		if b != nil && IsWallKind(b.Kind) {
+			segments[Point{X: b.X, Y: b.Y}] = true
+		}
+	}
+	touched := make(map[Point]bool)
+	for _, point := range proposed {
+		segments[point] = true
+		touched[point] = true
+		for _, neighbour := range [...]Point{
+			{X: point.X, Y: point.Y - 1},
+			{X: point.X + 1, Y: point.Y},
+			{X: point.X, Y: point.Y + 1},
+			{X: point.X - 1, Y: point.Y},
+		} {
+			touched[neighbour] = true
+		}
+	}
+	for point := range touched {
+		if !segments[point] {
+			continue
+		}
+		neighbours := 0
+		for _, neighbour := range [...]Point{
+			{X: point.X, Y: point.Y - 1},
+			{X: point.X + 1, Y: point.Y},
+			{X: point.X, Y: point.Y + 1},
+			{X: point.X - 1, Y: point.Y},
+		} {
+			if segments[neighbour] {
+				neighbours++
+			}
+		}
+		if neighbours > 2 {
+			return false
+		}
+	}
+	return true
+}
+
 // WallShapeFromSegments selects the exact cardinal connection topology from
 // an already-indexed wall set. Diagonal neighbours intentionally do not affect
 // the shape: walls are orthogonal structures, and diagonal crossing remains

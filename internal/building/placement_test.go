@@ -221,3 +221,49 @@ func TestWallShapeAtUsesDedicatedCorners(t *testing.T) {
 		})
 	}
 }
+
+// TestCanCreateWallTopology keeps the wall art and construction model simple:
+// paths may extend or turn, but no cell may become a T/cross junction.
+func TestCanCreateWallTopology(t *testing.T) {
+	cases := []struct {
+		name     string
+		existing []*Building
+		proposed []Point
+		want     bool
+	}{
+		{
+			name:     "right angle remains allowed",
+			existing: []*Building{{Kind: StoneWall, X: 4, Y: 4}},
+			proposed: []Point{{X: 5, Y: 4}, {X: 5, Y: 5}},
+			want:     true,
+		},
+		{
+			name: "third branch is rejected",
+			existing: []*Building{
+				{Kind: StoneWall, X: 3, Y: 4},
+				{Kind: StoneWall, X: 4, Y: 4},
+				{Kind: StoneWall, X: 5, Y: 4},
+			},
+			proposed: []Point{{X: 4, Y: 5}},
+			want:     false,
+		},
+		{
+			name: "cross is rejected",
+			existing: []*Building{
+				{Kind: StoneWall, X: 4, Y: 3},
+				{Kind: StoneWall, X: 5, Y: 4},
+				{Kind: StoneWall, X: 4, Y: 5},
+				{Kind: StoneWall, X: 3, Y: 4},
+			},
+			proposed: []Point{{X: 4, Y: 4}},
+			want:     false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CanCreateWallTopology(tc.existing, tc.proposed); got != tc.want {
+				t.Fatalf("CanCreateWallTopology() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

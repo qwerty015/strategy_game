@@ -16,8 +16,6 @@ var (
 	StoneWallCornerNW   = mustLoad("buildings/wall/corner_nw.png")
 	StoneWallCornerSE   = mustLoad("buildings/wall/corner_se.png")
 	StoneWallCornerSW   = mustLoad("buildings/wall/corner_sw.png")
-	StoneWallTee        = mustLoad("buildings/wall/tee.png")
-	StoneWallCross      = mustLoad("buildings/wall/cross.png")
 	StoneWallPillar     = mustLoad("buildings/wall/pillar.png")
 
 	GateHorizontalClosed = mustLoad("buildings/gate/horizontal_closed.png")
@@ -41,10 +39,7 @@ func StoneWallFrame(shape building.WallShape) *ebiten.Image {
 		return StoneWallCornerSE
 	case building.WallShapeCornerSW:
 		return StoneWallCornerSW
-	case building.WallShapeTNorth, building.WallShapeTSouth, building.WallShapeTEast, building.WallShapeTWest:
-		return StoneWallTee
-	case building.WallShapeCross:
-		return StoneWallCross
+
 	case building.WallShapeIsolated:
 		return StoneWallPillar
 	default:
