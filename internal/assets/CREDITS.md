@@ -112,3 +112,8 @@ are original transparent project art: the sentry walk atlas has three map-only
 frames, while its single-pose image remains for the Barracks inspector button.
 The enemy is a visibly distinct debug target with no relation to a commercial
 game's artwork.
+`unit_death_effect.png` was generated with the built-in OpenAI image
+generation tool on 2026-09-01. It is an original, profession-free transparent
+three-frame death effect (collapse, rising soul, skeleton) for every humanoid
+unit death; it is not based on, copied from, or traced from commercial game
+artwork.

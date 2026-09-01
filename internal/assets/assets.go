@@ -154,6 +154,9 @@ var (
 	MinerWalkFrames      = mustLoadAtlasFrames("generated/unit_miner_walk.png")
 	SmelterWalkFrames    = mustLoadAtlasFrames("generated/unit_smelter_walk.png")
 	SentryWalkFrames     = mustLoadAtlasFrames("generated/unit_sentry_walk.png")
+	// DeathFrames is the universal, profession-free fall/soul/skeleton loop.
+	// It is a transient map effect, never an inspector or palette icon.
+	DeathFrames = mustLoadAtlasFrames("generated/unit_death_effect.png")
 	// HareFrames and ButterflyFrames are transparent three-frame ambient loops.
 	// They belong only to the visual layer and are never simulation units or
 	// save-file data.

@@ -351,6 +351,10 @@ func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy) {
 		return
 	}
 	target.HP = 0
+	// Visual state is intentionally recorded after the successful resource
+	// spend and lethal hit, so a missing stone never draws a phantom shot.
+	s.shotTargetX, s.shotTargetY = target.X, target.Y
+	s.shotVisualTicks = shotVisualLifetime
 	s.shotCooldown = ShotCooldownTicks
 }
 

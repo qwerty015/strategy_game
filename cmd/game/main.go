@@ -20,6 +20,7 @@ import (
 	"strategy_game/internal/economy"
 	"strategy_game/internal/enemy"
 	"strategy_game/internal/fishing"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
@@ -225,6 +226,11 @@ type Game struct {
 	// tool for the defensive buildings/HP/repair foundation, not a
 	// released feature.
 	enemies []*enemy.Enemy
+
+	// deathEffects is presentation-only: it records a final position after a
+	// unit has died, then the renderer plays the shared soul/skeleton loop.
+	// It is deliberately neither simulation state nor save-game data.
+	deathEffects []render.DeathEffect
 
 	treeRegrowth []treeRegrowth
 	treeSeed     uint32
@@ -466,6 +472,7 @@ func (g *Game) Update() error {
 		return nil
 	}
 	g.playedFrames++
+	g.deathEffects = render.AdvanceDeathEffects(g.deathEffects)
 	g.handleCameraPan()
 	g.handleCameraZoom()
 
@@ -486,6 +493,10 @@ func (g *Game) Update() error {
 		g.tickFishRegrowth()
 		g.updateAutomaticGates()
 		economy.TickWithConnectivity(g.buildings, g.inactiveWorkerBuildings(), g.disconnectedBuildings())
+		// Controllers remove hunger deaths from their own rosters during Tick.
+		// Capture the final position one tick beforehand so every profession
+		// can use the same neutral death animation without changing its API.
+		g.queueStarvationDeathEffects()
 
 		// One shared reservation ledger per simulation tick: every
 		// controller first reports its own pre-existing in-flight units
@@ -2976,6 +2987,7 @@ func (g *Game) loadGame(path string) error {
 	g.miners = miner.NewController()
 	g.sentries = sentry.NewController()
 	g.enemies = nil // debug-only roster, never persisted -- see the Game struct field's doc comment
+	g.deathEffects = nil
 	if len(state.Units) == 0 {
 		// Saves from before unit persistence did not contain a roster.
 		// Keep those saves playable with the old sensible defaults.
@@ -3949,9 +3961,65 @@ func (g *Game) pruneDeadEnemies() {
 	for _, e := range g.enemies {
 		if e.Alive() {
 			alive = append(alive, e)
+			continue
 		}
+		g.addDeathEffect(e.X, e.Y)
 	}
 	g.enemies = alive
+}
+
+// queueStarvationDeathEffects records every unit that its own controller will
+// remove on this exact simulation tick. All current civilian controllers
+// increment hunger first and call hunger.Dead immediately afterwards, so this
+// reads the last real position without altering their lifecycle or events.
+func (g *Game) queueStarvationDeathEffects() {
+	diesThisTick := hunger.MaxTicks - 1
+	for _, unit := range g.logi.Serfs {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+	for _, unit := range g.vills.Villagers {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+	for _, unit := range g.jacks.Lumberjacks {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+	for _, unit := range g.fishers.Fishermen {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+	for _, unit := range g.quarry.Quarrymen {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+	for _, unit := range g.builders.Builders {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+	for _, unit := range g.miners.Miners {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+	for _, unit := range g.sentries.Sentries {
+		if unit.HungerTicks() >= diesThisTick {
+			g.addDeathEffect(unit.X, unit.Y)
+		}
+	}
+}
+
+// addDeathEffect has no game-rule side effects. It exists so starvation,
+// enemy kills and any future combat source use one universal visual record.
+func (g *Game) addDeathEffect(x, y int) {
+	g.deathEffects = append(g.deathEffects, render.NewDeathEffect(x, y))
 }
 
 // removeDeposit deletes an exhausted deposit from the world once its
@@ -4651,6 +4719,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawMiners(screen, g.miners.Miners, g.camera)
 	render.DrawSentries(screen, g.sentries.Sentries, g.camera)
 	render.DrawEnemies(screen, g.enemies, g.camera)
+	render.DrawSentryProjectiles(screen, g.sentries.Sentries, g.camera)
+	render.DrawDeathEffects(screen, g.deathEffects, g.camera)
 	// Foreground layers (porches/fences/eaves) intentionally come after units;
 	// current sprites have none, but the per-building art manifest can add them
 	// without another change to the world render order.
