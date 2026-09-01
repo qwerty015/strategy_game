@@ -37,13 +37,54 @@ func TestSentry_FiresAtEnemyInRangeAndConsumesStone(t *testing.T) {
 
 	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
 
-	// Per the user's explicit request, a stone hit is an instant kill --
-	// unlike a building, which still only takes combat.DamagePerHit.
-	if e.Alive() {
-		t.Fatalf("enemy HP after one tick = %d, want dead (one hit kills)", e.HP)
+	// Firing consumes the stone immediately, but per the user's explicit
+	// bug report ("раньше было сперва противник погибает, а потом летит
+	// камень в него") the kill itself lands only once the stone visually
+	// arrives, not the instant it's thrown.
+	if !e.Alive() {
+		t.Fatal("enemy died on the very tick it was fired at -- the kill must wait for the stone to visually arrive")
 	}
 	if tower.InputBuffer[resource.StoneBlock] != building.BufferCapacity-1 {
-		t.Fatalf("tower stone = %d, want %d (one shot consumed)", tower.InputBuffer[resource.StoneBlock], building.BufferCapacity-1)
+		t.Fatalf("tower stone = %d, want %d (one shot consumed immediately, even though the kill hasn't landed yet)", tower.InputBuffer[resource.StoneBlock], building.BufferCapacity-1)
+	}
+
+	for range shotVisualLifetime {
+		tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
+	}
+
+	// Per the user's explicit request, a stone hit is a kill -- unlike a
+	// building, which still only takes combat.DamagePerHit.
+	if e.Alive() {
+		t.Fatalf("enemy HP after the stone's full flight time = %d, want dead (one hit kills)", e.HP)
+	}
+}
+
+// TestSentry_KillNeverLandsBeforeTheStoneVisuallyArrives is a direct
+// regression test for the user's exact bug report: "раньше было сперва
+// противник погибает, а потом летит камень в него" -- while ShotVisual()
+// still reports an in-flight stone (ok == true), the target must remain
+// alive; only once ShotVisual() stops reporting one (the stone has
+// arrived) may the target be dead.
+func TestSentry_KillNeverLandsBeforeTheStoneVisuallyArrives(t *testing.T) {
+	tower := &building.Building{Kind: building.WatchTower, X: 10, Y: 10, ConstructionStage: building.ConstructionNone}
+	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
+
+	c := NewController()
+	guard := c.Spawn(tower)
+	e := enemy.New(tower.X+1, tower.Y)
+
+	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
+
+	for range shotVisualLifetime + 2 {
+		_, _, _, _, _, stillInFlight := guard.ShotVisual()
+		if stillInFlight && !e.Alive() {
+			t.Fatal("enemy is dead while ShotVisual() still reports the stone in flight -- death happened before the stone visually arrived")
+		}
+		tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
+	}
+
+	if e.Alive() {
+		t.Fatal("enemy is still alive well after the stone's flight time -- the kill never landed at all")
 	}
 }
 
@@ -83,9 +124,12 @@ func TestSentry_DoesNotFireWithoutStone(t *testing.T) {
 }
 
 // TestSentry_RespectsShotCooldown uses two separate targets so the
-// cooldown itself is what's under test -- with a one-hit kill, reusing a
-// single already-dead target would pass for the wrong reason (nothing
-// left alive to shoot), not because the cooldown blocked a second shot.
+// cooldown itself is what's under test -- with the kill now deferred
+// until the stone lands (see TestSentry_FiresAtEnemyInRangeAndConsumesStone),
+// reusing a single target could otherwise pass for the wrong reason.
+// ShotCooldownTicks (20) comfortably outlasts shotVisualLifetime (6), so
+// the first stone has always landed well before the cooldown that same
+// shot started could ever let a second one fly.
 func TestSentry_RespectsShotCooldown(t *testing.T) {
 	tower := &building.Building{Kind: building.WatchTower, X: 10, Y: 10, ConstructionStage: building.ConstructionNone}
 	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
@@ -97,27 +141,42 @@ func TestSentry_RespectsShotCooldown(t *testing.T) {
 	second := enemy.New(tower.X+1, tower.Y+1)
 	enemies := []*enemy.Enemy{first, second}
 
-	// First tick kills the first target and starts the cooldown.
+	// First tick fires at one of the two (both equidistant); consumes the
+	// stone and starts the cooldown, but the kill hasn't landed yet.
 	tickController(c, []*building.Building{tower}, enemies)
-	if first.Alive() {
-		t.Fatal("first enemy still alive after one tick, want dead (one hit kills)")
-	}
-	if !second.Alive() {
-		t.Fatal("second enemy died on the same tick as the first -- only one shot per tick")
+	if got := tower.InputBuffer[resource.StoneBlock]; got != building.BufferCapacity-1 {
+		t.Fatalf("tower stone after first tick = %d, want %d (one shot fired)", got, building.BufferCapacity-1)
 	}
 
-	// Immediately after, still on cooldown: no second shot this tick.
-	tickController(c, []*building.Building{tower}, enemies)
-	if !second.Alive() {
-		t.Fatal("second enemy died while the Sentry should still be on cooldown")
-	}
-
-	// Once the cooldown fully elapses, the Sentry fires again.
-	for range ShotCooldownTicks {
+	// Let the first stone's flight time fully elapse. Exactly one of the
+	// two dies; the cooldown from that same shot is still far from over,
+	// so no second shot has gone out yet.
+	for range shotVisualLifetime {
 		tickController(c, []*building.Building{tower}, enemies)
 	}
-	if second.Alive() {
-		t.Fatal("second enemy still alive after the cooldown elapsed, want dead")
+	deaths := 0
+	if !first.Alive() {
+		deaths++
+	}
+	if !second.Alive() {
+		deaths++
+	}
+	if deaths != 1 {
+		t.Fatalf("exactly one of the two enemies should be dead by now, got %d", deaths)
+	}
+	if got := tower.InputBuffer[resource.StoneBlock]; got != building.BufferCapacity-1 {
+		t.Fatalf("tower stone right after the first kill landed = %d, want still %d (still cooling down, no second shot yet)", got, building.BufferCapacity-1)
+	}
+
+	// Once the cooldown (started at the first shot) fully elapses, the
+	// Sentry fires again at whichever target is still alive, and it dies
+	// once that second stone's own flight time elapses too. A generous
+	// margin covers both: the remaining cooldown plus a full new flight.
+	for range ShotCooldownTicks + shotVisualLifetime {
+		tickController(c, []*building.Building{tower}, enemies)
+	}
+	if first.Alive() || second.Alive() {
+		t.Fatal("both enemies should be dead after the cooldown elapsed and the second stone landed")
 	}
 }
 

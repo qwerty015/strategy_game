@@ -36,10 +36,15 @@ const (
 	// whole stone buffer in an instant once an enemy is in range.
 	ShotCooldownTicks = 20
 
-	// shotVisualLifetime is deliberately short: a sling stone crosses the
-	// small WatchTower range over six rendered simulation ticks. It is a
-	// render-only detail and is neither saved nor part of combat timing.
-	shotVisualLifetime = 6
+	// shotVisualLifetime is how many simulation ticks the stone is "in
+	// flight" before the kill lands (see shotPendingTarget). Lowered from
+	// 6 to 1 -- the user found that over 6 ticks a moving target could
+	// take several steps, so the stone visually landed on one tile while
+	// the kill (and death animation) happened on another: "камень падает
+	// на одну клетку, а противник умирает на другой". At 1 tick the
+	// target has essentially no time to move between the shot and the
+	// kill, so the two always agree.
+	shotVisualLifetime = 1
 )
 
 type phase int
@@ -73,10 +78,19 @@ type Sentry struct {
 	shotCooldown int
 
 	// shotVisualTicks and shotTarget store only enough information for the
-	// renderer to show the most recent sling stone in flight. They never
-	// affect damage, pathing, hunger or save-game state.
+	// renderer to show the most recent sling stone in flight. Not persisted
+	// across save/load, the same as shotCooldown above.
+	//
+	// shotPendingTarget is the one exception to "visual-only": the user
+	// explicitly asked for the kill itself to land when the stone visually
+	// arrives, not the instant it's thrown ("раньше было сперва противник
+	// погибает, а потом летит камень в него" -- an observed real bug). See
+	// Controller.Tick, which zeroes shotPendingTarget's HP the tick
+	// shotVisualTicks reaches 0. A target that's already dead by then (killed
+	// by something else in the meantime) is a harmless no-op.
 	shotVisualTicks          int
 	shotTargetX, shotTargetY int
+	shotPendingTarget        *enemy.Enemy
 
 	// Starving mirrors package villagers' field of the same name: true
 	// once HungerInterval has passed and there was nowhere to actually go
@@ -286,6 +300,13 @@ func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy
 	for _, s := range c.Sentries {
 		if s.shotVisualTicks > 0 {
 			s.shotVisualTicks--
+			if s.shotVisualTicks == 0 && s.shotPendingTarget != nil {
+				// The stone has visually arrived -- this is when it
+				// actually kills, not when it was thrown. See
+				// shotPendingTarget's doc comment.
+				s.shotPendingTarget.HP = 0
+				s.shotPendingTarget = nil
+			}
 		}
 		s.ticksSinceMeal++
 		if hunger.Dead(s.ticksSinceMeal) {
@@ -328,13 +349,17 @@ func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, enem
 // engage fires at the nearest living enemy within WatchTowerRange, once
 // per ShotCooldownTicks, consuming one stone from the tower's InputBuffer
 // per shot -- a silent no-op with no enemy in range, no stone left, or
-// still on cooldown. There is deliberately no "aiming" animation state;
-// this package never touches rendering.
+// still on cooldown.
 //
 // Per the user's explicit request ("1 попадание камня в противника его
-// убивает"), a hit is an instant kill -- unlike a building, which still
-// takes combat.DamagePerHit (10%) per hit from the same stone. A stone
-// sling is lethal to a person but only chips a wall.
+// убивает"), a hit is a kill -- unlike a building, which still takes
+// combat.DamagePerHit (10%) per hit from the same stone. A stone sling is
+// lethal to a person but only chips a wall. The kill itself, though,
+// lands only once the stone visually arrives (see shotPendingTarget and
+// Controller.Tick), not the instant it's thrown here -- a real bug the
+// user caught in-game ("раньше было сперва противник погибает, а потом
+// летит камень в него"): the target must stay alive and interactable for
+// the roughly WatchTowerRange*TicksPerTile ticks the stone is airborne.
 func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy) {
 	if s.shotCooldown > 0 {
 		s.shotCooldown--
@@ -350,10 +375,8 @@ func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy) {
 	if !s.Home.TakeInput(resource.StoneBlock, 1) {
 		return
 	}
-	target.HP = 0
-	// Visual state is intentionally recorded after the successful resource
-	// spend and lethal hit, so a missing stone never draws a phantom shot.
 	s.shotTargetX, s.shotTargetY = target.X, target.Y
+	s.shotPendingTarget = target
 	s.shotVisualTicks = shotVisualLifetime
 	s.shotCooldown = ShotCooldownTicks
 }
