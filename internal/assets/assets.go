@@ -92,6 +92,8 @@ var (
 	QuarryHut         = mustLoad("generated/building_quarry_hut_v2.png")
 	MinerHut          = mustLoad("generated/building_miner_hut_v2.png")
 	Smeltery          = mustLoad("generated/building_smeltery.png")
+	WatchTower        = mustLoad("generated/building_watch_tower.png")
+	Barracks          = mustLoad("generated/building_barracks.png")
 	// Construction art is deliberately generic: the same site can scale from
 	// a one-tile road to a 3×3 farm without previewing the finished building.
 	ConstructionFoundation  = mustLoad("generated/construction_foundation_v2.png")
@@ -131,6 +133,10 @@ var (
 	Builder    = staticFrames("generated/unit_builder.png")
 	Miner      = staticFrames("generated/unit_miner.png")
 	Smelter    = staticFrames("generated/unit_smelter.png")
+	// Sentry is the stable inspector/palette pose. The animated atlas below
+	// is deliberately map-only, like the existing worker professions.
+	Sentry = staticFrames("generated/unit_sentry.png")
+	Enemy  = staticFrames("generated/unit_enemy.png")
 
 	// WalkFrames are map-only three-step walking loops. Each atlas is reduced
 	// once at startup, so animated crowds cost no per-frame image decoding.
@@ -147,6 +153,7 @@ var (
 	BuilderWalkFrames    = mustLoadAtlasFrames("generated/unit_builder_walk.png")
 	MinerWalkFrames      = mustLoadAtlasFrames("generated/unit_miner_walk.png")
 	SmelterWalkFrames    = mustLoadAtlasFrames("generated/unit_smelter_walk.png")
+	SentryWalkFrames     = mustLoadAtlasFrames("generated/unit_sentry_walk.png")
 	// HareFrames and ButterflyFrames are transparent three-frame ambient loops.
 	// They belong only to the visual layer and are never simulation units or
 	// save-file data.

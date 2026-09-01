@@ -105,3 +105,10 @@ resource has three transparent variants: a compact UI icon, an item carried by
 a worker, and a stack for future world/storage rendering. They are simple
 programmatic pixel illustrations created specifically for this prototype and
 are not copied, derived or traced from any commercial game asset.
+`building_watch_tower.png`, `building_barracks.png`, `unit_sentry.png`,
+`unit_sentry_walk.png` and `unit_enemy.png` were generated with the built-in
+OpenAI image generation tool on 2026-09-01 for the first defence pass. They
+are original transparent project art: the sentry walk atlas has three map-only
+frames, while its single-pose image remains for the Barracks inspector button.
+The enemy is a visibly distinct debug target with no relation to a commercial
+game's artwork.

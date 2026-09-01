@@ -25,6 +25,8 @@ func TestBuildingVisualsCoverEveryConstructedKind(t *testing.T) {
 		building.QuarryHut,
 		building.MinerHut,
 		building.Smeltery,
+		building.WatchTower,
+		building.Barracks,
 	}
 	for _, kind := range kinds {
 		visual, ok := BuildingVisualFor(kind)
@@ -95,6 +97,8 @@ func TestProductionBuildingsUseLargeVisualFootprints(t *testing.T) {
 		building.QuarryHut,
 		building.MinerHut,
 		building.Smeltery,
+		building.WatchTower,
+		building.Barracks,
 	} {
 		visual, ok := BuildingVisualFor(kind)
 		if !ok || visual.Body.TilesTall < 1.8 {

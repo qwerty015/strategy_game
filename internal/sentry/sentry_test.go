@@ -33,7 +33,7 @@ func TestSentry_FiresAtEnemyInRangeAndConsumesStone(t *testing.T) {
 	c := NewController()
 	c.Spawn(tower)
 
-	e := enemy.New(tower.X+3, tower.Y) // within WatchTowerRange=5
+	e := enemy.New(tower.X+1, tower.Y) // within WatchTowerRange
 
 	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
 

@@ -4622,6 +4622,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera)
 	render.DrawBuilders(screen, g.builders.Builders, g.camera)
 	render.DrawMiners(screen, g.miners.Miners, g.camera)
+	render.DrawSentries(screen, g.sentries.Sentries, g.camera)
+	render.DrawEnemies(screen, g.enemies, g.camera)
 	// Foreground layers (porches/fences/eaves) intentionally come after units;
 	// current sprites have none, but the per-building art manifest can add them
 	// without another change to the world render order.

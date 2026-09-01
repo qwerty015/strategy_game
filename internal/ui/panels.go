@@ -506,6 +506,18 @@ func drawBarracksHireControls(screen *ebiten.Image, layout Layout, canHire bool)
 	}
 	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), fill, false)
 	DrawInspectorText(screen, t.BarracksHireButton, float64(r.Min.X+8), float64(r.Min.Y+8))
+
+	// The static sentry pose is an inspector asset; the three-frame atlas is
+	// used only on the world map while the guard walks to eat and back.
+	iconSize := r.Dy() - 6
+	img := assets.Sentry[0]
+	bounds := img.Bounds()
+	scale := float64(iconSize) / float64(bounds.Dy())
+	options := &ebiten.DrawImageOptions{}
+	options.GeoM.Scale(scale, scale)
+	options.GeoM.Translate(float64(r.Max.X-4-iconSize), float64(r.Min.Y+3))
+	options.Blend = ebiten.BlendSourceOver
+	screen.DrawImage(img, options)
 }
 
 func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Building, bt building.Type) {
@@ -1210,6 +1222,10 @@ func drawBuildingIcon(screen *ebiten.Image, kind building.Kind, x, y, size int) 
 		img = assets.MinerHut
 	case building.Smeltery:
 		img = assets.Smeltery
+	case building.WatchTower:
+		img = assets.WatchTower
+	case building.Barracks:
+		img = assets.Barracks
 	case building.FisherHut:
 		img = assets.FisherHutFrames[0]
 	case building.Tree:

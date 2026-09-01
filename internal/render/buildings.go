@@ -233,6 +233,12 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			drawBuildingBody(screen, b, assets.Smeltery, sx, sy, tilePixels)
 			drawFire(screen, sx+17*tilePixels/TileSize, sy+4*tilePixels/TileSize, tilePixels)
 
+		case building.WatchTower:
+			drawBuildingBody(screen, b, assets.WatchTower, sx, sy, tilePixels)
+
+		case building.Barracks:
+			drawBuildingBody(screen, b, assets.Barracks, sx, sy, tilePixels)
+
 		case building.FisherHut:
 			frame := 0 // source sprite's pier points south
 			if water, ok := building.WaterAccessPoint(grid, b); ok {
