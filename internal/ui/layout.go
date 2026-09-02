@@ -233,6 +233,9 @@ const (
 	gateControlHeight          = 30
 	gateControlGap             = 8
 	gateControlTop             = 224
+	barracksHireTop            = 316
+	barracksHireHeight         = 38
+	armoryQueueTop             = 420
 )
 
 const (
@@ -373,18 +376,17 @@ func (l Layout) GateAutoAt(x, y int) bool {
 }
 
 // BarracksHireRects returns the three stacked hire buttons for a selected
-// Barracks -- Sentry, Archer, Swordsman, in that order -- see cmd/game's
-// Barracks hire buttons. Reuses GateControlRects' exact top slot: a
-// building only ever shows one of these special control groups at a time,
-// since no Kind is ever both a Gate and a Barracks.
+// Barracks -- Sentry, Archer, Swordsman, in that order. They begin below the
+// four equipment rows of the Barracks inspector, so its stock and actions
+// cannot overlap at any window size.
 func (l Layout) BarracksHireRects() (sentry, archer, swordsman image.Rectangle) {
 	r := l.RightPanel()
 	left, right := r.Min.X+inspectorRemoveMargin, r.Max.X-inspectorRemoveMargin
-	sentry = image.Rect(left, gateControlTop, right, gateControlTop+gateControlHeight)
+	sentry = image.Rect(left, barracksHireTop, right, barracksHireTop+barracksHireHeight)
 	archerTop := sentry.Max.Y + gateControlGap
-	archer = image.Rect(left, archerTop, right, archerTop+gateControlHeight)
+	archer = image.Rect(left, archerTop, right, archerTop+barracksHireHeight)
 	swordsmanTop := archer.Max.Y + gateControlGap
-	swordsman = image.Rect(left, swordsmanTop, right, swordsmanTop+gateControlHeight)
+	swordsman = image.Rect(left, swordsmanTop, right, swordsmanTop+barracksHireHeight)
 	return
 }
 
@@ -465,14 +467,14 @@ func (l Layout) SoldierGroupByProfessionAt(x, y int) bool {
 }
 
 // armoryQueueRowHeight/armoryQueueRowGap/armoryQueueButtonWidth size the
-// three item rows drawn by drawArmoryQueueControls, stacked in the same
-// top slot as the Barracks hire buttons/Gate controls (never shown for the
-// same building at once).
+// three item rows drawn below the Armory's own input/output inspector. A
+// dedicated count cell sits between the name and the +/- buttons.
 const (
 	armoryQueueRowHeight    = 28
 	armoryQueueRowGap       = 6
 	armoryQueueButtonWidth  = 24
 	armoryQueueButtonMargin = 4
+	armoryQueueCountWidth   = 42
 )
 
 // ArmoryQueueRowRects returns row i's (0=Bow, 1=LeatherArmor, 2=Sword --
@@ -481,11 +483,20 @@ const (
 func (l Layout) ArmoryQueueRowRects(i int) (row, minus, plus image.Rectangle) {
 	r := l.RightPanel()
 	left, right := r.Min.X+inspectorRemoveMargin, r.Max.X-inspectorRemoveMargin
-	top := gateControlTop + i*(armoryQueueRowHeight+armoryQueueRowGap)
+	top := armoryQueueTop + i*(armoryQueueRowHeight+armoryQueueRowGap)
 	row = image.Rect(left, top, right, top+armoryQueueRowHeight)
 	plus = image.Rect(right-armoryQueueButtonWidth, top, right, top+armoryQueueRowHeight)
 	minus = image.Rect(plus.Min.X-armoryQueueButtonMargin-armoryQueueButtonWidth, top, plus.Min.X-armoryQueueButtonMargin, top+armoryQueueRowHeight)
 	return row, minus, plus
+}
+
+// ArmoryQueueCountRect returns the dedicated count cell between a queue row's
+// item label and its +/- buttons. Keeping it in Layout makes the displayed
+// quantity and click targets independent instead of letting text overlap them.
+func (l Layout) ArmoryQueueCountRect(i int) image.Rectangle {
+	row, minus, _ := l.ArmoryQueueRowRects(i)
+	right := minus.Min.X - armoryQueueButtonMargin
+	return image.Rect(right-armoryQueueCountWidth, row.Min.Y, right, row.Max.Y)
 }
 
 // ArmoryQueueButtonAt reports which row's minus (delta -1) or plus (delta

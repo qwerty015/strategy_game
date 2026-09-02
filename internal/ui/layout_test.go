@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image"
 	"testing"
 
 	"strategy_game/internal/building"
@@ -267,5 +268,38 @@ func TestGateControlRects(t *testing.T) {
 	}
 	if layout.GateToggleAt(toggle.Min.X, toggle.Min.Y-1) || layout.GateAutoAt(auto.Max.X, auto.Max.Y) {
 		t.Fatal("outside gate control edge was accepted")
+	}
+}
+
+func TestArmoryQueueCountCellDoesNotOverlapButtons(t *testing.T) {
+	layout := NewLayout(1280, 900)
+	for i := 0; i < 3; i++ {
+		_, minus, plus := layout.ArmoryQueueRowRects(i)
+		count := layout.ArmoryQueueCountRect(i)
+		if rectanglesOverlap(count, minus) || rectanglesOverlap(count, plus) {
+			t.Fatalf("queue row %d count cell %v overlaps controls %v / %v", i, count, minus, plus)
+		}
+	}
+}
+
+func TestBarracksHireControlsStartBelowEquipmentRows(t *testing.T) {
+	layout := NewLayout(1280, 900)
+	sentry, _, _ := layout.BarracksHireRects()
+	const barracksEquipmentBottom = inspectorBodyY + 24 + 20 + 20 + 4*18 + 20
+	if sentry.Min.Y < barracksEquipmentBottom {
+		t.Fatalf("first barracks button starts at y=%d, overlaps inspector through y=%d", sentry.Min.Y, barracksEquipmentBottom)
+	}
+}
+
+func rectanglesOverlap(a, b image.Rectangle) bool {
+	return a.Min.X < b.Max.X && a.Max.X > b.Min.X && a.Min.Y < b.Max.Y && a.Max.Y > b.Min.Y
+}
+
+func TestArmoryQueueClearsRemovalButton(t *testing.T) {
+	layout := NewLayout(1024, 768)
+	last, _, _ := layout.ArmoryQueueRowRects(2)
+	remove := layout.InspectorRemoveRect(false)
+	if last.Max.Y > remove.Min.Y {
+		t.Fatalf("Armory queue ends at y=%d, overlaps removal button beginning at y=%d", last.Max.Y, remove.Min.Y)
 	}
 }

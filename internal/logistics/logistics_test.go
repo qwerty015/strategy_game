@@ -1233,3 +1233,38 @@ func TestController_SuppliesArmoryInputFromWarehouse(t *testing.T) {
 		t.Fatalf("warehouse Plank = %d, want 0 after delivery", got)
 	}
 }
+
+// TestController_SuppliesArmoryBeforeCollectingUnrelatedOutput reproduces a
+// mature town: even when a Farm has goods ready to collect forever, a queued
+// Bow whose Plank already sits in a connected Warehouse must receive a serf
+// first. Collection used to run before warehouse supply, leaving the Armory's
+// Plank input at zero indefinitely on large saves.
+func TestController_SuppliesArmoryBeforeCollectingUnrelatedOutput(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	armory := &building.Building{Kind: building.Armory, X: 4, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 8, Y: 0}
+	farm.AddOutput(resource.Wheat, building.BufferCapacity)
+	buildings := append([]*building.Building{warehouse, armory, farm}, straightRoad(1, 8, 0)...)
+
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Plank, building.BufferCapacity)
+	controller := NewController(warehouse, 1)
+	tick(controller, nil, buildings, stock)
+
+	serf := controller.Serfs[0]
+	if serf.PickupBuilding() != warehouse || serf.DropoffBuilding() != armory {
+		t.Fatalf("first job = %v -> %v, want Warehouse -> Armory", serf.PickupBuilding(), serf.DropoffBuilding())
+	}
+	if got, amount := serf.Cargo(); got != resource.Plank || amount == 0 {
+		t.Fatalf("first cargo = %v x%d, want a positive Plank delivery", got, amount)
+	}
+	for range 160 {
+		tick(controller, nil, buildings, stock)
+		if armory.InputBuffer[resource.Plank] > 0 {
+			break
+		}
+	}
+	if got := armory.InputBuffer[resource.Plank]; got == 0 {
+		t.Fatal("Armory did not receive Plank from the Warehouse")
+	}
+}

@@ -5093,7 +5093,29 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			Swordsman: g.canHireSwordsman(g.selection.Building),
 		}
 	}
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHire, g.formationLines)
+	var armoryState ui.ArmoryProductionState
+	if g.selection.Kind == ui.SelectionBuilding && g.selection.Building != nil && g.selection.Building.Kind == building.Armory {
+		armory := g.selection.Building
+		if item, queued := activeArmoryItem(armory); queued {
+			armoryState = ui.ArmoryProductionState{
+				Item:     item,
+				Queued:   true,
+				Progress: armory.ProgressTicks,
+				Total:    armoryTicksToProduce,
+			}
+			switch {
+			case g.inactiveWorkerBuildings()[armory]:
+				armoryState.WaitingForWorker = true
+			case !armoryHasMaterial(armory, item):
+				armoryState.WaitingForMaterials = true
+			case armory.OutputBuffer[item] >= armory.OutputLimit():
+				armoryState.WaitingForOutput = true
+			default:
+				armoryState.Producing = true
+			}
+		}
+	}
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHire, armoryState, g.formationLines)
 	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
 	ui.DrawResourceTooltip(screen, g.layout)
 

@@ -352,7 +352,20 @@ type BarracksHireAvailability struct {
 	Sentry, Archer, Swordsman bool
 }
 
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string, canHire BarracksHireAvailability, formationLines int) {
+// ArmoryProductionState is prepared by the simulation and shown next to a
+// selected Armory. The UI therefore never guesses whether its Weaponsmith is
+// actually at work or why a queued item is paused.
+type ArmoryProductionState struct {
+	Item                resource.Type
+	Queued              bool
+	Producing           bool
+	WaitingForWorker    bool
+	WaitingForMaterials bool
+	WaitingForOutput    bool
+	Progress, Total     int
+}
+
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string, canHire BarracksHireAvailability, armoryState ArmoryProductionState, formationLines int) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
@@ -374,7 +387,7 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 
 	switch selection.Kind {
 	case SelectionBuilding:
-		drawBuildingInspector(screen, r.Min.X+18, inspectorBodyY, selection.Building, connected, stock, occupants)
+		drawBuildingInspector(screen, r.Min.X+18, inspectorBodyY, selection.Building, connected, stock, occupants, armoryState)
 	case SelectionSerf:
 		drawSerfInspector(screen, r.Min.X+18, inspectorBodyY, selection.Serf)
 	case SelectionVillager:
@@ -404,7 +417,7 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 	}
 	if selection.Kind == SelectionBuilding && selection.Building != nil &&
 		selection.Building.Kind == building.Armory && selection.Building.ConstructionStage == building.ConstructionNone {
-		drawArmoryQueueControls(screen, layout, selection.Building)
+		drawArmoryQueueControls(screen, layout, selection.Building, armoryState)
 	}
 	if selection.Kind == SelectionSoldierGroup && len(selection.SoldierGroup) > 0 {
 		drawFormationLinesControl(screen, layout, formationLines)
@@ -573,22 +586,35 @@ func drawHireButton(screen *ebiten.Image, r image.Rectangle, label string, canHi
 		fill = selectedColor
 	}
 	vector.FillRect(screen, float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy()), fill, false)
-	DrawInspectorText(screen, label, float64(r.Min.X+8), float64(r.Min.Y+8))
 
-	iconSize := r.Dy() - 6
-	bounds := img.Bounds()
-	scale := float64(iconSize) / float64(bounds.Dy())
-	options := &ebiten.DrawImageOptions{}
-	options.GeoM.Scale(scale, scale)
-	options.GeoM.Translate(float64(r.Max.X-4-iconSize), float64(r.Min.Y+3))
-	options.Blend = ebiten.BlendSourceOver
-	screen.DrawImage(img, options)
+	// The recruit portrait gets its own right-hand column, so long Russian
+	// resource requirements remain readable instead of drawing beneath it.
+	iconSize := r.Dy() - 8
+	if img != nil {
+		bounds := img.Bounds()
+		scale := float64(iconSize) / float64(bounds.Dy())
+		options := &ebiten.DrawImageOptions{}
+		options.GeoM.Scale(scale, scale)
+		options.GeoM.Translate(float64(r.Max.X-6-iconSize), float64(r.Min.Y+4))
+		options.Blend = ebiten.BlendSourceOver
+		screen.DrawImage(img, options)
+	}
+	DrawInspectorText(screen, label, float64(r.Min.X+10), float64(r.Min.Y+11))
 }
 
 // armoryQueueItems is the fixed display order for drawArmoryQueueControls
 // and Layout.ArmoryQueueRowRects -- must match cmd/game's armoryOrder so a
 // row's button always affects the item it visually shows.
 var armoryQueueItems = [3]resource.Type{resource.Bow, resource.LeatherArmor, resource.Sword}
+
+// armoryQueueCosts is the material bill for one queued item. It mirrors the
+// simulation recipe in cmd/game/armory.go, but is intentionally display-only:
+// changing an order never consumes anything until a Weaponsmith completes it.
+var armoryQueueCosts = map[resource.Type][]resource.Type{
+	resource.Bow:          {resource.Plank},
+	resource.LeatherArmor: {resource.Hide},
+	resource.Sword:        {resource.Iron, resource.Coal},
+}
 
 // drawArmoryQueueControls draws the three production-queue rows for a
 // selected, finished Armory -- one per item (Bow/LeatherArmor/Sword), each
@@ -597,21 +623,47 @@ var armoryQueueItems = [3]resource.Type{resource.Bow, resource.LeatherArmor, res
 // в очередь, ЛКМ +/- 1 в очередь", the +/- buttons only draw the ±1 (LMB)
 // affordance -- the ±10 RMB behavior lives entirely in cmd/game's click
 // handling, this is just the visual target for both.
-func drawArmoryQueueControls(screen *ebiten.Image, layout Layout, armory *building.Building) {
+func drawArmoryQueueControls(screen *ebiten.Image, layout Layout, armory *building.Building, state ArmoryProductionState) {
 	t := i18n.T()
 	names := t.ResourceName
+	firstRow, _, _ := layout.ArmoryQueueRowRects(0)
+	DrawInspectorText(screen, t.ProductionQueueLabel, float64(firstRow.Min.X), float64(firstRow.Min.Y-18))
+
 	for i, item := range armoryQueueItems {
 		row, minus, plus := layout.ArmoryQueueRowRects(i)
-		vector.FillRect(screen, float32(row.Min.X), float32(row.Min.Y), float32(row.Dx()), float32(row.Dy()), panelInnerColor, false)
-		drawResourceIcon(screen, item, row.Min.X+4, row.Min.Y+5)
-		DrawInspectorText(screen, names[item], float64(row.Min.X+resourceIconSize+10), float64(row.Min.Y+7))
+		countRect := layout.ArmoryQueueCountRect(i)
+		fill := panelInnerColor
+		if state.Queued && state.Item == item && state.Producing {
+			fill = panelColor
+		}
+		vector.FillRect(screen, float32(row.Min.X), float32(row.Min.Y), float32(row.Dx()), float32(row.Dy()), fill, false)
+		drawResourceIcon(screen, item, row.Min.X+5, row.Min.Y+7)
+		DrawInspectorText(screen, names[item], float64(row.Min.X+resourceIconSize+12), float64(row.Min.Y+9))
+		drawArmoryQueueCost(screen, item, row, countRect)
+
+		// Queue amount has a dedicated cell between the item name and controls:
+		// no value can overlap the +/- hit targets any more.
+		vector.FillRect(screen, float32(countRect.Min.X), float32(countRect.Min.Y), float32(countRect.Dx()), float32(countRect.Dy()), panelColor, false)
 		count := fmt.Sprintf("%d", armory.ProductionQueue[item])
-		DrawInspectorText(screen, count, float64(minus.Max.X+(plus.Min.X-minus.Max.X)/2-6), float64(row.Min.Y+7))
+		DrawInspectorText(screen, count, float64(countRect.Min.X+countRect.Dx()/2-4), float64(countRect.Min.Y+9))
 
 		vector.FillRect(screen, float32(minus.Min.X), float32(minus.Min.Y), float32(minus.Dx()), float32(minus.Dy()), panelColor, false)
-		DrawInspectorText(screen, "-", float64(minus.Min.X+minus.Dx()/2-3), float64(minus.Min.Y+4))
+		DrawInspectorText(screen, "-", float64(minus.Min.X+minus.Dx()/2-3), float64(minus.Min.Y+7))
 		vector.FillRect(screen, float32(plus.Min.X), float32(plus.Min.Y), float32(plus.Dx()), float32(plus.Dy()), panelColor, false)
-		DrawInspectorText(screen, "+", float64(plus.Min.X+plus.Dx()/2-3), float64(plus.Min.Y+4))
+		DrawInspectorText(screen, "+", float64(plus.Min.X+plus.Dx()/2-3), float64(plus.Min.Y+7))
+	}
+}
+
+func drawArmoryQueueCost(screen *ebiten.Image, item resource.Type, row, countRect image.Rectangle) {
+	const costStride = resourceIconSize + 9
+	costs := armoryQueueCosts[item]
+	// Right-align the bill immediately before the count cell. It can never
+	// collide with the +/- buttons, even if the inspector becomes narrower.
+	x := countRect.Min.X - 5 - len(costs)*costStride
+	for _, material := range costs {
+		drawResourceIcon(screen, material, x, row.Min.Y+9)
+		DrawInspectorText(screen, "1", float64(x+resourceIconSize+3), float64(row.Min.Y+9))
+		x += costStride
 	}
 }
 
@@ -641,7 +693,7 @@ func drawConstructionInspector(screen *ebiten.Image, x, y int, b *building.Build
 	}
 }
 
-func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool, stock *resource.Stockpile, occupants int) {
+func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building, connected bool, stock *resource.Stockpile, occupants int, armoryState ArmoryProductionState) {
 	t := i18n.T()
 	bt := building.Types[b.Kind]
 	DrawInspectorText(screen, t.BuildingName[b.Kind], float64(x), float64(y))
@@ -772,8 +824,32 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 	if b.Kind == building.Barracks {
 		DrawInspectorText(screen, t.ContentsLabel, float64(x), float64(y))
 		y += 20
-		drawResourceRow(screen, x, y, resource.Gold, fmt.Sprintf("%s: %d/%d", t.ResourceName[resource.Gold], b.InputBuffer[resource.Gold], building.BufferCapacity))
+		for _, rt := range []resource.Type{resource.Gold, resource.Bow, resource.LeatherArmor, resource.Sword} {
+			drawResourceRow(screen, x, y, rt, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity))
+			y += 18
+		}
+		routeState := t.Disconnected
+		if connected {
+			routeState = t.Connected
+		}
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, routeState), float64(x), float64(y))
+		return
+	}
+	if b.Kind == building.Armory {
+		drawArmoryProductionStatus(screen, x, y, t, armoryState)
 		y += 20
+		DrawInspectorText(screen, t.InputLabel+":", float64(x), float64(y))
+		y += 18
+		for _, rt := range []resource.Type{resource.Plank, resource.Hide, resource.Iron, resource.Coal} {
+			drawResourceRow(screen, x+8, y, rt, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.InputBuffer[rt], building.BufferCapacity))
+			y += 18
+		}
+		DrawInspectorText(screen, t.OutputLabel+":", float64(x), float64(y))
+		y += 18
+		for _, rt := range []resource.Type{resource.Bow, resource.LeatherArmor, resource.Sword} {
+			drawResourceRow(screen, x+8, y, rt, fmt.Sprintf("%s: %d/%d", t.ResourceName[rt], b.OutputBuffer[rt], b.OutputLimit()))
+			y += 18
+		}
 		routeState := t.Disconnected
 		if connected {
 			routeState = t.Connected
@@ -845,6 +921,21 @@ func drawBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building,
 		roadState = t.Connected
 	}
 	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RoadLabel, roadState), float64(x), float64(y))
+}
+
+func drawArmoryProductionStatus(screen *ebiten.Image, x, y int, t i18n.Catalog, state ArmoryProductionState) {
+	switch {
+	case !state.Queued:
+		DrawInspectorText(screen, t.ArmoryQueueEmptyLabel, float64(x), float64(y))
+	case state.WaitingForWorker:
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.ArmoryWaitingWorkerLabel, t.ResourceName[state.Item]), float64(x), float64(y))
+	case state.WaitingForMaterials:
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.ArmoryWaitingMaterialsLabel, t.ResourceName[state.Item]), float64(x), float64(y))
+	case state.WaitingForOutput:
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.ArmoryOutputFullLabel, t.ResourceName[state.Item]), float64(x), float64(y))
+	default:
+		DrawInspectorText(screen, fmt.Sprintf("%s: %s %d/%d", t.ArmoryProducingLabel, t.ResourceName[state.Item], state.Progress, state.Total), float64(x), float64(y))
+	}
 }
 
 func recipeInputTypes(bt building.Type) []resource.Type {

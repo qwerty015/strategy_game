@@ -62,7 +62,13 @@ type Catalog struct {
 	BuildingLabel                  string
 	InputLabel                     string
 	OutputLabel                    string
+	ProductionQueueLabel           string
 	ContentsLabel                  string
+	ArmoryProducingLabel           string
+	ArmoryWaitingWorkerLabel       string
+	ArmoryWaitingMaterialsLabel    string
+	ArmoryOutputFullLabel          string
+	ArmoryQueueEmptyLabel          string
 	PeopleInsideLabel              string
 	PriorityLabel                  string
 	UnlimitedLabel                 string

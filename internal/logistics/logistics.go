@@ -720,16 +720,10 @@ func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Bui
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
 		return
 	}
-	if b, t, n, path, ok := findCollectJob(buildings, c.Warehouse, ledger, from, c.priority); ok {
-		// The pickup (b) is already confirmed reachable from the serf;
-		// only the dropoff warehouse still needs picking, from wherever
-		// b itself can reach.
-		bAccess := b.AccessPoint()
-		if warehouse, _, ok := nearestReachableWarehouse(buildings, c.warehouses(), pathfind.Point{X: bAccess.X, Y: bAccess.Y}); ok {
-			c.startLeg(s, b, warehouse, t, n, path, ledger)
-			return
-		}
-	}
+	// A warehouse-backed shortage must win over collecting a producer's
+	// surplus. On a mature map there is almost always some output to collect;
+	// putting collection first could therefore starve an Armory (or any other
+	// consumer) forever despite the required resource already being in stock.
 	if b, t, n, ok := findSupplyJob(buildings, stock, ledger, c.priority); ok {
 		// Here it's the pickup side (which warehouse) that varies, so pick
 		// whichever registered warehouse is actually nearest the serf
@@ -737,6 +731,16 @@ func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Bui
 		// serf.
 		if warehouse, path, ok := nearestReachableWarehouseTo(buildings, c.warehouses(), from, b); ok {
 			c.startLeg(s, warehouse, b, t, n, path, ledger)
+			return
+		}
+	}
+	if b, t, n, path, ok := findCollectJob(buildings, c.Warehouse, ledger, from, c.priority); ok {
+		// The pickup (b) is already confirmed reachable from the serf;
+		// only the dropoff warehouse still needs picking, from wherever
+		// b itself can reach.
+		bAccess := b.AccessPoint()
+		if warehouse, _, ok := nearestReachableWarehouse(buildings, c.warehouses(), pathfind.Point{X: bAccess.X, Y: bAccess.Y}); ok {
+			c.startLeg(s, b, warehouse, t, n, path, ledger)
 			return
 		}
 	}
