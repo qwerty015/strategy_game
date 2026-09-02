@@ -6,6 +6,8 @@
 package quarry
 
 import (
+	"sort"
+
 	"strategy_game/internal/building"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
@@ -31,6 +33,11 @@ const (
 	// distance, since hunger is never checked mid-walk to/from a
 	// deposit.
 	MaxWorkRadius = 45
+
+	// depositSearchRetryCooldown is how many ticks a StateIdle quarryman
+	// waits before retrying startDepositJob after a completely failed
+	// search -- see Quarryman.searchCooldown's doc comment.
+	depositSearchRetryCooldown = 60
 )
 
 // State is the visible activity state of a quarryman.
@@ -85,6 +92,13 @@ type Quarryman struct {
 	// stocked Tavern. The worker keeps performing the current work loop so a
 	// missing Tavern does not deadlock the quarry.
 	Starving bool
+
+	// searchCooldown throttles retrying startDepositJob after it finds
+	// no reachable deposit at all -- see lumberjack.Lumberjack's
+	// identical field for the performance bug this guards against. Left
+	// at its save-compatible zero value, a freshly restored/spawned
+	// quarryman always searches immediately on its first idle tick.
+	searchCooldown int
 }
 
 // Controller owns all quarrymen in the settlement.
@@ -338,7 +352,14 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			if q.hungerTick >= HungerInterval && c.tryStartMeal(q, grid, buildings, ledger) {
 				continue
 			}
+			if q.searchCooldown > 0 {
+				q.searchCooldown--
+				continue
+			}
 			c.startDepositJob(q, grid, buildings)
+			if q.state == StateIdle {
+				q.searchCooldown = depositSearchRetryCooldown
+			}
 		case StateToDeposit:
 			if !depositUsable(buildings, q.target) {
 				q.resetToIdle()
@@ -510,20 +531,47 @@ func (c *Controller) tryStartMeal(q *Quarryman, grid *world.Grid, buildings []*b
 // left. Unlike a tree, a deposit holds thousands of units, so several
 // quarrymen may legitimately head for the same one at once -- there is no
 // equivalent of the lumberjack's single-claim tree reservation.
+// depositCandidateSearchLimit bounds how many deposits are actually run
+// through the expensive FindLandPath BFS -- see lumberjack's identical
+// treeCandidateSearchLimit doc comment: a straight-line pre-check alone
+// barely helps when MaxWorkRadius is large relative to the map, which is
+// exactly the case on a duel map with 70+ StoneDeposits. Pre-sorting by
+// cheap straight-line distance and only pathing to the nearest few keeps
+// the chosen deposit just as good in practice while bounding the cost.
+const depositCandidateSearchLimit = 12
+
 func (c *Controller) startDepositJob(q *Quarryman, grid *world.Grid, buildings []*building.Building) {
 	start := pathfind.Point{X: q.X, Y: q.Y}
-	bestLength := int(^uint(0) >> 1)
-	var bestDeposit *building.Building
-	var bestPath []pathfind.Point
+	type scoredDeposit struct {
+		b    *building.Building
+		dist int
+	}
+	var candidates []scoredDeposit
 	for _, candidate := range buildings {
 		if candidate == nil || candidate.Kind != building.StoneDeposit || candidate.Reserve <= 0 {
 			continue
 		}
-		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
+		dx, dy := candidate.X-start.X, candidate.Y-start.Y
+		d2 := dx*dx + dy*dy
+		if d2 > MaxWorkRadius*MaxWorkRadius {
+			continue
+		}
+		candidates = append(candidates, scoredDeposit{candidate, d2})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
+	if len(candidates) > depositCandidateSearchLimit {
+		candidates = candidates[:depositCandidateSearchLimit]
+	}
+
+	bestLength := int(^uint(0) >> 1)
+	var bestDeposit *building.Building
+	var bestPath []pathfind.Point
+	for _, sc := range candidates {
+		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: sc.b.X, Y: sc.b.Y})
 		if !ok || len(path) > MaxWorkRadius || len(path) >= bestLength {
 			continue
 		}
-		bestDeposit, bestPath, bestLength = candidate, path, len(path)
+		bestDeposit, bestPath, bestLength = sc.b, path, len(path)
 	}
 	if bestDeposit == nil {
 		return

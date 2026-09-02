@@ -154,3 +154,105 @@ func TestBuildVersionIsVisibleReleaseMarker(t *testing.T) {
 		t.Fatalf("BuildVersion = %q, want %q", BuildVersion, want)
 	}
 }
+
+func TestModeSelectActionAt(t *testing.T) {
+	rects := modeSelectButtonRects(1280, 720)
+	for index, rect := range rects {
+		mode, ok := modeSelectActionAt(rect.Min.X+1, rect.Min.Y+1, 1280, 720)
+		if !ok || mode != gameMode(index) {
+			t.Fatalf("card %d: mode=%d ok=%v", index, mode, ok)
+		}
+	}
+	if _, ok := modeSelectActionAt(0, 0, 1280, 720); ok {
+		t.Fatal("empty point unexpectedly has a mode")
+	}
+}
+
+func TestDifficultySelectActionAt(t *testing.T) {
+	rects := difficultyButtonRects(1280, 720)
+	want := [3]aiDifficulty{AIEasy, AINormal, AIHard}
+	for index, rect := range rects {
+		difficulty, ok := difficultySelectActionAt(rect.Min.X+1, rect.Min.Y+1, 1280, 720)
+		if !ok || difficulty != want[index] {
+			t.Fatalf("card %d: difficulty=%v ok=%v, want %v", index, difficulty, ok, want[index])
+		}
+	}
+	if _, ok := difficultySelectActionAt(0, 0, 1280, 720); ok {
+		t.Fatal("empty point unexpectedly has a difficulty")
+	}
+}
+
+// TestNewGameFlow_FreeMapStaysSinglePlayer locks in that picking "Свободная
+// карта" from the mode-select screen behaves exactly like the old direct
+// "Новая игра" button always did: an ordinary single-player game, g.ai nil.
+func TestNewGameFlow_FreeMapStaysSinglePlayer(t *testing.T) {
+	g := NewGame()
+	g.screen = screenTitle
+	g.enterModeSelect()
+	if g.screen != screenModeSelect {
+		t.Fatalf("screen = %v, want screenModeSelect", g.screen)
+	}
+	g.startFreeMapGame()
+	if g.ai != nil {
+		t.Fatal("free map game unexpectedly has an AI faction")
+	}
+	if g.buildings == nil {
+		t.Fatal("free map game has no buildings")
+	}
+}
+
+// TestNewGameFlow_DuelModeStartsASecondFaction locks in the other half of
+// the goal this screen exists for: picking "1×1 с ИИ" then a difficulty
+// must actually reach a playable duel game (g.ai set, g.screen back to
+// screenPlay) -- before this screen existed there was no way to reach
+// newDuelGame from the running application at all.
+func TestNewGameFlow_DuelModeStartsASecondFaction(t *testing.T) {
+	g := NewGame()
+	g.screen = screenTitle
+	g.enterModeSelect()
+	g.screen = screenDifficultySelect
+	g.startDuelGame(AIHard)
+	if g.ai == nil {
+		t.Fatal("duel game has no AI faction")
+	}
+	if g.ai.brain.difficulty != AIHard {
+		t.Fatalf("ai difficulty = %v, want AIHard", g.ai.brain.difficulty)
+	}
+}
+
+// TestSaveGame_RefusesDuringADuelGame locks in saveGame's guard: a duel
+// game's AI faction (g.ai) isn't serialized at all, so saving it would
+// silently freeze the AI on the next load instead of failing loudly. See
+// saveGame's own doc comment for the full reasoning.
+func TestSaveGame_RefusesDuringADuelGame(t *testing.T) {
+	g := newDuelGame(AINormal)
+	tmp := t.TempDir() + "/slot1.json"
+	if err := g.saveGame(tmp, "test"); err == nil {
+		t.Fatal("saveGame unexpectedly succeeded for a duel game")
+	}
+
+	free := NewGame()
+	tmp2 := t.TempDir() + "/slot1.json"
+	if err := free.saveGame(tmp2, "test"); err != nil {
+		t.Fatalf("saveGame unexpectedly failed for a free-map game: %v", err)
+	}
+}
+
+// TestEnterModeSelect_BackFromPauseResumesThePausedGame is the mode-select
+// screen's other real entry point: the Esc pause menu's "Новая игра" ->
+// confirm -> mode-select -> "Назад" must resume the actual paused game,
+// not strand the player on the title screen or silently discard nothing
+// while showing the wrong screen.
+func TestEnterModeSelect_BackFromPauseResumesThePausedGame(t *testing.T) {
+	g := NewGame()
+	g.screen = screenPlay
+	g.paused = true
+	g.enterModeSelect()
+	if g.screen != screenModeSelect || g.paused {
+		t.Fatalf("after enterModeSelect: screen=%v paused=%v", g.screen, g.paused)
+	}
+	g.leaveModeSelect()
+	if g.screen != screenPlay || !g.paused {
+		t.Fatalf("after leaveModeSelect: screen=%v paused=%v, want screenPlay+paused", g.screen, g.paused)
+	}
+}

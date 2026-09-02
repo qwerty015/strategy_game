@@ -38,6 +38,21 @@ const (
 	screenTitle
 	screenLoad
 	screenHelp
+	// screenModeSelect/screenDifficultySelect are the "Новая игра" flow's
+	// two steps -- free map (single player, unchanged) vs "1×1 против
+	// ИИ" (needs a difficulty pick next). See enterModeSelect.
+	screenModeSelect
+	screenDifficultySelect
+)
+
+// gameMode is the "Новая игра" flow's first choice -- the ordinary
+// single-player free map (unchanged), or "1×1 против ИИ" (needs a
+// difficulty pick next, see screenDifficultySelect).
+type gameMode uint8
+
+const (
+	gameModeFreeMap gameMode = iota
+	gameModeDuel
 )
 
 type titleAction uint8
@@ -54,6 +69,11 @@ type titleCopy struct {
 	newGame, load, help  string
 	back, previous, next string
 	loadTitle, noSaves   string
+
+	modeSelectTitle, freeMap, freeMapDesc string
+	duelMode, duelModeDesc                string
+	difficultyTitle                       string
+	easy, normal, hard                    string
 }
 
 func activeTitleCopy() titleCopy {
@@ -63,6 +83,11 @@ func activeTitleCopy() titleCopy {
 			newGame: "New game", load: "Load game", help: "Help",
 			back: "Back", previous: "Previous", next: "Next",
 			loadTitle: "Load a save", noSaves: "No saved games yet",
+			modeSelectTitle: "Choose a mode",
+			freeMap:         "Free map", freeMapDesc: "Just you, build at your own pace",
+			duelMode: "1v1 vs AI", duelModeDesc: "A rival settlement across the water -- destroy it to win",
+			difficultyTitle: "Choose a difficulty",
+			easy:            "Easy", normal: "Normal", hard: "Hard",
 		}
 	}
 	return titleCopy{
@@ -70,6 +95,11 @@ func activeTitleCopy() titleCopy {
 		newGame: "Новая игра", load: "Загрузить игру", help: "Справка",
 		back: "Назад", previous: "Назад", next: "Далее",
 		loadTitle: "Загрузить сохранение", noSaves: "Сохранений пока нет",
+		modeSelectTitle: "Выберите режим",
+		freeMap:         "Свободная карта", freeMapDesc: "Только вы, стройте в своём темпе",
+		duelMode: "1×1 с противником", duelModeDesc: "Вражеское поселение за проливом — победа, когда оно уничтожено",
+		difficultyTitle: "Выберите сложность",
+		easy:            "Лёгкий", normal: "Средний", hard: "Сложный",
 	}
 }
 
@@ -182,7 +212,7 @@ func (g *Game) updateFrontScreen() error {
 		case !ok:
 			return nil
 		case action == titleActionNewGame:
-			g.startNewGameFromTitle()
+			g.enterModeSelect()
 		case action == titleActionLoad:
 			g.refreshSlotCache()
 			g.screen = screenLoad
@@ -215,6 +245,26 @@ func (g *Game) updateFrontScreen() error {
 			g.helpPage--
 		case point.In(next) && g.helpPage+1 < len(g.helpPages):
 			g.helpPage++
+		}
+	case screenModeSelect:
+		if image.Pt(mx, my).In(titleBackRect(frontWidth, frontHeight)) {
+			g.leaveModeSelect()
+			return nil
+		}
+		switch mode, ok := modeSelectActionAt(mx, my, frontWidth, frontHeight); {
+		case !ok:
+		case mode == gameModeFreeMap:
+			g.startFreeMapGame()
+		case mode == gameModeDuel:
+			g.screen = screenDifficultySelect
+		}
+	case screenDifficultySelect:
+		if image.Pt(mx, my).In(titleBackRect(frontWidth, frontHeight)) {
+			g.screen = screenModeSelect
+			return nil
+		}
+		if difficulty, ok := difficultySelectActionAt(mx, my, frontWidth, frontHeight); ok {
+			g.startDuelGame(difficulty)
 		}
 	}
 	return nil
@@ -277,9 +327,44 @@ func titleCameraAxis(frame int, worldPixels, viewPixels float64, phase int) floa
 	return minimum + (maximum-minimum)*progress
 }
 
-func (g *Game) startNewGameFromTitle() {
+// enterModeSelect switches to the mode-select screen without discarding
+// anything yet -- the running game (paused or not) is still fully intact
+// in g's fields, so "Назад" (leaveModeSelect) can cleanly return to
+// wherever this was entered from. See preModeSelectScreen/
+// preModeSelectPaused's doc comment.
+func (g *Game) enterModeSelect() {
+	g.preModeSelectScreen = g.screen
+	g.preModeSelectPaused = g.paused
+	g.paused = false
+	g.dialog = ui.DialogNone
+	g.screen = screenModeSelect
+}
+
+func (g *Game) leaveModeSelect() {
+	g.screen = g.preModeSelectScreen
+	g.paused = g.preModeSelectPaused
+}
+
+// startFreeMapGame is the "Свободная карта" choice -- the ordinary
+// single-player game, unchanged from the old direct
+// startNewGameFromTitle/resetToNewGame behaviour.
+func (g *Game) startFreeMapGame() {
 	layout := g.layout
 	fresh := NewGame()
+	fresh.layout = layout
+	mapRect := layout.MapRect()
+	fresh.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
+	fresh.statusMsg = i18n.T().NewGameStarted
+	*g = *fresh
+}
+
+// startDuelGame is the "1×1 против ИИ" choice, once a difficulty is
+// picked -- mirrors startFreeMapGame's own layout/camera/status-message
+// handling exactly, just building a newDuelGame(difficulty) instead of
+// an ordinary NewGame().
+func (g *Game) startDuelGame(difficulty aiDifficulty) {
+	layout := g.layout
+	fresh := newDuelGame(difficulty)
 	fresh.layout = layout
 	mapRect := layout.MapRect()
 	fresh.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
@@ -500,6 +585,10 @@ func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 		g.drawLoadScreen(screen)
 	case screenHelp:
 		g.drawHelpScreen(screen)
+	case screenModeSelect:
+		g.drawModeSelectScreen(screen)
+	case screenDifficultySelect:
+		g.drawDifficultySelectScreen(screen)
 	default:
 		g.drawTitleScreen(screen)
 	}
@@ -526,6 +615,45 @@ func (g *Game) drawTitleScreen(screen *ebiten.Image) {
 		versionX = 18
 	}
 	ui.DrawMenuText(screen, BuildVersion, float64(versionX), float64(height-24))
+}
+
+func (g *Game) drawModeSelectScreen(screen *ebiten.Image) {
+	copy := activeTitleCopy()
+	bounds := screen.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	rects := modeSelectButtonRects(width, height)
+	ui.DrawTitleText(screen, copy.modeSelectTitle, float64(rects[0].Min.X), float64(rects[0].Min.Y-56), 2.2)
+	drawModeCard(screen, rects[0], copy.freeMap, copy.freeMapDesc)
+	drawModeCard(screen, rects[1], copy.duelMode, copy.duelModeDesc)
+	drawTitleButton(screen, titleBackRect(width, height), copy.back, false)
+}
+
+func (g *Game) drawDifficultySelectScreen(screen *ebiten.Image) {
+	copy := activeTitleCopy()
+	bounds := screen.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	rects := difficultyButtonRects(width, height)
+	ui.DrawTitleText(screen, copy.difficultyTitle, float64(rects[0].Min.X), float64(rects[0].Min.Y-56), 2.2)
+	labels := [3]string{copy.easy, copy.normal, copy.hard}
+	for index, rect := range rects {
+		drawTitleButton(screen, rect, labels[index], false)
+	}
+	drawTitleButton(screen, titleBackRect(width, height), copy.back, false)
+}
+
+// drawModeCard is drawTitleButton's shape, plus a second, smaller line
+// of description text underneath the title -- used only by the mode
+// cards, which are taller than an ordinary menu button specifically to
+// fit this.
+func drawModeCard(screen *ebiten.Image, rect image.Rectangle, title, desc string) {
+	fill := color.RGBA{R: 124, G: 82, B: 39, A: 238}
+	border := color.RGBA{R: 224, G: 168, B: 68, A: 255}
+	vector.FillRect(screen, float32(rect.Min.X), float32(rect.Min.Y), float32(rect.Dx()), float32(rect.Dy()), fill, false)
+	vector.StrokeRect(screen, float32(rect.Min.X), float32(rect.Min.Y), float32(rect.Dx()), float32(rect.Dy()), 2, border, false)
+	ui.DrawTitleText(screen, title, float64(rect.Min.X+16), float64(rect.Min.Y+18), 1.5)
+	for i, row := range wrapHelpText(desc, rect.Dx()-32) {
+		ui.DrawMenuText(screen, row, float64(rect.Min.X+16), float64(rect.Min.Y+60+i*16))
+	}
 }
 
 func (g *Game) drawLoadScreen(screen *ebiten.Image) {
@@ -718,6 +846,71 @@ func titleActionAt(x, y, width, height int) (titleAction, bool) {
 		}
 	}
 	return titleActionNewGame, false
+}
+
+// modeSelectButtonRects lays out the two "Новая игра" mode choices as
+// tall cards side by side, wide enough to also hold a one-line
+// description under each label (see drawModeSelectScreen).
+func modeSelectButtonRects(width, height int) []image.Rectangle {
+	cardW := width / 3
+	if cardW < 260 {
+		cardW = 260
+	}
+	if cardW > 380 {
+		cardW = 380
+	}
+	cardH := 150
+	gap := 40
+	totalW := cardW*2 + gap
+	x0 := width/2 - totalW/2
+	y := height/2 - cardH/2
+	return []image.Rectangle{
+		image.Rect(x0, y, x0+cardW, y+cardH),
+		image.Rect(x0+cardW+gap, y, x0+cardW+gap+cardW, y+cardH),
+	}
+}
+
+func modeSelectActionAt(x, y, width, height int) (gameMode, bool) {
+	point := image.Pt(x, y)
+	for index, rect := range modeSelectButtonRects(width, height) {
+		if point.In(rect) {
+			return gameMode(index), true
+		}
+	}
+	return gameModeFreeMap, false
+}
+
+// difficultyButtonRects lays out the three difficulty choices the same
+// way modeSelectButtonRects does, just three cards instead of two.
+func difficultyButtonRects(width, height int) []image.Rectangle {
+	cardW := width / 5
+	if cardW < 200 {
+		cardW = 200
+	}
+	if cardW > 280 {
+		cardW = 280
+	}
+	cardH := 120
+	gap := 30
+	totalW := cardW*3 + gap*2
+	x0 := width/2 - totalW/2
+	y := height/2 - cardH/2
+	return []image.Rectangle{
+		image.Rect(x0, y, x0+cardW, y+cardH),
+		image.Rect(x0+cardW+gap, y, x0+cardW+gap+cardW, y+cardH),
+		image.Rect(x0+2*(cardW+gap), y, x0+2*(cardW+gap)+cardW, y+cardH),
+	}
+}
+
+func difficultySelectActionAt(x, y, width, height int) (aiDifficulty, bool) {
+	point := image.Pt(x, y)
+	difficulties := [3]aiDifficulty{AIEasy, AINormal, AIHard}
+	for index, rect := range difficultyButtonRects(width, height) {
+		if point.In(rect) {
+			return difficulties[index], true
+		}
+	}
+	return AINormal, false
 }
 
 // titleLanguageRects keeps the first language choice on the title screen

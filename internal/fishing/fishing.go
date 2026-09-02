@@ -4,6 +4,8 @@
 package fishing
 
 import (
+	"sort"
+
 	"strategy_game/internal/building"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
@@ -70,6 +72,13 @@ type Fisherman struct {
 	// hungry but cannot reach a stocked Tavern still keeps the food chain
 	// alive, exactly like the other worker controllers.
 	Starving bool
+
+	// searchCooldown throttles retrying startFishingJob after it finds
+	// no reachable Fish at all -- see lumberjack.Lumberjack's identical
+	// field for the performance bug this guards against. Left at its
+	// save-compatible zero value, a freshly restored/spawned fisherman
+	// always searches immediately on its first idle tick.
+	searchCooldown int
 }
 
 // Controller owns all fishermen in the settlement.
@@ -296,7 +305,14 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			if f.hungerTick >= HungerInterval && c.tryStartMeal(f, buildings, ledger) {
 				continue
 			}
+			if f.searchCooldown > 0 {
+				f.searchCooldown--
+				continue
+			}
 			c.startFishingJob(f, grid, buildings)
+			if f.state == StateIdle {
+				f.searchCooldown = fishSearchRetryCooldown
+			}
 		case StateToFish:
 			if !matureFish(f.target) {
 				f.resetAtHome()
@@ -367,6 +383,25 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 	return events
 }
 
+// fishCandidateSearchLimit bounds how many mature Fish are actually run
+// through the expensive FindWaterPath BFS -- a real performance bug found
+// by simulating a duel match: startFishingJob used to call FindWaterPath
+// (a full BFS over the whole water body) once per mature Fish on the
+// entire map with no bound at all, every time a fisherman needed a new
+// job. With hundreds of Fish actually persisting (see
+// isNaturalResourceKind's doc comment for why they previously never
+// did), that made the AI's own fisherman alone slow the whole simulation
+// to a crawl -- one 40000-tick duel run hit the test's 5-minute timeout
+// stuck inside this exact call chain. Pre-sorting by cheap straight-line
+// distance and only pathing to the nearest few keeps the found target
+// just as good in practice while bounding the cost.
+const fishCandidateSearchLimit = 12
+
+// fishSearchRetryCooldown is how many ticks a StateIdle fisherman waits
+// before retrying startFishingJob after a completely failed search --
+// see Fisherman.searchCooldown's doc comment.
+const fishSearchRetryCooldown = 60
+
 func (c *Controller) startFishingJob(f *Fisherman, grid *world.Grid, buildings []*building.Building) {
 	if f.Home == nil || f.Home.OutputBuffer[resource.Fish] >= building.BufferCapacity {
 		return
@@ -375,18 +410,32 @@ func (c *Controller) startFishingJob(f *Fisherman, grid *world.Grid, buildings [
 	if !ok {
 		return
 	}
-	bestLength := -1
-	var target *building.Building
-	var bestPath []pathfind.Point
+	type scoredFish struct {
+		b    *building.Building
+		dist int
+	}
+	var candidates []scoredFish
 	for _, candidate := range buildings {
 		if !matureFish(candidate) || c.fishReserved(candidate, f) {
 			continue
 		}
-		path, reachable := pathfind.FindWaterPath(grid, pathfind.Point{X: launch.X, Y: launch.Y}, pathfind.Point{X: candidate.X, Y: candidate.Y})
+		dx, dy := candidate.X-launch.X, candidate.Y-launch.Y
+		candidates = append(candidates, scoredFish{candidate, dx*dx + dy*dy})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
+	if len(candidates) > fishCandidateSearchLimit {
+		candidates = candidates[:fishCandidateSearchLimit]
+	}
+
+	bestLength := -1
+	var target *building.Building
+	var bestPath []pathfind.Point
+	for _, sc := range candidates {
+		path, reachable := pathfind.FindWaterPath(grid, pathfind.Point{X: launch.X, Y: launch.Y}, pathfind.Point{X: sc.b.X, Y: sc.b.Y})
 		if !reachable || (bestLength >= 0 && len(path) >= bestLength) {
 			continue
 		}
-		target, bestPath, bestLength = candidate, path, len(path)
+		target, bestPath, bestLength = sc.b, path, len(path)
 	}
 	if target == nil {
 		return

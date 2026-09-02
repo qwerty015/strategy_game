@@ -11,6 +11,8 @@ func init() {
 
 		Population:                 "Население",
 		DeathsLabel:                "Смертей",
+		KillsLabel:                 "Убито врагов",
+		ScoreLabel:                 "Очки развития",
 		RemovedLabel:               "Удалено",
 		BuildingsRemovedLabel:      "Снесено",
 		UnitsDismissedLabel:        "Уволено",
@@ -208,6 +210,7 @@ func init() {
 		Saved:                 "Сохранено.",
 		Loaded:                "Загружено.",
 		LoadFailedNoWarehouse: "Не удалось загрузить: в сохранении нет склада",
+		DuelSaveNotSupported:  "сохранение недоступно в режиме \"1×1 против ИИ\"",
 
 		SaveSlotsLabel:      "Сохранения",
 		SlotEmptyLabel:      "— пусто —",

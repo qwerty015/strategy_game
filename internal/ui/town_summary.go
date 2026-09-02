@@ -25,23 +25,29 @@ const (
 	townSummaryBuildingsRemoved
 	townSummaryUnitsDismissed
 	townSummaryBuildings
+	townSummaryKills
+	townSummaryScore
 	townSummaryPlayTime
 )
 
 // drawTownSummary fills the otherwise empty inspector with persistent town
 // information. The stockpile is shared by every operational warehouse, so its
 // values are exactly the total resources the player can spend or deliver.
-func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resource.Stockpile, pop *economy.Population, buildings, playedFrames int) {
+// score is a derived development number (see cmd/game's developmentScore) --
+// not itself simulation state, just a display-only combination of the
+// counters already shown here plus the warehouse's gold.
+func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resource.Stockpile, pop *economy.Population, buildings, playedFrames, score int) {
 	x := panelX + 18
 	t := i18n.T()
 	DrawInspectorText(screen, t.TownSummaryLabel, float64(x), 62)
 
-	population, deaths, buildingsRemoved, unitsDismissed := 0, 0, 0, 0
+	population, deaths, buildingsRemoved, unitsDismissed, kills := 0, 0, 0, 0, 0
 	if pop != nil {
 		population = pop.Count
 		deaths = pop.Deaths
 		buildingsRemoved = pop.BuildingsRemoved
 		unitsDismissed = pop.UnitsDismissed
+		kills = pop.Kills
 	}
 	stats := []struct {
 		icon  townSummaryIcon
@@ -52,6 +58,8 @@ func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resour
 		{townSummaryBuildingsRemoved, fmt.Sprintf("%s: %d", t.BuildingsRemovedLabel, buildingsRemoved)},
 		{townSummaryUnitsDismissed, fmt.Sprintf("%s: %d", t.UnitsDismissedLabel, unitsDismissed)},
 		{townSummaryBuildings, fmt.Sprintf("%s: %d", t.BuildingsLabel, buildings)},
+		{townSummaryKills, fmt.Sprintf("%s: %d", t.KillsLabel, kills)},
+		{townSummaryScore, fmt.Sprintf("%s: %d", t.ScoreLabel, score)},
 		{townSummaryPlayTime, fmt.Sprintf("%s: %s", t.PlayTimeLabel, formatPlayedFrames(playedFrames))},
 	}
 	for i, stat := range stats {
@@ -60,7 +68,7 @@ func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resour
 		DrawInspectorText(screen, stat.label, float64(x+townSummaryIconSize+7), float64(y))
 	}
 
-	dividerY := 208
+	dividerY := 208 + 2*20 // two extra rows (kills/score) below the original six
 	fillIconRect(screen, x, dividerY, panelWidth-36, 2, panelEdgeColor)
 	DrawInspectorText(screen, t.ResourcesInWarehousesLabel, float64(x), float64(dividerY+12))
 
@@ -126,5 +134,21 @@ func drawTownSummaryIcon(screen *ebiten.Image, kind townSummaryIcon, x, y int) {
 		fillIconRect(screen, x+5, y+4, 6, 8, color.RGBA{R: 74, G: 63, B: 54, A: 255})
 		fillIconRect(screen, x+7, y+5, 1, 4, color.RGBA{R: 228, G: 214, B: 180, A: 255})
 		fillIconRect(screen, x+7, y+8, 3, 1, color.RGBA{R: 228, G: 214, B: 180, A: 255})
+	case townSummaryKills:
+		// A pair of crossed blades -- two diagonal strokes in opposite
+		// directions, the same "diagonal pixel pairs" technique
+		// townSummaryDeaths already uses for its crossed-bones glyph.
+		for i := 0; i < 8; i++ {
+			fillIconRect(screen, x+4+i, y+4+i, 2, 2, color.RGBA{R: 200, G: 200, B: 205, A: 255})
+			fillIconRect(screen, x+10-i, y+4+i, 2, 2, color.RGBA{R: 150, G: 60, B: 50, A: 255})
+		}
+	case townSummaryScore:
+		// A small five-point-ish star: a filled diamond core plus four
+		// short rays, simple enough to read at 16px.
+		fillIconRect(screen, x+6, y+6, 4, 4, color.RGBA{R: 235, G: 196, B: 84, A: 255})
+		fillIconRect(screen, x+7, y+3, 2, 3, color.RGBA{R: 235, G: 196, B: 84, A: 255})
+		fillIconRect(screen, x+7, y+10, 2, 3, color.RGBA{R: 235, G: 196, B: 84, A: 255})
+		fillIconRect(screen, x+3, y+7, 3, 2, color.RGBA{R: 235, G: 196, B: 84, A: 255})
+		fillIconRect(screen, x+10, y+7, 3, 2, color.RGBA{R: 235, G: 196, B: 84, A: 255})
 	}
 }

@@ -81,6 +81,89 @@ const (
 	EngageRange = 2
 )
 
+// FactionEngageRange mirrors EngageRange for cross-faction auto-combat --
+// see TickFactionCombat/factionTarget. Same value, kept as its own named
+// constant since the two mechanisms are otherwise fully independent.
+const FactionEngageRange = 2
+
+// factionTarget is a soldier's current cross-faction combat target -- a
+// rival building or soldier (Owner different from this Soldier's own),
+// used only by "1×1 против ИИ" mode. Exactly one field is non-nil, or
+// both nil for "no target". Deliberately separate from
+// attackTarget/AttackOrder above, which stays the sandbox-only debug
+// enemy.Enemy mechanism, untouched by any of this.
+type factionTarget struct {
+	building *building.Building
+	soldier  *Soldier
+}
+
+func (t factionTarget) alive() bool {
+	switch {
+	case t.building != nil:
+		return t.building.HP > 0
+	case t.soldier != nil:
+		return t.soldier.Alive()
+	default:
+		return false
+	}
+}
+
+func (t factionTarget) pos() (int, int) {
+	switch {
+	case t.building != nil:
+		return t.building.X, t.building.Y
+	case t.soldier != nil:
+		return t.soldier.X, t.soldier.Y
+	default:
+		return 0, 0
+	}
+}
+
+// hit applies one blow: combat.DamagePerHit (10%, the same rate every
+// other structure-damaging attack in the game uses) against a building,
+// combat.UnitDamagePerHit (50%, two hits kill) against a rival soldier --
+// matching the unit-damage rule already established for every other
+// soldier-vs-unit fight in this package.
+func (t factionTarget) hit() {
+	switch {
+	case t.building != nil:
+		t.building.HP = combat.ApplyDamage(t.building.HP, combat.DamagePerHit)
+	case t.soldier != nil:
+		t.soldier.HP = combat.ApplyDamage(t.soldier.HP, combat.UnitDamagePerHit)
+	}
+}
+
+// nearestFactionTarget returns the closest living opposing building or
+// soldier to (x, y) within a square (Chebyshev) radius, or ok == false if
+// none qualifies. Buildings and soldiers are compared on equal footing by
+// raw tile distance -- whichever is actually closer wins, not "always
+// prefer a building".
+func nearestFactionTarget(x, y int, buildings []*building.Building, soldiers []*Soldier, radius int) (t factionTarget, ok bool) {
+	bestDist := -1
+	consider := func(px, py int, candidate factionTarget) {
+		if !inRange(x, y, px, py, radius) {
+			return
+		}
+		d := abs(x-px) + abs(y-py)
+		if bestDist == -1 || d < bestDist {
+			t, bestDist, ok = candidate, d, true
+		}
+	}
+	for _, b := range buildings {
+		if b == nil || b.HP <= 0 {
+			continue
+		}
+		consider(b.X, b.Y, factionTarget{building: b})
+	}
+	for _, s := range soldiers {
+		if s == nil || !s.Alive() {
+			continue
+		}
+		consider(s.X, s.Y, factionTarget{soldier: s})
+	}
+	return t, ok
+}
+
 // Soldier is one Archer or Swordsman. HP is exported (0-100, see
 // combat.MaxHP) so an attacker can lower it directly, the same convention
 // enemy.Enemy already uses.
@@ -88,6 +171,16 @@ type Soldier struct {
 	Profession Profession
 	X, Y       int
 	HP         int
+
+	// Owner identifies which faction this soldier belongs to -- see
+	// building.Building.Owner's doc comment for the same convention (0 =
+	// player, 1 = AI opponent). Meaningless in the ordinary single-player
+	// "free map" mode, where it's always the zero value.
+	Owner int
+
+	// faction is this soldier's current cross-faction combat target --
+	// see factionTarget's doc comment and TickFactionCombat.
+	faction factionTarget
 
 	path      []pathfind.Point
 	pathIdx   int
@@ -170,6 +263,7 @@ func (s *Soldier) MoveTo(grid *world.Grid, buildings []*building.Building, x, y 
 		return false
 	}
 	s.attackTarget = nil
+	s.faction = factionTarget{}
 	s.path, s.pathIdx, s.tileTicks = path, 0, 0
 	return true
 }
@@ -183,6 +277,7 @@ func (s *Soldier) AttackOrder(grid *world.Grid, buildings []*building.Building, 
 		s.attackTarget = nil
 		return
 	}
+	s.faction = factionTarget{}
 	s.attackTarget = target
 	s.approach(grid, buildings)
 }
@@ -191,6 +286,11 @@ func (s *Soldier) AttackOrder(grid *world.Grid, buildings []*building.Building, 
 // attack order (for the inspector/UI, and so cmd/game knows a red target
 // marker is still relevant).
 func (s *Soldier) HasAttackOrder() bool { return s.attackTarget != nil }
+
+// HasFactionTarget reports whether the soldier currently has a
+// cross-faction combat target ("1×1 против ИИ" mode -- see
+// factionTarget), for the same kind of UI/marker use as HasAttackOrder.
+func (s *Soldier) HasFactionTarget() bool { return s.faction.alive() }
 
 func (s *Soldier) approach(grid *world.Grid, buildings []*building.Building) {
 	if s.attackTarget == nil {
@@ -286,9 +386,12 @@ func (c *Controller) Restore(profession Profession, x, y, hungerTicks, hp int) *
 // Tick advances movement, standing-attack-order pursuit, and combat for
 // every living soldier; a starved soldier is removed from the roster and
 // counted in the returned death total. enemies is used only for
-// auto-engage (see EngageRange) -- nil/empty is fine when there's nothing
-// to fight. Call once per simulation tick.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enemies []*enemy.Enemy) int {
+// auto-engage against the sandbox debug enemy (see EngageRange) --
+// nil/empty is fine when there's nothing to fight there. opposingBuildings
+// and opposingSoldiers are this soldier's cross-faction targets for "1×1
+// против ИИ" mode (see TickFactionCombat's doc comment) -- also nil/empty
+// outside that mode. Call once per simulation tick.
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enemies []*enemy.Enemy, opposingBuildings []*building.Building, opposingSoldiers []*Soldier) int {
 	deaths := 0
 	remaining := c.Soldiers[:0]
 	for _, s := range c.Soldiers {
@@ -323,6 +426,11 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 				s.AttackOrder(grid, buildings, target)
 			}
 		}
+		if s.attackTarget == nil && !s.faction.alive() && len(s.path) == 0 {
+			if t, ok := nearestFactionTarget(s.X, s.Y, opposingBuildings, opposingSoldiers, FactionEngageRange); ok {
+				s.faction = t
+			}
+		}
 		c.tick(grid, buildings, s)
 		remaining = append(remaining, s)
 	}
@@ -349,9 +457,21 @@ func nearestEnemyWithin(x, y int, enemies []*enemy.Enemy, radius int) *enemy.Ene
 
 func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *Soldier) {
 	tickMovement(s)
-	if s.attackTarget == nil {
+	if s.attackTarget != nil {
+		c.tickDebugEnemyCombat(grid, buildings, s)
 		return
 	}
+	if s.faction.alive() {
+		c.tickFactionCombat(grid, buildings, s)
+	}
+}
+
+// tickDebugEnemyCombat is the original (sandbox-only) attackTarget combat
+// resolution, unchanged in behaviour -- split out verbatim so tick can
+// also run the parallel cross-faction path below without the two ever
+// running in the same call (a soldier only ever has one kind of order at
+// a time).
+func (c *Controller) tickDebugEnemyCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) {
 	if !s.attackTarget.Alive() {
 		s.attackTarget = nil
 		return
@@ -382,6 +502,40 @@ func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *S
 		return
 	}
 	s.attackTarget.HP = combat.ApplyDamage(s.attackTarget.HP, combat.UnitDamagePerHit)
+}
+
+// tickFactionCombat pursues and fights s.faction -- the "1×1 против ИИ"
+// cross-faction target (see factionTarget's doc comment). Mirrors
+// tickDebugEnemyCombat's shape (approach if out of range, stop and hit on
+// cooldown once in range) but applies damage instantly, with no
+// pendingKillTarget-style deferred visual: cross-faction combat has no
+// rendered attack animation yet in this first pass (a deliberate,
+// documented scope cut -- see AGENTS.md).
+func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) {
+	if !s.faction.alive() {
+		s.faction = factionTarget{}
+		return
+	}
+	tx, ty := s.faction.pos()
+	if !inRange(s.X, s.Y, tx, ty, s.AttackRange()) {
+		if len(s.path) == 0 {
+			path, ok := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: tx, Y: ty})
+			if ok {
+				s.path, s.pathIdx, s.tileTicks = path, 0, 0
+			}
+		}
+		return
+	}
+	s.path, s.pathIdx, s.tileTicks = nil, 0, 0
+	if s.attackCooldown > 0 {
+		s.attackCooldown--
+		return
+	}
+	s.attackCooldown = s.cooldownTicks()
+	s.faction.hit()
+	if !s.faction.alive() {
+		s.faction = factionTarget{}
+	}
 }
 
 // tickMovement advances s one step along its current path every

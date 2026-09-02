@@ -327,6 +327,15 @@ type Building struct {
 	X, Y          int // top-left tile of the footprint
 	ProgressTicks int // ticks accumulated toward the current production cycle
 
+	// Owner identifies which faction this building belongs to -- 0 (the
+	// zero value) is the human player, 1 is the AI opponent in "1v1 vs
+	// AI" mode, leaving room for more factions later. Every building in
+	// the ordinary single-player "free map" mode is Owner 0 by construction
+	// (nothing ever sets it there), so old saves and every existing
+	// single-faction code path need no migration at all. See AGENTS.md's
+	// "1×1 против ИИ" notes for the two-faction architecture this enables.
+	Owner int
+
 	InputBuffer  map[resource.Type]int
 	OutputBuffer map[resource.Type]int
 

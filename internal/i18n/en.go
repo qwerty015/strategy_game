@@ -11,6 +11,8 @@ func init() {
 
 		Population:                 "Population",
 		DeathsLabel:                "Deaths",
+		KillsLabel:                 "Enemies killed",
+		ScoreLabel:                 "Development score",
 		RemovedLabel:               "Removed",
 		BuildingsRemovedLabel:      "Demolished",
 		UnitsDismissedLabel:        "Dismissed",
@@ -208,6 +210,7 @@ func init() {
 		Saved:                 "Saved.",
 		Loaded:                "Loaded.",
 		LoadFailedNoWarehouse: "Load failed: save has no warehouse",
+		DuelSaveNotSupported:  "saving isn't available in \"1v1 vs AI\" mode yet",
 
 		SaveSlotsLabel:      "Save slots",
 		SlotEmptyLabel:      "— empty —",

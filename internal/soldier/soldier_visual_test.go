@@ -17,7 +17,7 @@ func TestAttackVisualStartsOnALandedHitAndExpires(t *testing.T) {
 	if _, _, _, ok := unit.AttackVisual(); ok {
 		t.Fatal("AttackVisual() is present before the first hit")
 	}
-	controller.Tick(grid, nil, nil)
+	controller.Tick(grid, nil, nil, nil, nil)
 	x, y, progress, ok := unit.AttackVisual()
 	if !ok {
 		t.Fatal("AttackVisual() is absent immediately after a landed hit")
@@ -32,7 +32,7 @@ func TestAttackVisualStartsOnALandedHitAndExpires(t *testing.T) {
 	// visual lifecycle.
 	unit.AttackOrder(grid, nil, nil)
 	for range attackVisualLifetime {
-		controller.Tick(grid, nil, nil)
+		controller.Tick(grid, nil, nil, nil, nil)
 	}
 	if _, _, _, ok := unit.AttackVisual(); ok {
 		t.Fatal("AttackVisual() remained after its visual lifetime")

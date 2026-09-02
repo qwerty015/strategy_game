@@ -1618,3 +1618,50 @@ func TestCommandSelectedEnemyTo_IssuesAMoveOrder(t *testing.T) {
 		t.Fatal("RemainingPath() is empty after commandSelectedEnemyTo -- no move order was issued")
 	}
 }
+
+// TestPruneDeadEnemies_CountsAKillRegardlessOfWhatFinishedIt covers the
+// user's explicit request for a kill counter on the empty-selection town
+// summary panel: pruneDeadEnemies is the one place every dead enemy
+// (Sentry's stone or a soldier's blow, doesn't matter which) actually gets
+// processed each tick, so it's where Population.Kills increments.
+func TestPruneDeadEnemies_CountsAKillRegardlessOfWhatFinishedIt(t *testing.T) {
+	dead := enemy.New(3, 3)
+	dead.HP = 0
+	alive := enemy.New(7, 7)
+	game := &Game{
+		pop:            &economy.Population{},
+		enemies:        []*enemy.Enemy{dead, alive},
+		sightedEnemies: map[*enemy.Enemy]bool{dead: true},
+	}
+
+	game.pruneDeadEnemies()
+
+	if game.pop.Kills != 1 {
+		t.Fatalf("pop.Kills = %d, want 1", game.pop.Kills)
+	}
+	if len(game.enemies) != 1 || game.enemies[0] != alive {
+		t.Fatalf("enemies after prune = %v, want only the still-alive one", game.enemies)
+	}
+	if game.sightedEnemies[dead] {
+		t.Fatal("sightedEnemies still references the pruned enemy")
+	}
+}
+
+// TestDevelopmentScore_CombinesBuildingsPopulationKillsAndGold locks in
+// the exact weighted formula so a future tuning pass changes it on
+// purpose, not by accident.
+func TestDevelopmentScore_CombinesBuildingsPopulationKillsAndGold(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Gold, 7)
+	game := &Game{
+		buildings: []*building.Building{warehouse},
+		stock:     stock,
+		pop:       &economy.Population{Count: 4, Kills: 2},
+	}
+
+	want := 1*10 + 4*5 + 2*20 + 7 // 1 finished building, 4 population, 2 kills, 7 gold
+	if got := game.developmentScore(); got != want {
+		t.Fatalf("developmentScore() = %d, want %d", got, want)
+	}
+}

@@ -365,11 +365,11 @@ type ArmoryProductionState struct {
 	Progress, Total     int
 }
 
-func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string, canHire BarracksHireAvailability, armoryState ArmoryProductionState, formationLines int) {
+func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection, connected bool, stock *resource.Stockpile, pop *economy.Population, townBuildings, playedFrames, occupants int, showPriority bool, priorityLevel int, dialog DialogKind, trimServesPrompt string, canHire BarracksHireAvailability, armoryState ArmoryProductionState, formationLines, score int) {
 	r := layout.RightPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().InspectorTitle)
 	if selection.Kind == SelectionNone {
-		drawTownSummary(screen, r.Min.X, r.Dx(), stock, pop, townBuildings, playedFrames)
+		drawTownSummary(screen, r.Min.X, r.Dx(), stock, pop, townBuildings, playedFrames, score)
 		if dialog == DialogConfirmDemolitionMode {
 			drawConfirmDemolitionModeDialog(screen, layout)
 		}

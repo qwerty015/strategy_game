@@ -410,7 +410,7 @@ func (g *Game) handlePauseDialogInput() error {
 	case ui.DialogConfirmOverwrite:
 		g.dialog = ui.DialogNaming
 	case ui.DialogConfirmNewGame:
-		g.resetToNewGame()
+		g.enterModeSelect()
 	case ui.DialogConfirmExit:
 		return ebiten.Termination
 	}

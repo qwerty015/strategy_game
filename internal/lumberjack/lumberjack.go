@@ -5,6 +5,8 @@
 package lumberjack
 
 import (
+	"sort"
+
 	"strategy_game/internal/building"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
@@ -36,6 +38,11 @@ const (
 	// comfortable margin under the ~62-tile theoretical limit, since path
 	// length can exceed straight-line distance around obstacles.
 	MaxWorkRadius = 45
+
+	// treeSearchRetryCooldown is how many ticks a StateIdle lumberjack
+	// waits before retrying startTreeJob after a completely failed
+	// search -- see Lumberjack.searchCooldown's doc comment.
+	treeSearchRetryCooldown = 60
 )
 
 // State is the visible activity state of a lumberjack.
@@ -88,6 +95,18 @@ type Lumberjack struct {
 	// stocked Tavern. The worker keeps performing the current work loop so a
 	// missing Tavern does not deadlock the forestry chain.
 	Starving bool
+
+	// searchCooldown throttles retrying startTreeJob after it finds no
+	// reachable tree at all -- a real performance bug found by
+	// simulating a duel match: with every candidate tree unreachable
+	// (e.g. the Hut itself briefly disconnected, or genuinely fenced in
+	// by water/buildings), a StateIdle lumberjack retried the full,
+	// occupancy-rebuilding search EVERY single simulation tick forever,
+	// not just once -- one 50000-tick run timed out entirely stuck in
+	// exactly this loop. Left at its save-compatible zero value, a
+	// freshly restored/spawned lumberjack always searches immediately on
+	// its first idle tick, same as before this field existed.
+	searchCooldown int
 }
 
 // Controller owns all lumberjacks in the settlement.
@@ -348,7 +367,17 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			if j.hungerTick >= HungerInterval && c.tryStartMeal(j, grid, buildings, ledger) {
 				continue
 			}
+			if j.searchCooldown > 0 {
+				j.searchCooldown--
+				continue
+			}
 			c.startTreeJob(j, grid, buildings)
+			if j.state == StateIdle {
+				// No reachable tree at all this attempt -- see
+				// searchCooldown's doc comment for why retrying
+				// immediately, every tick, is a real performance bug.
+				j.searchCooldown = treeSearchRetryCooldown
+			}
 		case StateToTree:
 			if !containsBuilding(buildings, j.target) || j.target.Kind != building.Tree {
 				j.resetToIdle()
@@ -507,20 +536,53 @@ func (c *Controller) tryStartMeal(j *Lumberjack, grid *world.Grid, buildings []*
 	return true
 }
 
+// treeCandidateSearchLimit bounds how many mature Trees are actually run
+// through the expensive FindLandPath BFS -- a real performance bug found
+// by simulating a duel match: startTreeJob used to call FindLandPath (a
+// full BFS that rebuilds an occupancy map over every building on the
+// map) once per qualifying Tree within MaxWorkRadius, with no cap at
+// all. A straight-line pre-check alone (still applied below) barely
+// helped here specifically because MaxWorkRadius (45) is large enough
+// relative to the map that most of a duel map's 200+ Trees qualify
+// anyway -- a CPU profile of one 8000-tick run showed startTreeJob alone
+// responsible for ~20% of total run time. Pre-sorting by cheap
+// straight-line distance and only pathing to the nearest few (same fix
+// as fishing.startFishingJob) keeps the chosen tree just as good in
+// practice while bounding the cost.
+const treeCandidateSearchLimit = 12
+
 func (c *Controller) startTreeJob(j *Lumberjack, grid *world.Grid, buildings []*building.Building) {
 	start := pathfind.Point{X: j.X, Y: j.Y}
-	bestLength := int(^uint(0) >> 1)
-	var bestTree *building.Building
-	var bestPath []pathfind.Point
+	type scoredTree struct {
+		b    *building.Building
+		dist int
+	}
+	var candidates []scoredTree
 	for _, candidate := range buildings {
 		if candidate == nil || candidate.Kind != building.Tree || candidate.GrowthStage() < 2 || c.treeReserved(candidate, j) {
 			continue
 		}
-		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
+		dx, dy := candidate.X-start.X, candidate.Y-start.Y
+		d2 := dx*dx + dy*dy
+		if d2 > MaxWorkRadius*MaxWorkRadius {
+			continue
+		}
+		candidates = append(candidates, scoredTree{candidate, d2})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
+	if len(candidates) > treeCandidateSearchLimit {
+		candidates = candidates[:treeCandidateSearchLimit]
+	}
+
+	bestLength := int(^uint(0) >> 1)
+	var bestTree *building.Building
+	var bestPath []pathfind.Point
+	for _, sc := range candidates {
+		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: sc.b.X, Y: sc.b.Y})
 		if !ok || len(path) > MaxWorkRadius || len(path) >= bestLength {
 			continue
 		}
-		bestTree, bestPath, bestLength = candidate, path, len(path)
+		bestTree, bestPath, bestLength = sc.b, path, len(path)
 	}
 	if bestTree == nil {
 		return

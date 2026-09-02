@@ -19,6 +19,8 @@
 package miner
 
 import (
+	"sort"
+
 	"strategy_game/internal/building"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
@@ -46,6 +48,11 @@ const (
 	// this the most exposed profession of the three), since hunger is
 	// never checked mid-walk to/from a deposit.
 	MaxWorkRadius = 45
+
+	// depositSearchRetryCooldown is how many ticks a StateIdle miner
+	// waits before retrying startDepositJob after every quota entry
+	// fails -- see Miner.searchCooldown's doc comment.
+	depositSearchRetryCooldown = 60
 )
 
 // Quota is one entry in DefaultQuota: mine Amount units of Resource (from
@@ -134,6 +141,15 @@ type Miner struct {
 	// stocked Tavern. The worker keeps performing the current work loop so a
 	// missing Tavern does not deadlock the mine.
 	Starving bool
+
+	// searchCooldown throttles retrying startDepositJob after every
+	// quota entry fails to find a reachable deposit -- see
+	// lumberjack.Lumberjack's identical field for the performance bug
+	// this guards against (worse here: startDepositJob already retries
+	// len(DefaultQuota) full searches per call). Left at its
+	// save-compatible zero value, a freshly restored/spawned miner
+	// always searches immediately on its first idle tick.
+	searchCooldown int
 }
 
 // Controller owns all miners in the settlement.
@@ -398,7 +414,14 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			if m.hungerTick >= HungerInterval && c.tryStartMeal(m, grid, buildings, ledger) {
 				continue
 			}
+			if m.searchCooldown > 0 {
+				m.searchCooldown--
+				continue
+			}
 			c.startDepositJob(m, grid, buildings)
+			if m.state == StateIdle {
+				m.searchCooldown = depositSearchRetryCooldown
+			}
 		case StateToDeposit:
 			if !depositUsable(buildings, m.target) {
 				m.resetToIdle()
@@ -590,24 +613,52 @@ func (c *Controller) tryStartMeal(m *Miner, grid *world.Grid, buildings []*build
 // two resources sit untouched -- and, if one of those succeeds, jumps the
 // quota pointer to it so the skipped entry is retried fresh next time
 // around rather than immediately re-blocking the very next cycle.
+// depositCandidateSearchLimit bounds how many deposits of the current
+// quota kind are actually run through the expensive FindLandPath BFS --
+// see lumberjack's identical treeCandidateSearchLimit doc comment: a
+// straight-line pre-check alone barely helps when MaxWorkRadius is large
+// relative to the map, and with up to len(DefaultQuota) full candidate
+// scans per job search this matters even more here. Pre-sorting by cheap
+// straight-line distance and only pathing to the nearest few keeps the
+// chosen deposit just as good in practice while bounding the cost.
+const depositCandidateSearchLimit = 12
+
 func (c *Controller) startDepositJob(m *Miner, grid *world.Grid, buildings []*building.Building) {
 	start := pathfind.Point{X: m.X, Y: m.Y}
+	type scoredDeposit struct {
+		b    *building.Building
+		dist int
+	}
 	for attempt := 0; attempt < len(DefaultQuota); attempt++ {
 		idx := (m.quotaIndex + attempt) % len(DefaultQuota)
 		q := DefaultQuota[idx]
 
-		bestLength := int(^uint(0) >> 1)
-		var bestDeposit *building.Building
-		var bestPath []pathfind.Point
+		var candidates []scoredDeposit
 		for _, candidate := range buildings {
 			if candidate == nil || candidate.Kind != q.Deposit || candidate.Reserve <= 0 {
 				continue
 			}
-			path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
+			dx, dy := candidate.X-start.X, candidate.Y-start.Y
+			d2 := dx*dx + dy*dy
+			if d2 > MaxWorkRadius*MaxWorkRadius {
+				continue
+			}
+			candidates = append(candidates, scoredDeposit{candidate, d2})
+		}
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
+		if len(candidates) > depositCandidateSearchLimit {
+			candidates = candidates[:depositCandidateSearchLimit]
+		}
+
+		bestLength := int(^uint(0) >> 1)
+		var bestDeposit *building.Building
+		var bestPath []pathfind.Point
+		for _, sc := range candidates {
+			path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: sc.b.X, Y: sc.b.Y})
 			if !ok || len(path) > MaxWorkRadius || len(path) >= bestLength {
 				continue
 			}
-			bestDeposit, bestPath, bestLength = candidate, path, len(path)
+			bestDeposit, bestPath, bestLength = sc.b, path, len(path)
 		}
 		if bestDeposit == nil {
 			continue

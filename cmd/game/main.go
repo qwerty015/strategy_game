@@ -221,6 +221,12 @@ type Game struct {
 	sentries  *sentry.Controller
 	soldiers  *soldier.Controller
 
+	// ai is the second faction in "1×1 против ИИ" mode -- nil in ordinary
+	// single-player "free map" games, where every existing g.xxx field
+	// above is the only town that exists. See cmd/game/ai.go's faction
+	// type and cmd/game/ai_brain.go's aiBrain for the rest of this mode.
+	ai *faction
+
 	// leftScrollBuild/leftScrollHire are the first-visible-card index for
 	// the Build/Hire tab lists, per the user's explicit request to make
 	// the left panel scrollable rather than keep shrinking cards forever
@@ -375,6 +381,15 @@ type Game struct {
 	helpPages  []helpPage
 	helpPage   int
 
+	// preModeSelectScreen/preModeSelectPaused capture where "Назад" on
+	// the mode/difficulty-select screens should return to -- screenTitle
+	// when reached from the title screen's own "Новая игра", or the
+	// running paused game (screenPlay + paused=true restored) when
+	// reached from the Esc pause menu's "Новая игра". See
+	// enterModeSelect.
+	preModeSelectScreen appScreen
+	preModeSelectPaused bool
+
 	// worldTicks is the game clock (see internal/worldclock): total
 	// simulation ticks elapsed, incremented once per tick inside the
 	// g.sim.Advance() loop in Update. It drives visual ambient effects only;
@@ -415,8 +430,15 @@ func newGameWithSize(width, height int) *Game {
 		// if generation ever produces a map this crowded.
 		warehousePoint = gridPoint{grid.Width / 2, grid.Height / 2}
 	}
-	warehouse := &building.Building{Kind: building.Warehouse, X: warehousePoint.x, Y: warehousePoint.y}
-	initialRoad := &building.Building{Kind: building.Road, X: warehousePoint.x, Y: warehousePoint.y + 1}
+	// HP is set explicitly (building.MaxHP) -- a real bug found by
+	// simulation while building the "1×1 против ИИ" duel mode: without
+	// it, the single-player starting Warehouse's zero-value HP made
+	// pruneDestroyedBuildings (added for the duel win condition, but it
+	// runs in every mode) delete it on the very first simulation tick of
+	// every new single-player game. Road is exempted from that check by
+	// Kind regardless of HP, but Warehouse is not.
+	warehouse := &building.Building{Kind: building.Warehouse, X: warehousePoint.x, Y: warehousePoint.y, HP: building.MaxHP}
+	initialRoad := &building.Building{Kind: building.Road, X: warehousePoint.x, Y: warehousePoint.y + 1, HP: building.MaxHP}
 
 	buildings := []*building.Building{warehouse, initialRoad}
 	// Trees are sparse persistent world objects, scattered across all free
@@ -521,6 +543,20 @@ func (g *Game) Update() error {
 	}
 
 	for range g.sim.Advance() {
+		g.tickOnce()
+	}
+
+	return nil
+}
+
+// tickOnce advances the whole simulation -- both factions' economies,
+// combat, events, autosave/advisor/audio bookkeeping -- by exactly one
+// simulation tick. Factored out of Update() so tests (and any other
+// non-interactive driver) can run the simulation forward directly,
+// without touching ebiten input/pause/dialog handling at all -- see e.g.
+// TestDuelSimulation_AIBuildsAndFactionsFight.
+func (g *Game) tickOnce() {
+	{
 		g.worldTicks++
 		for _, b := range g.buildings {
 			b.TickGrowth()
@@ -529,6 +565,14 @@ func (g *Game) Update() error {
 		g.tickFishRegrowth()
 		g.updateAutomaticGates()
 		inactiveWorkers := g.inactiveWorkerBuildings()
+		if g.ai != nil {
+			// The AI's own RequiresWorker buildings must be judged by ITS
+			// OWN rosters, not the player's -- see
+			// inactiveWorkerBuildingsFor's doc comment.
+			for b, v := range inactiveWorkerBuildingsFor(g.ownedBuildings(g.ai.owner), g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.miners, g.ai.sentries) {
+				inactiveWorkers[b] = v
+			}
+		}
 		economy.TickWithConnectivity(g.buildings, inactiveWorkers, g.disconnectedBuildings())
 		tickArmories(g.buildings, inactiveWorkers)
 		// Controllers remove hunger deaths from their own rosters during Tick.
@@ -587,7 +631,7 @@ func (g *Game) Update() error {
 		// their own food -- see package soldier's doc comment), so they sit
 		// outside the fairness-ordered steps above; their combat damage
 		// still needs to land before the prune below, same as a Sentry's.
-		soldierDeaths := g.soldiers.Tick(g.grid, g.buildings, g.enemies)
+		soldierDeaths := g.soldiers.Tick(g.grid, g.buildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers))
 		// Enemies strike back after every Sentry has had a chance to fire
 		// this tick -- see internal/enemy's Tick. A dead one (HP reaching
 		// 0 from a Sentry's own shot, applied above) is pruned right away
@@ -662,6 +706,9 @@ func (g *Game) Update() error {
 				}
 			}
 		}
+		g.tickAIFaction(g.grid)
+		g.pruneDestroyedBuildings()
+
 		g.clearMissingUnitSelection()
 		g.refreshPopulation()
 		g.tickAutosave()
@@ -672,8 +719,6 @@ func (g *Game) Update() error {
 		g.tickDayNightAmbientSounds()
 		g.tickWindAmbientSounds()
 	}
-
-	return nil
 }
 
 func (g *Game) resizeLayout(width, height int) {
@@ -697,43 +742,108 @@ func (g *Game) resizeLayout(width, height int) {
 // inactive is important after a death: otherwise an empty bakery or farm
 // would continue its production cycle invisibly.
 func (g *Game) inactiveWorkerBuildings() map[*building.Building]bool {
+	return inactiveWorkerBuildingsFor(g.ownedBuildings(0), g.vills, g.jacks, g.fishers, g.quarry, g.miners, g.sentries)
+}
+
+// inactiveWorkerBuildingsFor is inactiveWorkerBuildings' logic, factored
+// out so a second faction's economy.TickWithConnectivity call (see
+// tickFaction) can use its own controllers/buildings instead of the
+// player's -- an AI-owned RequiresWorker building must never be judged
+// idle by the player's villager/lumberjack/... rosters, which don't
+// contain a single AI unit.
+func inactiveWorkerBuildingsFor(buildings []*building.Building, vills *villagers.Controller, jacks *lumberjack.Controller, fishers *fishing.Controller, quarry *quarry.Controller, miners *miner.Controller, sentries *sentry.Controller) map[*building.Building]bool {
 	m := make(map[*building.Building]bool)
-	for _, b := range g.buildings {
+	for _, b := range buildings {
 		if building.Types[b.Kind].RequiresWorker {
 			m[b] = true
 		}
 	}
-	for _, v := range g.vills.Villagers {
+	for _, v := range vills.Villagers {
 		if v.Home != nil {
 			m[v.Home] = !v.Working()
 		}
 	}
-	for _, j := range g.jacks.Lumberjacks {
+	for _, j := range jacks.Lumberjacks {
 		if j.HomeBuilding() != nil {
 			m[j.HomeBuilding()] = !j.AtPost()
 		}
 	}
-	for _, f := range g.fishers.Fishermen {
+	for _, f := range fishers.Fishermen {
 		if f.HomeBuilding() != nil {
 			m[f.HomeBuilding()] = !f.AtPost()
 		}
 	}
-	for _, q := range g.quarry.Quarrymen {
+	for _, q := range quarry.Quarrymen {
 		if q.HomeBuilding() != nil {
 			m[q.HomeBuilding()] = !q.AtPost()
 		}
 	}
-	for _, mn := range g.miners.Miners {
+	for _, mn := range miners.Miners {
 		if mn.HomeBuilding() != nil {
 			m[mn.HomeBuilding()] = !mn.AtPost()
 		}
 	}
-	for _, s := range g.sentries.Sentries {
+	for _, s := range sentries.Sentries {
 		if s.HomeBuilding() != nil {
 			m[s.HomeBuilding()] = !s.Working()
 		}
 	}
 	return m
+}
+
+// ownedBuildings returns every building belonging to owner, excluding
+// Road -- for combat targeting and worker-presence bookkeeping, where a
+// Road is never a meaningful entry. NOT what a faction's own controller
+// Tick calls want as their buildings parameter -- those need Road tiles
+// present to route serfs/soldiers over the road network at all; see
+// ownedBuildingsWithRoads for that case. (A real bug found by actually
+// simulating the AI faction: every one of its serfs starved because
+// findTavernSupplyJob's road-only pathfind had no Road tiles to route
+// over, having been handed this Road-stripped list instead.)
+func (g *Game) ownedBuildings(owner int) []*building.Building {
+	var out []*building.Building
+	for _, b := range g.buildings {
+		if (b.Owner == owner || isNaturalResourceKind(b.Kind)) && b.Kind != building.Road {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// ownedBuildingsWithRoads is ownedBuildings, but keeps Road tiles -- the
+// building list a faction's own controllers (logistics, villagers,
+// lumberjack, ...) actually need for their Tick calls to route over that
+// faction's own road network. See ownedBuildings' doc comment for the
+// bug this split fixes.
+func (g *Game) ownedBuildingsWithRoads(owner int) []*building.Building {
+	var out []*building.Building
+	for _, b := range g.buildings {
+		if b.Owner == owner || isNaturalResourceKind(b.Kind) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// isNaturalResourceKind reports whether kind is a map-generated resource
+// node (Tree/Fish/a mineral deposit) rather than a player/AI-constructed
+// building. These are never assigned a faction Owner (it stays the zero
+// value), so a strict Owner==owner filter would only ever match faction
+// 0 by coincidence -- a real bug found by simulation: the AI faction's
+// lumberjacks/fishermen/quarrymen/miners could never see a single tree,
+// fish, or deposit (ownedBuildings(1)/ownedBuildingsWithRoads(1) filtered
+// every one of them out), so the AI's whole raw-material economy (Log,
+// StoneBlock, Coal, GoldOre, IronOre, Fish) never produced anything at
+// all. Resource nodes are neutral map terrain, not faction property --
+// both factions' controllers need to see all of them.
+func isNaturalResourceKind(kind building.Kind) bool {
+	switch kind {
+	case building.Tree, building.Fish, building.StoneDeposit,
+		building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+		return true
+	default:
+		return false
+	}
 }
 
 // unstaffedWorkerBuildings distinguishes a permanently empty workplace from
@@ -2132,6 +2242,26 @@ func (g *Game) refreshPopulation() {
 	g.pop.Count = len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners) + len(g.sentries.Sentries) + len(g.soldiers.Soldiers)
 }
 
+// developmentScore is a display-only "how far has this town come" number
+// for the empty-selection town summary panel, per the user's explicit
+// request for a kill counter plus "some kind of development score". A
+// simple weighted sum of counters the summary already tracks (plus the
+// warehouse's gold) -- not itself simulation state, recomputed fresh every
+// draw, never saved. Weights are a first pass, easy to retune once this
+// is actually played with: a finished building or a kill is worth more
+// than one more citizen or one more gold, since either is a bigger
+// investment of the player's time.
+func (g *Game) developmentScore() int {
+	if g.pop == nil {
+		return 0
+	}
+	gold := 0
+	if g.stock != nil {
+		gold = g.stock.Amount(resource.Gold)
+	}
+	return g.completedTownBuildingCount()*10 + g.pop.Count*5 + g.pop.Kills*20 + gold
+}
+
 // buildingSelectionAt resolves only a building, including a Road. It is used
 // by continuous demolition so a passer-by never intercepts a road click.
 func (g *Game) buildingSelectionAt(mx, my int) ui.Selection {
@@ -2313,7 +2443,16 @@ func (g *Game) buildingConnected(b *building.Building) bool {
 	if connected, known := g.connectionCache[b]; known {
 		return connected
 	}
-	warehouse := findWarehouse(g.buildings)
+	// findWarehouseOwnedBy, not findWarehouse: in "1×1 против ИИ" mode
+	// g.buildings holds both factions' buildings, geographically split by
+	// water with no road between them (see the duel map generator). A
+	// building must connect to a warehouse of its OWN Owner, never
+	// whichever warehouse simply comes first in the slice -- otherwise
+	// every AI building would test permanently disconnected against the
+	// player's unreachable warehouse. In ordinary single-player play every
+	// building (including the one warehouse) is Owner 0 by construction,
+	// so this behaves identically to the old findWarehouse(g.buildings).
+	warehouse := findWarehouseOwnedBy(g.buildings, b.Owner)
 	if warehouse == nil {
 		return false
 	}
@@ -2943,7 +3082,11 @@ func anyMatch[T any](items []T, pred func(T) bool) bool {
 // cadence is paced by played time, not wall-clock time -- consistent with
 // every other tick-scale constant in the simulation (hunger, growth, ...).
 func (g *Game) tickAutosave() {
-	if g.autosaveSlot == 0 {
+	if g.autosaveSlot == 0 || g.ai != nil {
+		// See saveGame's doc comment: a duel game can't be saved yet.
+		// Skip silently here (no repeated "can't save" status-bar spam
+		// every autosaveIntervalTicks) -- a manual Save click still
+		// surfaces the real message once.
 		return
 	}
 	g.autosaveTicks++
@@ -3102,21 +3245,15 @@ func (g *Game) handleConfirmTrimServesInput() {
 	}
 }
 
-// resetToNewGame discards the running town and replaces it with a fresh one
-// -- the Esc pause menu's "New Game" button. The active language is a
-// package-level display preference (internal/i18n), not Game state, so it
-// survives the reset untouched. The current window layout is carried over
-// (and the fresh camera's viewport re-fitted to it) so the reset doesn't
-// visibly snap back to the default 1024x768 layout in a resized window; the
-// camera's own position keeps NewGame's usual initial pan.
+// resetToNewGame discards the running town and replaces it with a fresh
+// free-map one, skipping the mode-select screen entirely -- a thin
+// wrapper around startFreeMapGame (title.go) kept only because tests
+// reach for it directly as "just start over" without simulating menu
+// clicks. The Esc pause menu's own "New game" button no longer calls
+// this: it goes through enterModeSelect (title.go) so the player can
+// also choose "1×1 против ИИ" instead of always resetting to a free map.
 func (g *Game) resetToNewGame() {
-	layout := g.layout
-	fresh := NewGame()
-	fresh.layout = layout
-	mapRect := layout.MapRect()
-	fresh.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
-	*g = *fresh
-	g.statusMsg = i18n.T().NewGameStarted
+	g.startFreeMapGame()
 }
 
 // commitDialogSave saves the current game into g.dialogSlot under the typed
@@ -3170,6 +3307,24 @@ func (g *Game) buildSaveState(name string) save.GameState {
 }
 
 func (g *Game) saveGame(path, name string) error {
+	if g.ai != nil {
+		// A real, silent-corruption risk found while wiring up the duel
+		// mode's menu: buildSaveState only ever serializes the PLAYER's
+		// own controllers (g.logi/g.vills/g.soldiers/...), never g.ai's
+		// second, independent set -- and loadGame has no code path that
+		// reconstructs a faction at all. Saving would still "succeed"
+		// (both factions' Buildings share one slice, so nothing
+		// crashes), but reloading would silently freeze the AI forever:
+		// its buildings sit there as inert decoration with g.ai == nil,
+		// never ticking again. Full duel save/load support (serializing
+		// a second faction's units plus its aiBrain state) is real,
+		// substantial future work -- until then, refusing to save is
+		// far less surprising than one that quietly breaks the opponent
+		// the moment the player reloads it. i18n.T() is read here, not
+		// captured at init, so it always reflects the player's current
+		// language choice.
+		return errors.New(i18n.T().DuelSaveNotSupported)
+	}
 	return save.Save(path, g.buildSaveState(name))
 }
 
@@ -3333,6 +3488,18 @@ func (g *Game) loadAndReport(path string) {
 func findWarehouse(buildings []*building.Building) *building.Building {
 	for _, b := range buildings {
 		if b.IsOperationalWarehouse() {
+			return b
+		}
+	}
+	return nil
+}
+
+// findWarehouseOwnedBy is findWarehouse restricted to one faction's
+// warehouse -- see buildingConnected's doc comment for why this matters
+// once g.buildings can hold more than one faction's buildings.
+func findWarehouseOwnedBy(buildings []*building.Building, owner int) *building.Building {
+	for _, b := range buildings {
+		if b.IsOperationalWarehouse() && b.Owner == owner {
 			return b
 		}
 	}
@@ -4266,8 +4433,60 @@ func (g *Game) pruneDeadEnemies() {
 		}
 		g.addDeathEffect(e.X, e.Y)
 		delete(g.sightedEnemies, e)
+		// One kill per enemy actually processed here, regardless of
+		// whether a Sentry's stone or a soldier's blow finished it off
+		// -- see Population.Kills' doc comment.
+		g.pop.Kills++
 	}
 	g.enemies = alive
+}
+
+// pruneDestroyedBuildings removes any building (other than Road/
+// StoneWall/Gate, matching the "1×1 против ИИ" win condition's own
+// exclusion -- see factionDefeated) whose HP has been brought to 0
+// through combat. Applies in every mode, not just duels: previously
+// nothing in this game ever actually removed a building at 0 HP (only
+// the repairable-damage path existed), which is otherwise harmless in
+// the ordinary single-player game but would have made the "все здания
+// уничтожены" win condition unsatisfiable -- a wrecked building would
+// just sit there forever, still "existing". Every player/AI-constructed
+// building sets HP explicitly to building.MaxHP (construction sites via
+// NewConstructionSite, the duel map's starting buildings, roads -- see
+// duel.go's comment on that), so this can never misfire on one of those.
+//
+// Natural resource nodes (Tree/Fish/StoneDeposit/CoalDeposit/
+// GoldOreDeposit/IronOreDeposit) are also represented as *building.
+// Building for convenience, but were NEVER given a real HP value --
+// they're removed by their own dedicated mechanisms (cutTree/catchFish/
+// removeDeposit), not combat. A real bug found by simulating the duel
+// map: without this exemption, every tree/fish/deposit on the whole map
+// (615 of 619 starting buildings) had HP==0 and was wiped out on the
+// very first tick this function ever ran. They're exempted here exactly
+// like Road/StoneWall/Gate, which never disappear at HP<=0 either.
+func (g *Game) pruneDestroyedBuildings() {
+	alive := g.buildings[:0]
+	changed := false
+	for _, b := range g.buildings {
+		switch b.Kind {
+		case building.Road, building.StoneWall, building.Gate:
+			alive = append(alive, b)
+			continue
+		}
+		if isNaturalResourceKind(b.Kind) {
+			alive = append(alive, b)
+			continue
+		}
+		if b.HP <= 0 {
+			changed = true
+			continue
+		}
+		alive = append(alive, b)
+	}
+	g.buildings = alive
+	if changed {
+		g.invalidateConnectionCache()
+		g.clearMissingUnitSelection()
+	}
 }
 
 // queueStarvationDeathEffects records every unit that its own controller will
@@ -5115,7 +5334,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			}
 		}
 	}
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHire, armoryState, g.formationLines)
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHire, armoryState, g.formationLines, g.developmentScore())
 	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
 	ui.DrawResourceTooltip(screen, g.layout)
 

@@ -26,6 +26,8 @@ type Catalog struct {
 
 	Population                 string
 	DeathsLabel                string
+	KillsLabel                 string
+	ScoreLabel                 string
 	RemovedLabel               string
 	BuildingsRemovedLabel      string
 	UnitsDismissedLabel        string
@@ -180,6 +182,7 @@ type Catalog struct {
 	Saved                 string
 	Loaded                string
 	LoadFailedNoWarehouse string
+	DuelSaveNotSupported  string
 
 	SaveSlotsLabel      string
 	SlotEmptyLabel      string
