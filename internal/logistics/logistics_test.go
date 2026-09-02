@@ -1234,6 +1234,46 @@ func TestController_SuppliesArmoryInputFromWarehouse(t *testing.T) {
 	}
 }
 
+// TestController_ArmorySurplusGoesToWarehouseWhenBarracksIsFull reproduces
+// the user's explicit bug report: "если забита казарма (мечи, луки),
+// лишние произведенные единицы вооружения не перемещаются на склад а
+// просто останавливается производство в оружейке" -- once the Barracks'
+// own Bow buffer is already full, findDirectJob must skip it as a
+// consumer (no room) rather than leave the Armory's own OutputBuffer
+// stuck forever; the generic "drain a producer's surplus to the
+// Warehouse" fallback (findCollectJob) must pick it up instead, the same
+// as it already does for every other resource.
+func TestController_ArmorySurplusGoesToWarehouseWhenBarracksIsFull(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 20, Y: 0}
+	armory := &building.Building{Kind: building.Armory, X: 0, Y: 0}
+	barracks := &building.Building{Kind: building.Barracks, X: 5, Y: 0}
+	barracks.AddInput(resource.Bow, building.BufferCapacity) // already full
+	armory.AddOutput(resource.Bow, 1)                        // surplus with nowhere to go directly
+	buildings := append([]*building.Building{warehouse, armory, barracks}, straightRoad(1, 20, 0)...)
+
+	controller := NewController(warehouse, 1)
+	serf := controller.Serfs[0]
+	serf.X, serf.Y = armory.X, armory.Y
+	serf.atBuilding = armory
+	stock := resource.NewStockpile(0)
+
+	for range 500 {
+		tick(controller, nil, buildings, stock)
+		if stock.Amount(resource.Bow) > 0 {
+			break
+		}
+	}
+	if got := stock.Amount(resource.Bow); got != 1 {
+		t.Fatalf("warehouse Bow stock = %d, want 1 (Armory's surplus, Barracks already full)", got)
+	}
+	if got := armory.OutputBuffer[resource.Bow]; got != 0 {
+		t.Fatalf("armory Bow output = %d, want 0 after the surplus is collected", got)
+	}
+	if got := barracks.InputBuffer[resource.Bow]; got != building.BufferCapacity {
+		t.Fatalf("barracks Bow input = %d, want it to stay at the full %d, untouched", got, building.BufferCapacity)
+	}
+}
+
 // TestController_SuppliesArmoryBeforeCollectingUnrelatedOutput reproduces a
 // mature town: even when a Farm has goods ready to collect forever, a queued
 // Bow whose Plank already sits in a connected Warehouse must receive a serf

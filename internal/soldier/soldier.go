@@ -46,15 +46,31 @@ const (
 	ArcherRange    = 3
 	SwordsmanRange = 1
 
-	// ArcherCooldownTicks/SwordsmanCooldownTicks pace attacks, picked by
-	// ear -- the same "not every tick" reasoning as
-	// sentry.ShotCooldownTicks.
-	ArcherCooldownTicks    = 20
-	SwordsmanCooldownTicks = 15
+	// ArcherCooldownTicks/SwordsmanCooldownTicks pace attacks -- zero, per
+	// the user's explicit combat-rebalance request ("за 1 тик юнит
+	// наносит 1 удар. 2 удара == 2 тика"): a soldier in range lands a hit
+	// every single simulation tick, so two hits (combat.UnitDamagePerHit
+	// each) kill in exactly two ticks. Previously 20/15 (paced like
+	// sentry.ShotCooldownTicks); kept as named constants rather than
+	// inlined zeros so cooldownTicks/the doc comments explaining the
+	// rule stay in one place if it's ever tuned again.
+	ArcherCooldownTicks    = 0
+	SwordsmanCooldownTicks = 0
 
-	// attackVisualLifetime keeps a landed blow on screen long enough for its
-	// three-frame animation, without affecting damage, movement or cooldowns.
-	attackVisualLifetime = 6
+	// attackVisualLifetime keeps a landed blow on screen for exactly one
+	// tick before a lethal hit's deferred kill (see pendingKillTarget)
+	// resolves -- per the user's explicit "1 тик удар/стрела 1, 2 тик -
+	// второй удар/стрела и всё, 3 тик уже анимация смерти юнита": with
+	// ArcherCooldownTicks/SwordsmanCooldownTicks == 0, hit 1 lands tick 1,
+	// hit 2 (lethal) lands tick 2, and this being 1 means the deferred
+	// kill resolves exactly tick 3 -- the whole exchange takes 3 ticks
+	// (1.5s at 1x speed), not the 8 ticks a longer lifetime produced.
+	// Was 6 (a full three-frame wind-up/impact/recovery animation); at 1
+	// the renderer only ever samples AttackVisual() at progress == 1, so
+	// an Archer's arrow now appears already at the target rather than
+	// visibly flying there -- an accepted trade-off for hitting this
+	// exact tick timeline.
+	attackVisualLifetime = 1
 
 	// EngageRange is the distance (Chebyshev) at which a soldier with no
 	// standing attack order automatically opens fire on the nearest enemy,
@@ -88,6 +104,20 @@ type Soldier struct {
 	// only when a hit really lands. They are intentionally not saved.
 	attackVisualTicks            int
 	attackTargetX, attackTargetY int
+
+	// pendingKillTarget is set only when a landed hit would reduce the
+	// target to 0 HP or below: the kill itself is deferred until the
+	// attack's own visual (arrow flight for an Archer, sword swing for a
+	// Swordsman) actually reaches the target, the tick attackVisualTicks
+	// reaches 0 -- the same "don't show a death before its own visual
+	// arrives" fix already applied to the sentry's stone throw (see
+	// package sentry's shotPendingTarget). A user-reported real bug: with
+	// instant HP application an Archer's target could die on-screen
+	// several ticks before the arrow visually reached it. A hit that
+	// wouldn't be lethal has no such artifact to avoid -- it still
+	// applies instantly, so damage feedback stays immediate; only the
+	// killing blow needs to wait.
+	pendingKillTarget *enemy.Enemy
 
 	ticksSinceMeal int
 }
@@ -264,13 +294,31 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 	for _, s := range c.Soldiers {
 		if s.attackVisualTicks > 0 {
 			s.attackVisualTicks--
+			if s.attackVisualTicks == 0 && s.pendingKillTarget != nil {
+				s.pendingKillTarget.HP = 0
+				s.pendingKillTarget = nil
+			}
 		}
 		s.ticksSinceMeal++
 		if hunger.Dead(s.ticksSinceMeal) {
 			deaths++
 			continue
 		}
-		if s.attackTarget == nil {
+		// len(s.path) == 0 is the real fix for a bug the user reported:
+		// without it, a soldier could never be moved away from an enemy
+		// it just fought -- MoveTo clears attackTarget and starts a
+		// path, but the very next tick this same check saw attackTarget
+		// == nil again (the enemy is almost always still within
+		// EngageRange right after a melee exchange) and immediately
+		// re-issued an AttackOrder, whose approach() then saw the
+		// soldier already in range and cleared the just-started path
+		// right back out from under the player. Gating on an empty path
+		// too means auto-engage only ever claims a soldier that is
+		// truly idle (no standing order AND no move already under way),
+		// so an explicit MoveTo/formation order always gets to actually
+		// run; only once it finishes (or the soldier was idle to begin
+		// with) does auto-engage get another look.
+		if s.attackTarget == nil && len(s.path) == 0 {
 			if target := nearestEnemyWithin(s.X, s.Y, enemies, EngageRange); target != nil {
 				s.AttackOrder(grid, buildings, target)
 			}
@@ -324,12 +372,16 @@ func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *S
 		return
 	}
 	s.attackTargetX, s.attackTargetY = s.attackTarget.X, s.attackTarget.Y
-	s.attackTarget.HP = combat.ApplyDamage(s.attackTarget.HP, combat.UnitDamagePerHit)
 	s.attackVisualTicks = attackVisualLifetime
 	s.attackCooldown = s.cooldownTicks()
-	if !s.attackTarget.Alive() {
+	if s.attackTarget.HP <= combat.UnitDamagePerHit {
+		// Lethal -- defer the actual kill to when the visual lands (see
+		// pendingKillTarget's doc comment) instead of applying it here.
+		s.pendingKillTarget = s.attackTarget
 		s.attackTarget = nil
+		return
 	}
+	s.attackTarget.HP = combat.ApplyDamage(s.attackTarget.HP, combat.UnitDamagePerHit)
 }
 
 // tickMovement advances s one step along its current path every

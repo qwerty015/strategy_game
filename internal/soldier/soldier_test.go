@@ -71,12 +71,16 @@ func TestArcher_HitsAtRangeThreeButNotFour(t *testing.T) {
 	}
 }
 
-// TestTwoHitsKillTheTarget covers the user's explicit unit-damage rule
-// (50% per hit, reused from package combat): two hits kill. The second
-// hit lands on the tick *after* the cooldown reaches zero -- the same
-// decrement-then-return-early cooldown shape package sentry's
-// ShotCooldownTicks already uses, so it needs one extra tick beyond the
-// cooldown length itself, not exactly SwordsmanCooldownTicks.
+// TestTwoHitsKillTheTarget covers both the user's explicit unit-damage
+// rule (50% per hit, reused from package combat) and the "1 hit per tick"
+// combat-pacing rule (ArcherCooldownTicks/SwordsmanCooldownTicks == 0,
+// per the user's explicit "за 1 тик юнит наносит 1 удар. 2 удара == 2
+// тика"): with no cooldown, two hits land on two consecutive ticks. The
+// second (killing) hit's HP zeroing is deferred until its own attack
+// visual finishes (see pendingKillTarget's doc comment -- the same fix as
+// the user's reported "стрела убивает раньше чем долетает" bug), so the
+// target must not report dead the instant that second hit registers, only
+// attackVisualLifetime ticks later.
 func TestTwoHitsKillTheTarget(t *testing.T) {
 	grid := world.NewGrid(10, 10)
 	c := NewController()
@@ -89,11 +93,79 @@ func TestTwoHitsKillTheTarget(t *testing.T) {
 		t.Fatalf("target HP after 1 hit = %d, want %d", target.HP, combat.MaxHP-combat.UnitDamagePerHit)
 	}
 
-	for range SwordsmanCooldownTicks + 1 {
+	c.Tick(grid, nil, nil) // the second, lethal hit -- HP not applied yet
+	if !target.Alive() {
+		t.Fatal("target died the instant the killing blow registered -- its death must wait for the attack visual (pendingKillTarget)")
+	}
+
+	for range attackVisualLifetime {
 		c.Tick(grid, nil, nil)
 	}
 	if target.Alive() {
-		t.Fatal("target still alive after cooldown elapsed and a second hit landed")
+		t.Fatal("target still alive after its killing blow's attack visual finished")
+	}
+}
+
+// TestTwoHitsKillTheTarget_ExactThreeTickTimeline locks in the precise
+// tick-by-tick schedule the user explicitly asked for: "1 тик удар/стрела
+// 1, 2 тик - второй удар/стрела и всё, 3 тик уже анимация смерти юнита".
+// A regression here (e.g. attackVisualLifetime creeping back up) would
+// silently stretch this exchange back out.
+func TestTwoHitsKillTheTarget_ExactThreeTickTimeline(t *testing.T) {
+	grid := world.NewGrid(10, 10)
+	c := NewController()
+	s := c.Spawn(Archer, 5, 5)
+	target := enemy.New(5, 8) // within ArcherRange (3)
+	s.AttackOrder(grid, nil, target)
+
+	c.Tick(grid, nil, nil) // tick 1: first shot
+	if target.HP != combat.MaxHP-combat.UnitDamagePerHit {
+		t.Fatalf("HP after tick 1 = %d, want %d", target.HP, combat.MaxHP-combat.UnitDamagePerHit)
+	}
+
+	c.Tick(grid, nil, nil) // tick 2: second (lethal) shot registers
+	if !target.Alive() {
+		t.Fatal("target died on tick 2 -- the killing blow's death must not land until tick 3")
+	}
+
+	c.Tick(grid, nil, nil) // tick 3: the deferred kill resolves
+	if target.Alive() {
+		t.Fatal("target still alive on tick 3 -- want it dead by exactly this tick")
+	}
+}
+
+// TestMoveTo_SurvivesAutoEngageWhenTheOldTargetIsStillNearby reproduces the
+// user's explicit bug report: after landing one (non-lethal) hit on an
+// adjacent enemy, the swordsman "froze" and could no longer be moved at
+// all. Root cause: MoveTo clears attackTarget as its retreat signal, but
+// the very next tick auto-engage saw attackTarget == nil, immediately
+// found the same still-nearby enemy (right after a melee exchange it is
+// almost always still within EngageRange) and re-issued an AttackOrder,
+// whose approach() then found the soldier already in range and cancelled
+// the just-started path right back out. A soldier with an order already
+// in progress (a non-empty path) must not have it overridden this way.
+func TestMoveTo_SurvivesAutoEngageWhenTheOldTargetIsStillNearby(t *testing.T) {
+	grid := world.NewGrid(20, 20)
+	c := NewController()
+	s := c.Spawn(Swordsman, 5, 5)
+	target := enemy.New(5, 6) // adjacent -- within AttackRange and EngageRange
+	enemies := []*enemy.Enemy{target}
+	s.AttackOrder(grid, nil, target)
+	c.Tick(grid, nil, enemies) // lands the first, non-lethal hit
+
+	if !s.MoveTo(grid, nil, 15, 5) {
+		t.Fatal("MoveTo failed to find a route away from the enemy")
+	}
+	if len(s.RemainingPath()) == 0 {
+		t.Fatal("MoveTo did not start a route")
+	}
+
+	c.Tick(grid, nil, enemies) // the tick that used to cancel it
+	if len(s.RemainingPath()) == 0 {
+		t.Fatal("the move order was cancelled by auto-engage even though the player just issued it")
+	}
+	if s.HasAttackOrder() {
+		t.Fatal("auto-engage re-locked onto the enemy the player was trying to move away from")
 	}
 }
 

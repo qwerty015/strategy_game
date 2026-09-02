@@ -25,6 +25,12 @@ func TestAttackVisualStartsOnALandedHitAndExpires(t *testing.T) {
 	if x != target.X || y != target.Y || progress <= 0 || progress > 1 {
 		t.Fatalf("AttackVisual() = (%d,%d,%v), want target (%d,%d) and progress in (0,1]", x, y, progress, target.X, target.Y)
 	}
+	// Cancel the standing order so the zero-cooldown attack rate (see
+	// ArcherCooldownTicks) doesn't fire -- and reset the visual with -- a
+	// second, lethal hit here; that cascade is covered on its own by
+	// TestTwoHitsKillTheTarget. This test is only about one hit's own
+	// visual lifecycle.
+	unit.AttackOrder(grid, nil, nil)
 	for range attackVisualLifetime {
 		controller.Tick(grid, nil, nil)
 	}

@@ -1356,7 +1356,23 @@ func selectedUnitTile(selection Selection) (tx, ty int, path []pathfind.Point, o
 
 // DrawSelectionMarker draws a warm outline under the selected object so the
 // player can connect the inspector to the world even when sprites overlap.
+// A SelectionSoldierGroup is the one multi-object case -- every living
+// member of the group gets its own outline, not just a single tile (see
+// selectedUnitTile's "one tile, one path" doc comment for why it can't
+// represent a group itself).
 func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Selection) {
+	if selection.Kind == SelectionSoldierGroup {
+		size := cam.TilePixels()
+		for _, sd := range selection.SoldierGroup {
+			if sd == nil || !sd.Alive() {
+				continue
+			}
+			x, y := cam.TileToScreen(sd.X, sd.Y)
+			drawSelectionBox(screen, x, y, size)
+		}
+		return
+	}
+
 	var x, y float64
 	size := cam.TilePixels()
 	if selection.Kind == SelectionBuilding && selection.Building != nil {
@@ -1367,7 +1383,13 @@ func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Sel
 	} else {
 		return
 	}
+	drawSelectionBox(screen, x, y, size)
+}
 
+// drawSelectionBox draws the actual warm-yellow outline square DrawSelectionMarker
+// uses, factored out so both the single-object path and the per-soldier
+// SelectionSoldierGroup loop share one drawing implementation.
+func drawSelectionBox(screen *ebiten.Image, x, y, size float64) {
 	line := color.RGBA{R: 245, G: 201, B: 72, A: 255}
 	thickness := float32(2)
 	vector.FillRect(screen, float32(x), float32(y), float32(size), thickness, line, false)
@@ -1384,11 +1406,30 @@ func DrawSelectionMarker(screen *ebiten.Image, cam *render.Camera, selection Sel
 // линию маршрута"). A building selection, or a unit that's idle/has no
 // path right now, draws nothing.
 func DrawSelectedRoute(screen *ebiten.Image, cam *render.Camera, selection Selection) {
+	if selection.Kind == SelectionSoldierGroup {
+		for _, sd := range selection.SoldierGroup {
+			if sd == nil || !sd.Alive() {
+				continue
+			}
+			drawRouteFrom(screen, cam, sd.X, sd.Y, sd.RemainingPath())
+		}
+		return
+	}
 	tx, ty, path, ok := selectedUnitTile(selection)
 	if !ok || len(path) == 0 {
 		return
 	}
+	drawRouteFrom(screen, cam, tx, ty, path)
+}
 
+// drawRouteFrom draws the actual route line DrawSelectedRoute uses, from
+// (tx, ty) through every point in path, factored out so both the
+// single-object path and the per-soldier SelectionSoldierGroup loop share
+// one drawing implementation.
+func drawRouteFrom(screen *ebiten.Image, cam *render.Camera, tx, ty int, path []pathfind.Point) {
+	if len(path) == 0 {
+		return
+	}
 	line := color.RGBA{R: 245, G: 201, B: 72, A: 150}
 	thickness := float32(2)
 	tp := cam.TilePixels()

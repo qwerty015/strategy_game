@@ -158,12 +158,21 @@ var (
 	MinerWalkFrames       = mustLoadAtlasFrames("generated/unit_miner_walk.png")
 	SmelterWalkFrames     = mustLoadAtlasFrames("generated/unit_smelter_walk.png")
 	WeaponsmithWalkFrames = mustLoadAtlasFrames("generated/unit_weaponsmith_walk.png")
-	ArcherWalkFrames      = mustLoadAtlasFrames("generated/unit_archer_walk.png")
-	SwordsmanWalkFrames   = mustLoadAtlasFrames("generated/unit_swordsman_walk.png")
+	// ArcherWalkFrames/SwordsmanWalkFrames and their AttackFrames below go
+	// through mustLoadHumanoidFrames, not the plain mustLoadAtlasFrames
+	// every other unit above uses -- a real bug the user reported: both
+	// atlases draw the character with noticeably more empty canvas margin
+	// than the Serf's own art (and the Swordsman's attack atlas' crouching
+	// mid-swing poses have even more margin again), so the plain per-frame
+	// letterbox rendered Archer/Swordsman visibly smaller than a Serf
+	// standing right next to them, shrinking further the instant an
+	// attack animation started. See mustLoadHumanoidFrames' doc comment.
+	ArcherWalkFrames    = mustLoadHumanoidFrames("generated/unit_serf_walk.png", "generated/unit_archer_walk.png")
+	SwordsmanWalkFrames = mustLoadHumanoidFrames("generated/unit_serf_walk.png", "generated/unit_swordsman_walk.png")
 	// AttackFrames are map-only strike loops. They are intentionally separate
 	// from walking so UI cards remain a stable single pose.
-	ArcherAttackFrames    = mustLoadAtlasFrames("generated/unit_archer_attack.png")
-	SwordsmanAttackFrames = mustLoadAtlasFrames("generated/unit_swordsman_attack.png")
+	ArcherAttackFrames    = mustLoadHumanoidFrames("generated/unit_serf_walk.png", "generated/unit_archer_attack.png")
+	SwordsmanAttackFrames = mustLoadHumanoidFrames("generated/unit_serf_walk.png", "generated/unit_swordsman_attack.png")
 	SentryWalkFrames      = mustLoadAtlasFrames("generated/unit_sentry_walk.png")
 	// DeathFrames is the universal, profession-free fall/soul/skeleton loop.
 	// It is a transient map effect, never an inspector or palette icon.
@@ -318,6 +327,118 @@ func mustLoadAtlasFrames(name string) [3]*ebiten.Image {
 	for index := range frames {
 		frameBounds := image.Rect(b.Min.X+index*frameWidth, b.Min.Y, b.Min.X+(index+1)*frameWidth, b.Max.Y)
 		frames[index] = ebiten.NewImageFromImage(normalizeSpriteBounds(src, frameBounds))
+	}
+	return frames
+}
+
+// alphaOpaqueThreshold is the noise floor contentBBox uses to tell real
+// character pixels from a fully-transparent margin -- low enough to keep
+// soft-edged antialiasing at a silhouette's rim, high enough to ignore
+// stray near-zero alpha noise some PNG exporters leave behind.
+const alphaOpaqueThreshold = 10
+
+// contentBBox returns the tight bounding rectangle (in src's own
+// coordinate space) of every pixel inside bounds whose alpha exceeds
+// alphaOpaqueThreshold. A zero-value (empty) rectangle means bounds held
+// no visible content at all.
+func contentBBox(src image.Image, bounds image.Rectangle) image.Rectangle {
+	minX, minY := bounds.Max.X, bounds.Max.Y
+	maxX, maxY := bounds.Min.X-1, bounds.Min.Y-1
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, a := src.At(x, y).RGBA()
+			if a>>8 <= alphaOpaqueThreshold {
+				continue
+			}
+			if x < minX {
+				minX = x
+			}
+			if x > maxX {
+				maxX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if y > maxY {
+				maxY = y
+			}
+		}
+	}
+	if maxX < minX || maxY < minY {
+		return image.Rectangle{}
+	}
+	return image.Rect(minX, minY, maxX+1, maxY+1)
+}
+
+// referenceContentHeightFraction measures how tall the drawn character
+// sits within its own frame -- as a 0..1 fraction of the frame's full
+// height -- averaged across a three-frame atlas' frames. This is the
+// calibration target mustLoadHumanoidFrames rescales a mismatched atlas
+// to match.
+func referenceContentHeightFraction(src image.Image) float64 {
+	b := src.Bounds()
+	const frameCount = 3
+	frameWidth := b.Dx() / frameCount
+	total, counted := 0.0, 0
+	for i := 0; i < frameCount; i++ {
+		frameBounds := image.Rect(b.Min.X+i*frameWidth, b.Min.Y, b.Min.X+(i+1)*frameWidth, b.Max.Y)
+		content := contentBBox(src, frameBounds)
+		if content.Empty() {
+			continue
+		}
+		total += float64(content.Dy()) / float64(b.Dy())
+		counted++
+	}
+	if counted == 0 {
+		return 1 // degrades to "no rescale needed" for a fully blank atlas
+	}
+	return total / float64(counted)
+}
+
+// mustLoadHumanoidFrames loads a three-frame atlas the same way
+// mustLoadAtlasFrames does, but first rescales each frame around its own
+// drawn character (measured from the alpha channel) so the character
+// fills the same fraction of its frame that referenceName's own character
+// does -- see ArcherWalkFrames' doc comment for the real bug this fixes.
+// referenceName is decoded only to measure that proportion; it is not
+// itself affected and still loads separately through mustLoadAtlasFrames.
+func mustLoadHumanoidFrames(referenceName, name string) [3]*ebiten.Image {
+	refFraction := referenceContentHeightFraction(mustDecode(referenceName))
+
+	src := mustDecode(name)
+	b := src.Bounds()
+	const frameCount = 3
+	if b.Dx()%frameCount != 0 {
+		panic("assets: invalid three-frame sprite sheet")
+	}
+	frameWidth := b.Dx() / frameCount
+	frameAspect := float64(frameWidth) / float64(b.Dy())
+
+	var frames [frameCount]*ebiten.Image
+	for index := range frames {
+		frameBounds := image.Rect(b.Min.X+index*frameWidth, b.Min.Y, b.Min.X+(index+1)*frameWidth, b.Max.Y)
+		content := contentBBox(src, frameBounds)
+		if content.Empty() || refFraction <= 0 {
+			frames[index] = ebiten.NewImageFromImage(normalizeSpriteBounds(src, frameBounds))
+			continue
+		}
+		// A virtual crop, centered on the character, sized so the
+		// character's own measured height fills exactly refFraction of
+		// it -- then let the existing letterbox-to-TileSize logic handle
+		// it exactly as it already does for every other frame. This
+		// virtual box may extend beyond src's real bounds (a smaller
+		// source character needs a bigger box zoomed in around it);
+		// image.Image.At is bounds-safe and returns transparent there,
+		// so that just contributes extra padding, not a crash.
+		virtualHeight := float64(content.Dy()) / refFraction
+		virtualWidth := virtualHeight * frameAspect
+		cx := float64(content.Min.X+content.Max.X) / 2
+		cy := float64(content.Min.Y+content.Max.Y) / 2
+		virtualBox := image.Rect(
+			int(cx-virtualWidth/2), int(cy-virtualHeight/2),
+			int(cx+virtualWidth/2), int(cy+virtualHeight/2),
+		)
+		frames[index] = ebiten.NewImageFromImage(normalizeSpriteBounds(src, virtualBox))
 	}
 	return frames
 }

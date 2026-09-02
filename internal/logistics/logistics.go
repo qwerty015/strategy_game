@@ -83,6 +83,17 @@ const (
 	idle phase = iota
 	toPickup
 	toDropoff
+
+	// returning is the free-roam walk back to the nearest warehouse after
+	// an off-road delivery (construction materials or soldier food -- see
+	// Serf.construction/soldierTarget) ends away from the road network.
+	// Without it a serf just stood wherever the delivery left it: every
+	// ordinary job search after that routes over the road network only
+	// (see findTavernSupplyJob/findDirectJob/etc.), so it could never find
+	// a next job and starved on the spot -- a real bug the user reported.
+	// The off-road privilege stays scoped to this one trip back, not to
+	// job-search in general -- see startReturnToRoad.
+	returning
 )
 
 // Serf is a single worker. X/Y is its current tile position, exported
@@ -1261,7 +1272,9 @@ func (c *Controller) advance(s *Serf, grid *world.Grid, buildings []*building.Bu
 	case toPickup:
 		c.arriveAtPickup(s, grid, buildings, stock)
 	case toDropoff:
-		c.arriveAtDropoff(s, stock)
+		c.arriveAtDropoff(s, grid, buildings, stock)
+	case returning:
+		s.reset()
 	}
 }
 
@@ -1325,8 +1338,12 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 	s.ph = toDropoff
 }
 
-func (c *Controller) arriveAtDropoff(s *Serf, stock *resource.Stockpile) {
+func (c *Controller) arriveAtDropoff(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
 	s.atBuilding = s.dropoff
+	// Captured before the switch below: every case except reset()s at the
+	// very end, and s.construction/s.soldierTarget still hold the values
+	// this trip started with until then.
+	offRoad := s.construction || s.soldierTarget != nil
 	switch {
 	case s.soldierTarget != nil:
 		// Food handed straight to the soldier rather than deposited into a
@@ -1356,5 +1373,43 @@ func (c *Controller) arriveAtDropoff(s *Serf, stock *resource.Stockpile) {
 			stock.Add(s.resource, leftover)
 		}
 	}
+	if offRoad {
+		c.startReturnToRoad(s, grid, buildings)
+		return
+	}
 	s.reset()
+}
+
+// startReturnToRoad walks a serf that just finished an off-road delivery
+// back to the nearest reachable warehouse over open land
+// (pathfind.FindLandPath), so it lands back on the road network before
+// going properly idle -- see the returning phase's doc comment for why
+// this exists. Best-effort: if no warehouse is reachable at all (e.g. a
+// freshly cut-off map), the serf simply goes idle right where it stands
+// rather than loop forever chasing an impossible route.
+func (c *Controller) startReturnToRoad(s *Serf, grid *world.Grid, buildings []*building.Building) {
+	from := pathfind.Point{X: s.X, Y: s.Y}
+	s.pickup, s.dropoff = nil, nil
+	s.resource, s.amount = 0, 0
+	s.construction, s.soldierTarget = false, nil
+
+	bestLen := -1
+	var bestPath []pathfind.Point
+	for _, w := range c.warehouses() {
+		access := w.AccessPoint()
+		p, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y})
+		if !reachable {
+			continue
+		}
+		if bestLen == -1 || len(p) < bestLen {
+			bestPath, bestLen = p, len(p)
+		}
+	}
+	if bestLen == -1 {
+		s.ph = idle
+		s.path, s.pathIdx, s.tileTicks = nil, 0, 0
+		return
+	}
+	s.path, s.pathIdx, s.tileTicks = bestPath, 0, 0
+	s.ph = returning
 }
