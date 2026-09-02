@@ -172,7 +172,7 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse)
-	buildings = mirrorNaturalResourcesForFairness(grid, buildings, aiPoint)
+	buildings = mirrorNaturalResourcesForFairness(grid, buildings, playerPoint, aiPoint)
 
 	stock := resource.NewStockpile(stockpileCapacity)
 	stock.Add(resource.Plank, startingPlanks)
@@ -239,22 +239,8 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 // the stone and iron ore, the player's holding almost none. Exact
 // mirroring is the only approach that actually guarantees fairness
 // rather than leaving it to chance.
-func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.Building, aiPoint gridPoint) []*building.Building {
+func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.Building, playerPoint, aiPoint gridPoint) []*building.Building {
 	centerX := duelMapWidth / 2
-	kept := make([]*building.Building, 0, len(buildings))
-	var leftSide []*building.Building
-	for _, b := range buildings {
-		if !isNaturalResourceKind(b.Kind) {
-			kept = append(kept, b)
-			continue
-		}
-		if b.X >= centerX {
-			continue // right half -- discarded, regenerated as a mirror below
-		}
-		kept = append(kept, b)
-		leftSide = append(leftSide, b)
-	}
-
 	isDeposit := func(kind building.Kind) bool {
 		switch kind {
 		case building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
@@ -264,26 +250,86 @@ func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.B
 		}
 	}
 
-	for _, b := range leftSide {
-		mx := mirrorX(duelMapWidth, b.X)
-		if mx == b.X {
-			continue // the one self-mirroring column, already placed
-		}
-		if isDeposit(b.Kind) && tooCloseToPoint(mx, b.Y, aiPoint, minDepositDistanceFromWarehouse) {
+	kept := make([]*building.Building, 0, len(buildings))
+	// canonical folds every natural resource to its left-half (x <
+	// centerX) position, deduplicated by (kind, foldedX, y) -- not
+	// simply "discard anything already on the right half", which was a
+	// real, severe bug found from an actual playtest report ("камня - 0,
+	// золота - 0"): seedStoneDeposits/seedOreDeposits' avoid parameter
+	// only ever pushes a deposit AWAY from the player's own warehouse,
+	// with nothing pulling it toward either half specifically -- given
+	// growStoneRegion's deterministic, fixed-seed scoring and a
+	// near-constant playerPoint, this consistently placed *100%* of
+	// stone (confirmed: 76/76 across 5 independent runs) on the AI's
+	// side. Discarding the right half then meant discarding ALL of it,
+	// leaving nothing at all to mirror -- worse than the original
+	// fairness bug, not better. Folding first (instead of discarding)
+	// keeps the deposits that generation actually produced, wherever
+	// they landed, and only repositions them into a symmetric layout.
+	type canonicalKey struct {
+		kind building.Kind
+		x, y int
+	}
+	canonical := make(map[canonicalKey]*building.Building)
+	var order []canonicalKey
+	for _, b := range buildings {
+		if !isNaturalResourceKind(b.Kind) {
+			kept = append(kept, b)
 			continue
 		}
-		if !building.CanPlace(grid, kept, b.Kind, mx, b.Y) {
+		foldedX := b.X
+		if foldedX >= centerX {
+			foldedX = mirrorX(duelMapWidth, foldedX)
+		}
+		key := canonicalKey{b.Kind, foldedX, b.Y}
+		if _, seen := canonical[key]; seen {
 			continue
 		}
-		mirrored := &building.Building{
-			Kind:              b.Kind,
-			X:                 mx,
-			Y:                 b.Y,
-			Reserve:           b.Reserve,
-			GrowthTicks:       b.GrowthTicks,
-			GrowthTargetTicks: b.GrowthTargetTicks,
+		canonical[key] = b
+		order = append(order, key)
+	}
+
+	// canOK/place are split, and every pair below is checked with canOK
+	// on BOTH the left and mirrored position before either is committed
+	// -- a real bug found immediately after the fold rewrite above: with
+	// two independent, unconditional place() calls, one side succeeding
+	// could commit a tile that then blocks its own pair's other side (or
+	// a LATER pair's side) from ever placing, silently drifting the
+	// left/right counts apart (confirmed: 69 vs 88 Fish in one run) even
+	// though the fold itself is exactly symmetric. Checking the whole
+	// pair against a single, shared, not-yet-mutated kept snapshot
+	// before adding either keeps every pair atomic: either both sides
+	// land, or neither does.
+	canOK := func(kind building.Kind, x, y int, avoid gridPoint) bool {
+		if isDeposit(kind) && tooCloseToPoint(x, y, avoid, minDepositDistanceFromWarehouse) {
+			return false
 		}
-		kept = append(kept, mirrored)
+		return building.CanPlace(grid, kept, kind, x, y)
+	}
+	place := func(kind building.Kind, x, y int, reserve, growthTicks, growthTarget int) {
+		kept = append(kept, &building.Building{
+			Kind:              kind,
+			X:                 x,
+			Y:                 y,
+			Reserve:           reserve,
+			GrowthTicks:       growthTicks,
+			GrowthTargetTicks: growthTarget,
+		})
+	}
+	for _, key := range order {
+		src := canonical[key]
+		mx := mirrorX(duelMapWidth, key.x)
+		if mx == key.x {
+			// The one self-mirroring column -- a single copy, no pair.
+			if canOK(src.Kind, key.x, key.y, playerPoint) {
+				place(src.Kind, key.x, key.y, src.Reserve, src.GrowthTicks, src.GrowthTargetTicks)
+			}
+			continue
+		}
+		if canOK(src.Kind, key.x, key.y, playerPoint) && canOK(src.Kind, mx, key.y, aiPoint) {
+			place(src.Kind, key.x, key.y, src.Reserve, src.GrowthTicks, src.GrowthTargetTicks)
+			place(src.Kind, mx, key.y, src.Reserve, src.GrowthTicks, src.GrowthTargetTicks)
+		}
 	}
 	return kept
 }

@@ -140,7 +140,9 @@ var (
 	// Sentry is the stable inspector/palette pose. The animated atlas below
 	// is deliberately map-only, like the existing worker professions.
 	Sentry = staticFrames("generated/unit_sentry.png")
-	Enemy  = staticFrames("generated/unit_enemy.png")
+	// Enemy is the stable inspector/palette pose. The animation sheets below
+	// are map-only and preserve a calm UI icon while the unit is moving.
+	Enemy = staticFrames("generated/unit_enemy_v2.png")
 
 	// WalkFrames are map-only three-step walking loops. Each atlas is reduced
 	// once at startup, so animated crowds cost no per-frame image decoding.
@@ -174,6 +176,11 @@ var (
 	ArcherAttackFrames    = mustLoadHumanoidFrames("generated/unit_serf_walk.png", "generated/unit_archer_attack.png")
 	SwordsmanAttackFrames = mustLoadHumanoidFrames("generated/unit_serf_walk.png", "generated/unit_swordsman_attack.png")
 	SentryWalkFrames      = mustLoadAtlasFrames("generated/unit_sentry_walk.png")
+	EnemyWalkFrames       = mustLoadAtlasFrames("generated/unit_enemy_walk_v2.png")
+	// EnemyAttackFrames is prepared for the combat-visual hook. The first
+	// debug enemy does not expose a strike-progress signal yet, so the render
+	// package intentionally uses only the walking loop for now.
+	EnemyAttackFrames = mustLoadAtlasFrames("generated/unit_enemy_attack_v2.png")
 	// DeathFrames is the universal, profession-free fall/soul/skeleton loop.
 	// It is a transient map effect, never an inspector or palette icon.
 	DeathFrames = mustLoadAtlasFrames("generated/unit_death_effect.png")

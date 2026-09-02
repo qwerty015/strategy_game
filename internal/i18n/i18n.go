@@ -162,13 +162,13 @@ type Catalog struct {
 	AdvisorAcknowledgeButton               string
 	AdvisorGoToButton                      string
 	AdvisorTipFoodRunningOut               string // %d ticks left
-	AdvisorTipConstructionMaterialsMissing string // resource name, missing amount, example x/y
-	AdvisorTipIdleBuilding                 string // %d idle buildings, %d,%d one example's coordinates
-	AdvisorTipDisconnectedBuilding         string // %d disconnected buildings, %d,%d one example's coordinates
+	AdvisorTipConstructionMaterialsMissing string // resource name, missing amount, example building's localized name
+	AdvisorTipIdleBuilding                 string // %d idle buildings, example building's localized name
+	AdvisorTipDisconnectedBuilding         string // %d disconnected buildings, example building's localized name
 	AdvisorTipServeCountLow                string // %d current, %d recommended
 	AdvisorTipServeCountHigh               string // %d current, %d recommended
-	AdvisorTipGatherWorkerStuck            string // %d workers stuck, %d,%d one example's coordinates
-	AdvisorTipGatherWorkerEnclosed         string // %d workers enclosed, %d,%d one workplace
+	AdvisorTipGatherWorkerStuck            string // %d workers stuck, example building's localized name
+	AdvisorTipGatherWorkerEnclosed         string // %d workers enclosed, example building's localized name
 	CannotDeleteWarehouse                  string
 	CannotDeleteTree                       string
 	CannotDeleteFish                       string

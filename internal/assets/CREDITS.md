@@ -132,3 +132,19 @@ were refreshed on 2026-09-01 with original, readable medieval pixel-art
 items. They replace the earlier placeholder-square variants while preserving
 the same external asset paths and are not copied, traced or modified from
 commercial game assets.
+## Visual revamp — 2026-09-02
+
+`third_party/kenney_medieval_rts/` is the unmodified **Medieval RTS** source
+archive by Kenney, downloaded from OpenGameArt with its included `License.txt`.
+It is **CC0 1.0**: individual tiles, structures, environment props and unit
+components may be used and modified in this project. The source archive remains
+separate from the active sprites so every selected use can be reviewed.
+
+`unit_enemy_v2.png`, `unit_enemy_walk_v2.png`,
+`unit_enemy_attack_v2.png`, `building_watch_tower_v2.png`,
+`building_barracks_v2.png`, `building_armory_v2.png`,
+`building_warehouse_v4.png` and `building_tavern_v3.png` were created on
+2026-09-02 as original project art with the built-in OpenAI image generation
+tool. They are transparent source sprites; the game reduces them to the
+existing 64-pixel render canvas at startup. They are not copied, traced or
+modified from a commercial game's artwork.

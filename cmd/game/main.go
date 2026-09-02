@@ -2943,27 +2943,38 @@ func (g *Game) acknowledgeAdvisorTip() {
 // that bridges "what's true" (advisor) to "what it says" (ui).
 func advisorTipText(tip advisor.Tip) string {
 	t := i18n.T()
-	exampleX, exampleY := 0, 0
+	exampleName := ""
 	if tip.Building != nil {
-		exampleX, exampleY = tip.Building.X, tip.Building.Y
+		// A real gap found from an actual playtest report ("почему нет
+		// названия здания, что за например" / "а что за цифры? есть же
+		// кнопка перехода к зданию, у здания есть название, выводи
+		// название и все!"): every one of these messages used to show
+		// bare coordinates instead of the building's name, and the
+		// Advisor panel already has a "go to building" button
+		// (focusAdvisorBuilding) that jumps the camera straight to
+		// tip.Building itself -- coordinates in the text were pure
+		// clutter on top of a real navigation feature. t.BuildingName is
+		// the same localized lookup every other panel in the game
+		// already uses (inspector titles, route labels, ...).
+		exampleName = t.BuildingName[tip.Building.Kind]
 	}
 	switch tip.Kind {
 	case advisor.KindFoodRunningOut:
 		return fmt.Sprintf(t.AdvisorTipFoodRunningOut, tip.TicksLeft)
 	case advisor.KindIdleBuilding:
-		return fmt.Sprintf(t.AdvisorTipIdleBuilding, tip.Count, exampleX, exampleY)
+		return fmt.Sprintf(t.AdvisorTipIdleBuilding, tip.Count, exampleName)
 	case advisor.KindDisconnectedBuilding:
-		return fmt.Sprintf(t.AdvisorTipDisconnectedBuilding, tip.Count, exampleX, exampleY)
+		return fmt.Sprintf(t.AdvisorTipDisconnectedBuilding, tip.Count, exampleName)
 	case advisor.KindServeCountLow:
 		return fmt.Sprintf(t.AdvisorTipServeCountLow, tip.Current, tip.Recommended)
 	case advisor.KindServeCountHigh:
 		return fmt.Sprintf(t.AdvisorTipServeCountHigh, tip.Current, tip.Recommended)
 	case advisor.KindGatherWorkerStuck:
-		return fmt.Sprintf(t.AdvisorTipGatherWorkerStuck, tip.Count, exampleX, exampleY)
+		return fmt.Sprintf(t.AdvisorTipGatherWorkerStuck, tip.Count, exampleName)
 	case advisor.KindGatherWorkerEnclosed:
-		return fmt.Sprintf(t.AdvisorTipGatherWorkerEnclosed, tip.Count, exampleX, exampleY)
+		return fmt.Sprintf(t.AdvisorTipGatherWorkerEnclosed, tip.Count, exampleName)
 	case advisor.KindConstructionMaterialsMissing:
-		return fmt.Sprintf(t.AdvisorTipConstructionMaterialsMissing, t.ResourceName[tip.Resource], tip.Missing, exampleX, exampleY)
+		return fmt.Sprintf(t.AdvisorTipConstructionMaterialsMissing, t.ResourceName[tip.Resource], tip.Missing, exampleName)
 	default:
 		return ""
 	}

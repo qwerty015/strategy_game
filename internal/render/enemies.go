@@ -23,7 +23,14 @@ func DrawEnemies(screen *ebiten.Image, enemies []*enemy.Enemy, cam *Camera) {
 			continue
 		}
 		sx, sy := cam.TileToScreen(foe.X, foe.Y)
-		drawStandingFacingTintedAtScale(screen, assets.Enemy[0], sx, sy, enemyHeight, tilePixels, color.White, false)
+		frames := assets.Enemy
+		frame, flip := 0, false
+		if path := foe.RemainingPath(); len(path) > 0 {
+			frames = assets.EnemyWalkFrames
+			frame = walkingFrame(path, foe.X+foe.Y)
+			flip = facingLeft(foe.X, path)
+		}
+		drawStandingFacingTintedAtScale(screen, frames[frame], sx, sy, enemyHeight, tilePixels, color.White, flip)
 		drawEnemyHealth(screen, sx, sy, tilePixels, foe.HP)
 	}
 }

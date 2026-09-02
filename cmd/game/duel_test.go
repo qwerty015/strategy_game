@@ -5,6 +5,7 @@ import (
 
 	"strategy_game/internal/building"
 	"strategy_game/internal/combat"
+	"strategy_game/internal/ui"
 )
 
 // TestNewDuelGame_MapIsSymmetricAndIsthmusIsClear locks in the "1×1
@@ -54,10 +55,22 @@ func TestNewDuelGame_NaturalResourcesAreExactlyMirrored(t *testing.T) {
 				if b.Kind != kind {
 					continue
 				}
-				if b.X < centerX {
+				switch {
+				case b.X < centerX:
 					left++
-				} else {
+				case b.X > centerX:
 					right++
+				// b.X == centerX: the one self-mirroring column sits
+				// exactly on the map's own centerline (mirrorX maps it
+				// to itself) -- mirrorNaturalResourcesForFairness places
+				// a single copy there, correctly, rather than two
+				// identical ones on top of each other. Equidistant from
+				// both warehouses by construction, so it counts toward
+				// neither side rather than being force-classified as
+				// "right" by a strict less-than comparison, which isn't
+				// what happened and would fail this exact-equality
+				// check for no real unfairness at all.
+				default:
 				}
 			}
 			if left != right {
@@ -111,6 +124,85 @@ func TestDuelSimulation_PlayerControllersNeverTargetTheOpponentsBuildings(t *tes
 			if belongsToOpponent(s.DropoffBuilding()) {
 				t.Fatalf("tick %d: player serf delivering to an opponent-owned building (kind=%v)", i, s.DropoffBuilding().Kind)
 			}
+		}
+	}
+}
+
+// TestDuelGame_PlayerCannotSelectOrDemolishOpponentBuildings is a real bug
+// found from an actual playtest report: "я почему-то могу выбирать
+// постройки и юнитов противника, смотреть что у него на складе или в
+// здании, а также могу удалить его постройки". selectionAt and
+// buildingSelectionAt (the latter is what continuous demolition itself
+// resolves a click through) never checked Owner at all.
+func TestDuelGame_PlayerCannotSelectOrDemolishOpponentBuildings(t *testing.T) {
+	g := newDuelGame(AINormal)
+	aiWarehouse := findWarehouseOwnedBy(g.buildings, 1)
+	if aiWarehouse == nil {
+		t.Fatal("AI warehouse missing")
+	}
+	mx, my := g.camera.TileToScreen(aiWarehouse.X, aiWarehouse.Y)
+	mx += g.camera.TilePixels() / 2
+	my += g.camera.TilePixels() / 2
+
+	if sel := g.selectionAt(int(mx), int(my)); sel.Kind == ui.SelectionBuilding && sel.Building == aiWarehouse {
+		t.Fatal("selectionAt let the player select the AI's own warehouse")
+	}
+	if sel := g.buildingSelectionAt(int(mx), int(my)); sel.Kind == ui.SelectionBuilding && sel.Building == aiWarehouse {
+		t.Fatal("buildingSelectionAt (continuous demolition's own resolver) let the player target the AI's own warehouse")
+	}
+}
+
+// TestDuelGame_HireOptionsNeverCountTheOpponentsBuildings is a real bug
+// found from an actual playtest report: "у меня отображается 1 доступный
+// рыбак хотя хижину я еще не построил". hireOptions' countBuildings and
+// hireFromTab's per-profession search loops used to scan the whole map's
+// buildings, so the AI's own finished huts looked like player vacancies
+// -- clicking one of those cards would have spawned a player worker
+// straight into the AI's building.
+func TestDuelGame_HireOptionsNeverCountTheOpponentsBuildings(t *testing.T) {
+	g := newDuelGame(AIHard)
+	for i := 0; i < 5000; i++ {
+		g.tickOnce()
+	}
+	if len(g.ownedBuildings(1)) <= 2 {
+		t.Skip("AI hasn't built anything yet this run -- nothing to check")
+	}
+	options := g.hireOptions()
+	for _, opt := range options {
+		if opt.Kind == ui.HireSerf || opt.Kind == ui.HireBuilder {
+			continue // uncapped/flat-limit options, not tied to a building kind at all
+		}
+		if opt.Current > opt.Limit {
+			t.Fatalf("hire option %v: Current=%d > Limit=%d -- the AI's own buildings are inflating the player's limit", opt.Kind, opt.Current, opt.Limit)
+		}
+	}
+	// Directly confirm the fix: hireFromTab must never actually manage
+	// to place a player worker into one of the AI's buildings, even
+	// after being invoked repeatedly.
+	for i := 0; i < 20; i++ {
+		g.hireFromTab(ui.HireLumberjack)
+		g.hireFromTab(ui.HireFisherman)
+		g.hireFromTab(ui.HireQuarryman)
+		g.hireFromTab(ui.HireMiner)
+	}
+	for _, j := range g.jacks.Lumberjacks {
+		if h := j.HomeBuilding(); h != nil && h.Owner != 0 {
+			t.Fatal("a player lumberjack ended up homed in the AI's own LumberjackHut")
+		}
+	}
+	for _, f := range g.fishers.Fishermen {
+		if h := f.HomeBuilding(); h != nil && h.Owner != 0 {
+			t.Fatal("a player fisherman ended up homed in the AI's own FisherHut")
+		}
+	}
+	for _, q := range g.quarry.Quarrymen {
+		if h := q.HomeBuilding(); h != nil && h.Owner != 0 {
+			t.Fatal("a player quarryman ended up homed in the AI's own QuarryHut")
+		}
+	}
+	for _, m := range g.miners.Miners {
+		if h := m.HomeBuilding(); h != nil && h.Owner != 0 {
+			t.Fatal("a player miner ended up homed in the AI's own MinerHut")
 		}
 	}
 }
