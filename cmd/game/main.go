@@ -930,9 +930,13 @@ func (g *Game) unstaffedWorkerBuildings() map[*building.Building]bool {
 // already have without opening the inspector for each one. A site still
 // under construction doesn't count yet, same convention hireOptions'
 // own countBuildings below already uses.
+// g.ownedBuildings(0), not g.buildings -- a real bug found from an actual
+// duel-mode playtest report, same class as hireOptions'/hireFromTab's own
+// fix: without this, the "(N)" next to a Build-tab card counted the AI's
+// own finished buildings as if they were the player's.
 func (g *Game) finishedBuildingCounts() map[building.Kind]int {
 	counts := make(map[building.Kind]int)
-	for _, b := range g.buildings {
+	for _, b := range g.ownedBuildings(0) {
 		if b.ConstructionStage == building.ConstructionNone {
 			counts[b.Kind]++
 		}
@@ -943,10 +947,13 @@ func (g *Game) finishedBuildingCounts() map[building.Kind]int {
 // completedTownBuildingCount reports finished player structures for the town
 // summary. Roads and naturally generated objects are deliberately excluded:
 // the number answers "how many buildings does my town have?", not "how many
-// occupied map cells exist?".
+// occupied map cells exist?". g.ownedBuildings(0), not g.buildings -- same
+// real bug class as finishedBuildingCounts above: this feeds both the town
+// summary and developmentScore, so an AI building used to inflate the
+// player's own building count and score.
 func (g *Game) completedTownBuildingCount() int {
 	count := 0
-	for _, b := range g.buildings {
+	for _, b := range g.ownedBuildings(0) {
 		if b.ConstructionStage != building.ConstructionNone {
 			continue
 		}
@@ -969,10 +976,19 @@ func (g *Game) completedTownBuildingCount() int {
 // gated on canAffordHire, so a card the player can't currently pay for
 // reads as unavailable even when a vacancy exists.
 func (g *Game) hireOptions() []ui.HireOption {
+	// b.Owner == 0, not every building on the map -- a real bug found
+	// from an actual duel-mode playtest report: "у меня отображается 1
+	// доступный рыбак хотя хижину я еще не построил". Before this, the
+	// AI's own finished LumberjackHut/FisherHut/QuarryHut/... counted
+	// toward the PLAYER's hire-tab "Limit" the instant the AI built one,
+	// showing a vacancy that didn't exist on the player's own side at
+	// all. See hireFromTab's identical fix -- clicking that phantom card
+	// would have actually spawned a player worker into the AI's
+	// building, not merely miscounted.
 	countBuildings := func(kind building.Kind) int {
 		n := 0
 		for _, b := range g.buildings {
-			if b.Kind == kind && b.ConstructionStage == building.ConstructionNone {
+			if b.Kind == kind && b.Owner == 0 && b.ConstructionStage == building.ConstructionNone {
 				n++
 			}
 		}
@@ -1069,10 +1085,18 @@ func (g *Game) recommendedServeCount() int {
 	if g.recommendedServeCountCache != nil {
 		return *g.recommendedServeCountCache
 	}
-	warehouse := findWarehouse(g.buildings)
+	// findWarehouseOwnedBy(..., 0) and g.ownedBuildingsWithRoads(0), not
+	// findWarehouse(g.buildings) and g.buildings -- a real bug found
+	// from an actual duel-mode playtest report, same class as every
+	// other fix in this area: findWarehouse just grabs the first
+	// Warehouse found, and without the ownership filter the AI's own
+	// buildings/hauling distances would inflate the PLAYER's serf
+	// recommendation.
+	playerBuildings := g.ownedBuildingsWithRoads(0)
+	warehouse := findWarehouseOwnedBy(playerBuildings, 0)
 	total := 0.0
 	if warehouse != nil {
-		for _, b := range g.buildings {
+		for _, b := range playerBuildings {
 			if b == nil || b == warehouse || b.ConstructionStage != building.ConstructionNone {
 				continue
 			}
@@ -1080,7 +1104,7 @@ func (g *Game) recommendedServeCount() int {
 			if ticks <= 0 || amount <= 0 {
 				continue
 			}
-			path, ok := pathfind.FindPath(g.buildings, warehouse, b)
+			path, ok := pathfind.FindPath(playerBuildings, warehouse, b)
 			if !ok {
 				continue // not yet road-connected, no hauling demand to plan for
 			}
@@ -1118,7 +1142,16 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 	case ui.HireWeaponsmith:
 		g.hireVillagerInto(villagers.Weaponsmith, building.Armory)
 	case ui.HireLumberjack:
-		for _, b := range g.buildings {
+		// g.ownedBuildings(0), not g.buildings -- a real bug found from
+		// an actual duel-mode playtest report ("у меня отображается 1
+		// доступный рыбак хотя хижину я еще не построил"): this used to
+		// search the whole map's buildings, so an AI-owned finished hut
+		// with no PLAYER controller registered as its resident (which
+		// is every AI hut, always -- it's staffed by g.ai's own,
+		// separate controllers) looked exactly like an empty vacancy
+		// and would have actually spawned a player worker into it. See
+		// hireOptions' identical fix for the matching Hire-tab miscount.
+		for _, b := range g.ownedBuildings(0) {
 			if b.Kind == building.LumberjackHut && b.ConstructionStage == building.ConstructionNone && !g.jacks.HasHome(b) {
 				if !g.trySpendGold() {
 					return
@@ -1130,7 +1163,7 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 			}
 		}
 	case ui.HireFisherman:
-		for _, b := range g.buildings {
+		for _, b := range g.ownedBuildings(0) {
 			if b.Kind == building.FisherHut && b.ConstructionStage == building.ConstructionNone && !g.fishers.HasHome(b) {
 				if !g.trySpendGold() {
 					return
@@ -1142,7 +1175,7 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 			}
 		}
 	case ui.HireQuarryman:
-		for _, b := range g.buildings {
+		for _, b := range g.ownedBuildings(0) {
 			if b.Kind == building.QuarryHut && b.ConstructionStage == building.ConstructionNone && !g.quarry.HasHome(b) {
 				if !g.trySpendGold() {
 					return
@@ -1163,7 +1196,7 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 			g.statusMsg = ""
 		}
 	case ui.HireMiner:
-		for _, b := range g.buildings {
+		for _, b := range g.ownedBuildings(0) {
 			if b.Kind == building.MinerHut && b.ConstructionStage == building.ConstructionNone && !g.miners.HasHome(b) {
 				if !g.trySpendGold() {
 					return
@@ -1178,7 +1211,11 @@ func (g *Game) hireFromTab(kind ui.HireKind) {
 }
 
 func (g *Game) hireVillagerInto(profession villagers.Profession, kind building.Kind) {
-	for _, b := range g.buildings {
+	// g.ownedBuildings(0), not g.buildings -- see hireFromTab's
+	// HireLumberjack case for the identical, real bug this guards
+	// against (a Farmer/Baker/Winemaker/... hire would otherwise have
+	// been able to land in the AI's own building).
+	for _, b := range g.ownedBuildings(0) {
 		if b.Kind == kind && b.ConstructionStage == building.ConstructionNone && !g.vills.HasHome(b) {
 			if !g.trySpendGold() {
 				return
@@ -1908,8 +1945,13 @@ func (g *Game) canAffordHire() bool {
 // follows (see hireOptions' doc comment), just checked directly instead
 // of surfaced as a left-panel card, since a Sentry is hired from the
 // Barracks' own inspector instead (see the user's explicit request).
+// g.ownedBuildings(0), not g.buildings -- same real bug class as
+// hireFromTab's HireLumberjack case: without this, hiring a Sentry from
+// the Barracks could have placed a player unit into the AI's own
+// WatchTower (unstaffed from the player's g.sentries controller's point
+// of view, since the AI's is staffed by its own, separate one).
 func (g *Game) firstFreeWatchTower() *building.Building {
-	for _, b := range g.buildings {
+	for _, b := range g.ownedBuildings(0) {
 		if b.Kind == building.WatchTower && b.ConstructionStage == building.ConstructionNone && !g.sentries.HasHome(b) {
 			return b
 		}
@@ -2298,11 +2340,19 @@ func (g *Game) developmentScore() int {
 
 // buildingSelectionAt resolves only a building, including a Road. It is used
 // by continuous demolition so a passer-by never intercepts a road click.
+//
+// Owner != 0 buildings are skipped entirely -- a real bug found from an
+// actual duel-mode playtest report ("я почему-то могу выбирать постройки
+// и юнитов противника... а также могу удалить его постройки"): this
+// function is what continuous demolition itself resolves a click through,
+// so without this check a player could select AND DELETE the AI's own
+// buildings directly. In an ordinary single-player game every building's
+// Owner is its zero value 0 regardless, so this changes nothing there.
 func (g *Game) buildingSelectionAt(mx, my int) ui.Selection {
 	tx, ty := g.camera.ScreenToTile(mx, my)
 	for i := len(g.buildings) - 1; i >= 0; i-- {
 		b := g.buildings[i]
-		if b == nil {
+		if b == nil || b.Owner != 0 {
 			continue
 		}
 		footprint := building.Types[b.Kind].Footprint
@@ -2334,9 +2384,17 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 	// returned immediately: the unit loops below get first refusal, and
 	// the road is only the fallback if no unit is actually standing
 	// there.
+	// Owner != 0 buildings are skipped -- see buildingSelectionAt's
+	// identical, real bug fix: without this, clicking any AI-owned
+	// building selected and inspected it exactly like the player's own
+	// (its stockpile, its contents), which is where the "могу
+	// выбирать... смотреть что у него на складе" report came from.
 	var roadHit *building.Building
 	for i := len(g.buildings) - 1; i >= 0; i-- {
 		b := g.buildings[i]
+		if b.Owner != 0 {
+			continue
+		}
 		footprint := building.Types[b.Kind].Footprint
 		if tx >= b.X && tx < b.X+footprint && ty >= b.Y && ty < b.Y+footprint {
 			if b.Kind == building.Road {
@@ -2734,7 +2792,22 @@ func (g *Game) tickAdvisor() {
 	}
 	g.advisorCheckTicks = 0
 
-	tips := advisor.Evaluate(g.buildings, g.stock, g.pop, g.disconnectedBuildings(), g.advisorIdleSince, g.advisorGatherStuckSince, g.worldTicks, g.recommendedServeCount(), len(g.logi.Serfs))
+	// g.ownedBuildings(0) and a player-only disconnected map, not
+	// g.buildings/g.disconnectedBuildings() unfiltered -- the advisor is
+	// entirely player-facing (g.stock/g.pop passed alongside it already
+	// are the player's own), so every input into it needs the same
+	// scoping. A real bug found from an actual duel-mode playtest
+	// report, same class as unstaffedWorkerBuildings' own fix: without
+	// this, the AI's own disconnected/shortage-prone buildings could
+	// surface an advisor tip about a building that was never the
+	// player's to manage.
+	playerDisconnected := make(map[*building.Building]bool)
+	for b, v := range g.disconnectedBuildings() {
+		if b != nil && b.Owner == 0 {
+			playerDisconnected[b] = v
+		}
+	}
+	tips := advisor.Evaluate(g.ownedBuildings(0), g.stock, g.pop, playerDisconnected, g.advisorIdleSince, g.advisorGatherStuckSince, g.worldTicks, g.recommendedServeCount(), len(g.logi.Serfs))
 	if tip, blocked := g.enclosedGatherWorkerTip(); blocked {
 		tips = append(tips, tip)
 	}
@@ -4424,7 +4497,10 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 		g.selection.Building.Kind == building.WatchTower && g.selection.Building.ConstructionStage == building.ConstructionNone {
 		return g.selection.Building
 	}
-	for _, b := range g.buildings {
+	// g.ownedBuildings(0): a hover shouldn't preview the AI's own
+	// WatchTower range circle either, same faction-separation principle
+	// as buildingSelectionAt/selectionAt's own real bug fix.
+	for _, b := range g.ownedBuildings(0) {
 		if b.Kind == building.WatchTower && b.ConstructionStage == building.ConstructionNone && b.X == tx && b.Y == ty {
 			return b
 		}
