@@ -17,7 +17,8 @@ const sentryHeight = 0.90
 // ordinary three-frame walking unit while travelling to and from a Tavern.
 // The simulation state remains in package sentry; this file intentionally
 // derives only visual posture and tint from its public read-only methods.
-func DrawSentries(screen *ebiten.Image, sentries []*sentry.Sentry, cam *Camera) {
+// opponent -- see DrawSerfs's identical parameter doc comment.
+func DrawSentries(screen *ebiten.Image, sentries []*sentry.Sentry, cam *Camera, opponent bool) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(2)
 	for _, guard := range sentries {
@@ -26,6 +27,9 @@ func DrawSentries(screen *ebiten.Image, sentries []*sentry.Sentry, cam *Camera) 
 		}
 
 		sx, sy := cam.TileToScreen(guard.X, guard.Y)
+		if opponent {
+			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
+		}
 		path := guard.RemainingPath()
 		frame := walkingFrame(path, guard.X+guard.Y)
 		bob := float64(0)

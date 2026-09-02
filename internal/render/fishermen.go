@@ -15,7 +15,8 @@ const fishermanHeight = 1.10
 // DrawFishermen renders the worker as a road walker on land and as a boat
 // unit on water. Idle/unloading fishermen remain represented by their hut's
 // compact worker marker rather than sitting on top of the roof.
-func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Camera) {
+// opponent -- see DrawSerfs's identical parameter doc comment.
+func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Camera, opponent bool) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, f := range fishermen {
@@ -26,6 +27,9 @@ func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Ca
 			continue
 		}
 		sx, sy := cam.TileToScreen(f.X, f.Y)
+		if opponent {
+			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
+		}
 		bob := unitBob()
 		tint := color.Color(color.White)
 		if f.Starving {

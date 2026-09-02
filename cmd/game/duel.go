@@ -45,7 +45,18 @@ const (
 func growCenterWaterStrip(g *world.Grid, seed uint32) (isthmusMinY, isthmusMaxY int) {
 	centerX := g.Width / 2
 	left := centerX - duelWaterStripWidth/2
-	right := centerX + duelWaterStripWidth/2
+	// right is derived as g.Width-left, not centerX+duelWaterStripWidth/2,
+	// so the band is exactly symmetric under mirrorX (mirrorX(w,x) =
+	// w-1-x): a tile x is in [left,right) iff mirrorX(w,x) is too only
+	// when left+right == w. A real bug found from an actual playtest
+	// report: the old centerX+width/2 formula left left+right == w-1,
+	// off by exactly one tile -- every mirrored natural resource whose
+	// original sat right at that one edge column landed back on dry
+	// land (or vice versa) instead of water, silently failing to place
+	// and leaving the two sides' Fish counts visibly unequal (61 vs 41
+	// in one recorded run) despite mirrorNaturalResourcesForFairness
+	// otherwise mirroring everything correctly.
+	right := g.Width - left
 	if left < 1 {
 		left = 1
 	}
@@ -161,6 +172,7 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse)
+	buildings = mirrorNaturalResourcesForFairness(grid, buildings, aiPoint)
 
 	stock := resource.NewStockpile(stockpileCapacity)
 	stock.Add(resource.Plank, startingPlanks)
@@ -204,6 +216,76 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	game.refreshPopulation()
 	game.refreshSlotCache()
 	return game
+}
+
+// mirrorNaturalResourcesForFairness replaces every natural resource node
+// (Tree/Fish/StoneDeposit/CoalDeposit/GoldOreDeposit/IronOreDeposit) with
+// a left/right-symmetric layout: only the left half (the player's side,
+// x < duelMapWidth/2) of what the ordinary single-player seed functions
+// generated is kept, and each surviving node gets an exact mirrorX
+// counterpart placed on the AI's side.
+//
+// A real fairness bug found from an actual playtest report: the original
+// design deliberately called the single-player seed functions once
+// across the WHOLE map, unmirrored, as a documented simplification ("a
+// real simplification from the original plan... both sides still get
+// comparable resources at the same density... just not a pixel-exact
+// mirror image"). In practice this meant no per-side balancing at all --
+// stone/ore deposits only avoided the PLAYER's warehouse point (see
+// seedStoneDeposits/seedOreDeposits' avoid parameter above), never the
+// AI's, and each deposit type's 2-5 regions each start from one
+// seed-derived point with no left/right balancing whatsoever. The
+// reported outcome: one match had the AI's side holding effectively all
+// the stone and iron ore, the player's holding almost none. Exact
+// mirroring is the only approach that actually guarantees fairness
+// rather than leaving it to chance.
+func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.Building, aiPoint gridPoint) []*building.Building {
+	centerX := duelMapWidth / 2
+	kept := make([]*building.Building, 0, len(buildings))
+	var leftSide []*building.Building
+	for _, b := range buildings {
+		if !isNaturalResourceKind(b.Kind) {
+			kept = append(kept, b)
+			continue
+		}
+		if b.X >= centerX {
+			continue // right half -- discarded, regenerated as a mirror below
+		}
+		kept = append(kept, b)
+		leftSide = append(leftSide, b)
+	}
+
+	isDeposit := func(kind building.Kind) bool {
+		switch kind {
+		case building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+			return true
+		default:
+			return false
+		}
+	}
+
+	for _, b := range leftSide {
+		mx := mirrorX(duelMapWidth, b.X)
+		if mx == b.X {
+			continue // the one self-mirroring column, already placed
+		}
+		if isDeposit(b.Kind) && tooCloseToPoint(mx, b.Y, aiPoint, minDepositDistanceFromWarehouse) {
+			continue
+		}
+		if !building.CanPlace(grid, kept, b.Kind, mx, b.Y) {
+			continue
+		}
+		mirrored := &building.Building{
+			Kind:              b.Kind,
+			X:                 mx,
+			Y:                 b.Y,
+			Reserve:           b.Reserve,
+			GrowthTicks:       b.GrowthTicks,
+			GrowthTargetTicks: b.GrowthTargetTicks,
+		}
+		kept = append(kept, mirrored)
+	}
+	return kept
 }
 
 // factionDefeated reports whether owner has been fully wiped out --

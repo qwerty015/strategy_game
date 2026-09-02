@@ -19,7 +19,13 @@ const serfHeight = 1.05
 // the player can actually see goods being hauled along the road network
 // instead of resources just teleporting between buildings. A busy serf uses
 // a dedicated three-frame walking atlas; an idle one is dimmed.
-func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
+//
+// opponent marks every serf in this call as belonging to the "1×1 против
+// ИИ" opponent, not the player -- see DrawOpponentUnitMarker's doc
+// comment. cmd/game's Draw calls this twice when g.ai != nil: once for
+// the player's own g.logi.Serfs (opponent=false, unchanged), once for
+// g.ai.logi.Serfs (opponent=true).
+func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera, opponent bool) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, s := range serfs {
@@ -27,6 +33,9 @@ func DrawSerfs(screen *ebiten.Image, serfs []*logistics.Serf, cam *Camera) {
 			continue
 		}
 		sx, sy := cam.TileToScreen(s.X, s.Y)
+		if opponent {
+			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
+		}
 
 		frame := walkingFrame(s.RemainingPath(), s.X+s.Y)
 		bob := 0.0

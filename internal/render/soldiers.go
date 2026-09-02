@@ -19,7 +19,11 @@ const soldierHeight = 0.90
 // loop is replaced by a short profession-specific attack loop only after an
 // actual hit lands (Soldier.AttackVisual), so aiming or waiting never looks
 // like repeated combat.
-func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera) {
+// opponent -- see DrawSerfs's identical parameter doc comment. Most
+// important for this Draw call of all nine: without a way to tell an
+// opponent's soldier apart from the player's own, combat itself is
+// unreadable, not just a minor cosmetic gap.
+func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera, opponent bool) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, sd := range soldiers {
@@ -32,6 +36,9 @@ func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera
 		}
 
 		sx, sy := cam.TileToScreen(sd.X, sd.Y)
+		if opponent {
+			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
+		}
 		path := sd.RemainingPath()
 		frame := walkingFrame(path, sd.X+sd.Y)
 		flip := facingLeft(sd.X, path)

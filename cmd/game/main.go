@@ -580,6 +580,24 @@ func (g *Game) tickOnce() {
 		// can use the same neutral death animation without changing its API.
 		g.queueStarvationDeathEffects()
 
+		// playerBuildings scopes every player controller's Tick call to
+		// the player's OWN buildings (plus natural resource nodes) --
+		// see ownedBuildingsWithRoads' doc comment. A real bug found
+		// from an actual duel-mode playtest report: tickAIFaction always
+		// scoped the AI's own controllers this way, but the PLAYER's own
+		// controllers here were never given the same treatment -- every
+		// one of them (Tick calls below) was still passed the raw,
+		// unfiltered g.buildings, which in a "1×1 против ИИ" game
+		// contains BOTH factions' buildings in one shared slice. A
+		// player's serf could path to, haul from, or even deliver
+		// resources into the AI's own buildings, since nothing filtered
+		// them out -- reported as "the opponent's servant delivers to
+		// (or walks into) my warehouse". In an ordinary single-player
+		// game (g.ai == nil, every building's Owner is its zero value 0
+		// regardless) this returns exactly g.buildings, so it changes
+		// nothing there.
+		playerBuildings := g.ownedBuildingsWithRoads(0)
+
 		// One shared reservation ledger per simulation tick: every
 		// controller first reports its own pre-existing in-flight units
 		// (Reserve), then all three consume the same ledger in Tick, so
@@ -614,14 +632,14 @@ func (g *Game) tickOnce() {
 			run    func()
 		}
 		steps := []unitStep{
-			{g.logi.MaxWaitingHunger(), func() { serfResult = g.logi.Tick(g.grid, g.buildings, g.stock, ledger, g.soldiers.Soldiers) }},
-			{g.vills.MaxWaitingHunger(), func() { villagerDeaths = g.vills.Tick(g.buildings, ledger) }},
-			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, g.buildings, ledger) }},
-			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, g.buildings, ledger) }},
-			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, g.buildings, ledger) }},
-			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, g.buildings, ledger) }},
-			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, g.buildings, ledger) }},
-			{g.sentries.MaxWaitingHunger(), func() { sentryDeaths = g.sentries.Tick(g.buildings, g.enemies, ledger) }},
+			{g.logi.MaxWaitingHunger(), func() { serfResult = g.logi.Tick(g.grid, playerBuildings, g.stock, ledger, g.soldiers.Soldiers) }},
+			{g.vills.MaxWaitingHunger(), func() { villagerDeaths = g.vills.Tick(playerBuildings, ledger) }},
+			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, playerBuildings, ledger) }},
+			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, playerBuildings, ledger) }},
+			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, playerBuildings, ledger) }},
+			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, playerBuildings, ledger) }},
+			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, playerBuildings, ledger) }},
+			{g.sentries.MaxWaitingHunger(), func() { sentryDeaths = g.sentries.Tick(playerBuildings, g.enemies, ledger) }},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
 		for _, step := range steps {
@@ -631,7 +649,12 @@ func (g *Game) tickOnce() {
 		// their own food -- see package soldier's doc comment), so they sit
 		// outside the fairness-ordered steps above; their combat damage
 		// still needs to land before the prune below, same as a Sentry's.
-		soldierDeaths := g.soldiers.Tick(g.grid, g.buildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers))
+		// playerBuildings here too (movement/obstacle avoidance uses the
+		// player's own buildings, matching tickAIFaction's identical
+		// choice for the AI's own soldiers) -- opposingBuildingsFor
+		// already supplies the enemy's buildings separately, for
+		// targeting specifically, so this doesn't affect combat range.
+		soldierDeaths := g.soldiers.Tick(g.grid, playerBuildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers))
 		// Enemies strike back after every Sentry has had a chance to fire
 		// this tick -- see internal/enemy's Tick. A dead one (HP reaching
 		// 0 from a Sentry's own shot, applied above) is pruned right away
@@ -849,9 +872,20 @@ func isNaturalResourceKind(kind building.Kind) bool {
 // unstaffedWorkerBuildings distinguishes a permanently empty workplace from
 // a resident who only stepped out to eat. The renderer uses it for the red
 // building tint; gameplay pausing still uses inactiveWorkerBuildings above.
+//
+// Scoped to g.ownedBuildings(0) (the player's own buildings), not
+// g.buildings -- a real bug found from an actual duel-mode playtest report:
+// every AI-owned RequiresWorker building was being seeded here too (since
+// this used to range over the whole shared g.buildings slice), then never
+// cleared, because only the PLAYER's own controllers (g.vills/g.jacks/...)
+// are consulted below to clear the flag -- the AI's own separate
+// controllers (g.ai.vills/g.ai.jacks/...) never are. Every single AI
+// building looked permanently "unstaffed" to the player: red-tinted on
+// screen, and surfaced as idle-building advisor tips for buildings that
+// were never the player's to manage in the first place.
 func (g *Game) unstaffedWorkerBuildings() map[*building.Building]bool {
 	m := make(map[*building.Building]bool)
-	for _, b := range g.buildings {
+	for _, b := range g.ownedBuildings(0) {
 		if building.Types[b.Kind].RequiresWorker {
 			m[b] = true
 		}
@@ -5236,21 +5270,43 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, g.unstaffedWorkerBuildings(), disconnected)
-	render.DrawSerfs(screen, g.logi.Serfs, g.camera)
-	render.DrawVillagers(screen, g.vills.Villagers, g.camera)
-	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera)
-	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera)
-	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera)
-	render.DrawBuilders(screen, g.builders.Builders, g.camera)
-	render.DrawMiners(screen, g.miners.Miners, g.camera)
-	render.DrawSentries(screen, g.sentries.Sentries, g.camera)
-	render.DrawSoldiers(screen, g.soldiers.Soldiers, g.camera)
+	render.DrawSerfs(screen, g.logi.Serfs, g.camera, false)
+	render.DrawVillagers(screen, g.vills.Villagers, g.camera, false)
+	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera, false)
+	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera, false)
+	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera, false)
+	render.DrawBuilders(screen, g.builders.Builders, g.camera, false)
+	render.DrawMiners(screen, g.miners.Miners, g.camera, false)
+	render.DrawSentries(screen, g.sentries.Sentries, g.camera, false)
+	render.DrawSoldiers(screen, g.soldiers.Soldiers, g.camera, false)
+	// A real gap found from an actual duel-mode playtest report: the AI
+	// opponent's own entire population was never drawn at all, only its
+	// buildings (g.buildings is one shared slice, so those already
+	// rendered) -- every serf/villager/soldier of theirs was completely
+	// invisible on screen. opponent=true marks each with
+	// render.DrawOpponentUnitMarker so the player can tell them apart
+	// from their own once they're actually visible.
+	if g.ai != nil {
+		render.DrawSerfs(screen, g.ai.logi.Serfs, g.camera, true)
+		render.DrawVillagers(screen, g.ai.vills.Villagers, g.camera, true)
+		render.DrawLumberjacks(screen, g.ai.jacks.Lumberjacks, g.camera, true)
+		render.DrawFishermen(screen, g.ai.fishers.Fishermen, g.camera, true)
+		render.DrawQuarrymen(screen, g.ai.quarry.Quarrymen, g.camera, true)
+		render.DrawBuilders(screen, g.ai.builders.Builders, g.camera, true)
+		render.DrawMiners(screen, g.ai.miners.Miners, g.camera, true)
+		render.DrawSentries(screen, g.ai.sentries.Sentries, g.camera, true)
+		render.DrawSoldiers(screen, g.ai.soldiers.Soldiers, g.camera, true)
+	}
 	render.DrawEnemies(screen, g.enemies, g.camera)
 	if g.attackMarkerTarget != nil && g.attackMarkerTarget.Alive() {
 		render.DrawAttackMarker(screen, g.camera, g.attackMarkerTarget.X, g.attackMarkerTarget.Y)
 	}
 	render.DrawSentryProjectiles(screen, g.sentries.Sentries, g.camera)
 	render.DrawSoldierProjectiles(screen, g.soldiers.Soldiers, g.camera)
+	if g.ai != nil {
+		render.DrawSentryProjectiles(screen, g.ai.sentries.Sentries, g.camera)
+		render.DrawSoldierProjectiles(screen, g.ai.soldiers.Soldiers, g.camera)
+	}
 	render.DrawDeathEffects(screen, g.deathEffects, g.camera)
 	// Foreground layers (porches/fences/eaves) intentionally come after units;
 	// current sprites have none, but the per-building art manifest can add them

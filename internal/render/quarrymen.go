@@ -16,7 +16,8 @@ const quarrymanHeight = 1.08
 // DrawQuarrymen renders workers while they are outside the hut. Idle and
 // unloading workers are represented by the hut's compact +/- marker instead
 // of being drawn on top of the roof, same as DrawLumberjacks.
-func DrawQuarrymen(screen *ebiten.Image, quarrymen []*quarry.Quarryman, cam *Camera) {
+// opponent -- see DrawSerfs's identical parameter doc comment.
+func DrawQuarrymen(screen *ebiten.Image, quarrymen []*quarry.Quarryman, cam *Camera, opponent bool) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, q := range quarrymen {
@@ -28,6 +29,9 @@ func DrawQuarrymen(screen *ebiten.Image, quarrymen []*quarry.Quarryman, cam *Cam
 		}
 
 		sx, sy := cam.TileToScreen(q.X, q.Y)
+		if opponent {
+			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
+		}
 		frame := walkingFrame(q.RemainingPath(), q.X+q.Y)
 		bob := unitBob()
 		tint := color.Color(color.White)

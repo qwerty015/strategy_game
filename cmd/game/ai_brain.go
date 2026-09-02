@@ -25,14 +25,27 @@ const (
 // decisionIntervalTicks is how often (in simulation ticks) the brain
 // re-evaluates what to build/hire/attack with -- lower means the AI
 // reacts and expands faster.
+// decisionIntervalTicks was 40/25/15 originally -- roughly tripled after
+// a real playtest report: the AI can do everything a single decision
+// tick allows for free in one instant (hire serfs, hire a builder, staff
+// every empty building, place its next construction, requeue the
+// Armory, hire soldiers, consider an attack), while a human player must
+// manually navigate menus and place things one at a time, each costing
+// real seconds of deliberate play. The reported outcome at the old
+// values: the player had managed a FisherHut, Tavern and Winery by the
+// time the AI already had a finished WatchTower and was quietly massing
+// soldiers. Tripling the interval doesn't remove that structural
+// advantage (a deeper fix would rate-limit the AI to fewer actions per
+// tick, real future work), but it does triple how much real time the
+// player has to keep pace before the AI's next burst of free actions.
 func (d aiDifficulty) decisionIntervalTicks() int {
 	switch d {
 	case AIEasy:
-		return 40
+		return 120
 	case AIHard:
-		return 15
+		return 45
 	default:
-		return 25
+		return 75
 	}
 }
 
