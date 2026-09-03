@@ -79,7 +79,16 @@ type Fisherman struct {
 	// save-compatible zero value, a freshly restored/spawned fisherman
 	// always searches immediately on its first idle tick.
 	searchCooldown int
+
+	// killed -- see villagers.Villager's identical field doc comment.
+	killed bool
 }
+
+// Kill marks this fisherman for removal on Controller's next Tick.
+func (f *Fisherman) Kill() { f.killed = true }
+
+// Alive -- see villagers.Villager's identical method doc comment.
+func (f *Fisherman) Alive() bool { return f != nil && !f.killed }
 
 // Controller owns all fishermen in the settlement.
 type Controller struct {
@@ -284,6 +293,10 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 	var events []Event
 	remaining := c.Fishermen[:0]
 	for _, f := range c.Fishermen {
+		if f.killed {
+			events = append(events, Event{Kind: WorkerDied, Cargo: f.cargo})
+			continue
+		}
 		f.hungerTick++
 		if hunger.Dead(f.hungerTick) {
 			events = append(events, Event{Kind: WorkerDied, Cargo: f.cargo})

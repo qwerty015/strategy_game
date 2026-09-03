@@ -140,7 +140,16 @@ type Serf struct {
 	// A starving serf keeps hauling rather than stand idle
 	// forever -- see tryStartMeal's doc comment for why.
 	Starving bool
+
+	// killed -- see villagers.Villager's identical field doc comment.
+	killed bool
 }
+
+// Kill marks this serf for removal on Controller's next Tick.
+func (s *Serf) Kill() { s.killed = true }
+
+// Alive -- see villagers.Villager's identical method doc comment.
+func (s *Serf) Alive() bool { return s != nil && !s.killed }
 
 // State is the public, read-only activity state used by the inspector and
 // render layer. The movement bookkeeping itself remains private to this
@@ -527,6 +536,17 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stoc
 	var result TickResult
 	remaining := c.Serfs[:0]
 	for _, s := range c.Serfs {
+		if s.killed {
+			// See villagers.Villager's identical field doc comment.
+			// Same cargo-return handling as a hunger death below, so an
+			// enemy Sentry's kill doesn't silently destroy a resource
+			// the serf was mid-haul with.
+			if s.ph == toDropoff && !s.eating && s.amount > 0 {
+				stock.Add(s.resource, s.amount)
+			}
+			result.Deaths++
+			continue
+		}
 		s.ticksSinceMeal++
 		if hunger.Dead(s.ticksSinceMeal) {
 			// A carried haul has already left its source. Return it to the

@@ -107,6 +107,38 @@ type GameState struct {
 	CameraX    float64
 	CameraY    float64
 	CameraZoom float64
+
+	// IsDuelGame marks this as a "1×1 против ИИ" save -- a real bug
+	// caught before it ever shipped: a sentinel int (e.g. AIDifficulty
+	// -1 for "not a duel save") does NOT survive an old save's JSON
+	// missing the field entirely -- unmarshaling leaves it at its zero
+	// value, 0, which collides with a real difficulty level (AIEasy). A
+	// bool's zero value (false) has no such collision: every save from
+	// before duel-mode saving existed is correctly "not a duel save"
+	// with no migration needed at all. Units belonging to the AI (see
+	// UnitState.Owner) and buildings with Owner: 1 are simply ignored on
+	// load when this is false, the same as they always were before this
+	// field existed.
+	IsDuelGame bool
+
+	// AIDifficulty selects the AI's decision-speed/attack-squad-size
+	// tuning on load (see cmd/game's aiDifficulty). Meaningless unless
+	// IsDuelGame is true.
+	AIDifficulty int
+
+	// AIStockpile/AIPopulation are the AI faction's own economy state --
+	// entirely separate from Stockpile/Population above, which are
+	// always the player's. Meaningless unless IsDuelGame is true.
+	AIStockpile  resource.Stockpile
+	AIPopulation economy.Population
+
+	// AIBrainCooldown/AIBrainBuildIndex/AIBrainBuildAttempts are the
+	// AI's own decision-maker's state (see cmd/game's aiBrain) -- without
+	// these, a reloaded AI would restart its build order from scratch
+	// and could place a duplicate of whatever it was already building.
+	AIBrainCooldown      int
+	AIBrainBuildIndex    int
+	AIBrainBuildAttempts int
 }
 
 // UnitKind identifies a unit in a save file without coupling the save format
@@ -168,6 +200,14 @@ type UnitState struct {
 	// (package enemy's own debug roster isn't saved either -- see
 	// AGENTS.md); a restored soldier just starts idle.
 	HP int
+
+	// Owner identifies which faction this unit belongs to in a "1×1
+	// против ИИ" save -- see building.Building.Owner's identical
+	// convention (0 = player, 1 = AI). Zero value in every save from
+	// before duel-mode saving existed, which is exactly correct: every
+	// unit in an ordinary single-player save has always belonged to the
+	// player.
+	Owner int
 }
 
 // TreeRegrowthState is the persistent part of one delayed tree respawn.

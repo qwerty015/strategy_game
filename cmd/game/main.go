@@ -390,6 +390,16 @@ type Game struct {
 	preModeSelectScreen appScreen
 	preModeSelectPaused bool
 
+	// duelResult is the "1×1 против ИИ" win/loss outcome, checked once
+	// per tick (see tickOnce) whenever g.ai != nil. A real gap found from
+	// the user asking "что значит победа, как будет выглядеть" --
+	// factionDefeated already existed (tested in isolation) but nothing
+	// in the actual running game ever called it: there was no way at all
+	// for a match to end, even after one side's every building and unit
+	// was gone. Non-zero freezes the simulation (Update's early return,
+	// same as g.paused) and shows drawDuelResult's overlay instead.
+	duelResult duelResult
+
 	// worldTicks is the game clock (see internal/worldclock): total
 	// simulation ticks elapsed, incremented once per tick inside the
 	// g.sim.Advance() loop in Update. It drives visual ambient effects only;
@@ -510,6 +520,9 @@ func (g *Game) Update() error {
 	// by the time Update runs; this call was redundant and harmful.
 	if g.screen != screenPlay {
 		return g.updateFrontScreen()
+	}
+	if g.duelResult != duelResultNone {
+		return g.updateDuelResult()
 	}
 	if g.paused {
 		return g.updatePauseMenu()
@@ -639,7 +652,9 @@ func (g *Game) tickOnce() {
 			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, playerBuildings, ledger) }},
 			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, playerBuildings, ledger) }},
 			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, playerBuildings, ledger) }},
-			{g.sentries.MaxWaitingHunger(), func() { sentryDeaths = g.sentries.Tick(playerBuildings, g.enemies, ledger) }},
+			{g.sentries.MaxWaitingHunger(), func() {
+				sentryDeaths = g.sentries.Tick(playerBuildings, g.enemies, g.opposingIntruderTargetsFor(g.sentries), ledger)
+			}},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
 		for _, step := range steps {
@@ -654,7 +669,7 @@ func (g *Game) tickOnce() {
 		// choice for the AI's own soldiers) -- opposingBuildingsFor
 		// already supplies the enemy's buildings separately, for
 		// targeting specifically, so this doesn't affect combat range.
-		soldierDeaths := g.soldiers.Tick(g.grid, playerBuildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers))
+		soldierDeaths := g.soldiers.Tick(g.grid, playerBuildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers), g.opposingIntruderTargetsForSoldiers(g.soldiers))
 		// Enemies strike back after every Sentry has had a chance to fire
 		// this tick -- see internal/enemy's Tick. A dead one (HP reaching
 		// 0 from a Sentry's own shot, applied above) is pruned right away
@@ -731,6 +746,7 @@ func (g *Game) tickOnce() {
 		}
 		g.tickAIFaction(g.grid)
 		g.pruneDestroyedBuildings()
+		g.checkDuelResult()
 
 		g.clearMissingUnitSelection()
 		g.refreshPopulation()
@@ -838,10 +854,26 @@ func (g *Game) ownedBuildings(owner int) []*building.Building {
 // lumberjack, ...) actually need for their Tick calls to route over that
 // faction's own road network. See ownedBuildings' doc comment for the
 // bug this split fixes.
+// Road is included regardless of Owner, same as isNaturalResourceKind's
+// exemption -- a real bug found from an actual playtest report: an AI
+// faction that's fully defeated leaves its own Road tiles behind
+// (pruneDestroyedBuildings never removes Road, by design), still tagged
+// with the AI's old Owner forever -- nothing ever reassigns it. Once the
+// player takes over that territory (builds their own Tavern/workshops
+// there), road-only pathfinding (Tavern hauling, a worker's own trip to
+// eat) filtered those leftover road tiles out as "not mine", breaking
+// delivery on the conquered island while off-road pathing (soldier
+// feeding, most worker job-pathing, which never filters by Owner at all)
+// kept working fine -- reported as "боевым юнитам доставляется еда
+// слугами" [feeding works] "а рыболов не может пойти поесть" [tavern
+// trips don't], "мистика!". A road is shared infrastructure, not
+// faction property, the same way a tree or ore deposit already is --
+// per the user's own explicit suggestion ("дорога — нейтральна и не
+// принадлежит ни одной из сторон").
 func (g *Game) ownedBuildingsWithRoads(owner int) []*building.Building {
 	var out []*building.Building
 	for _, b := range g.buildings {
-		if b.Owner == owner || isNaturalResourceKind(b.Kind) {
+		if b.Owner == owner || isNaturalResourceKind(b.Kind) || b.Kind == building.Road {
 			out = append(out, b)
 		}
 	}
@@ -3200,11 +3232,7 @@ func anyMatch[T any](items []T, pred func(T) bool) bool {
 // cadence is paced by played time, not wall-clock time -- consistent with
 // every other tick-scale constant in the simulation (hunger, growth, ...).
 func (g *Game) tickAutosave() {
-	if g.autosaveSlot == 0 || g.ai != nil {
-		// See saveGame's doc comment: a duel game can't be saved yet.
-		// Skip silently here (no repeated "can't save" status-bar spam
-		// every autosaveIntervalTicks) -- a manual Save click still
-		// surfaces the real message once.
+	if g.autosaveSlot == 0 {
 		return
 	}
 	g.autosaveTicks++
@@ -3393,7 +3421,7 @@ func (g *Game) commitDialogSave() {
 // buildSaveState assembles the full serializable snapshot of the running
 // game, shared by every save path (quicksave and every named slot).
 func (g *Game) buildSaveState(name string) save.GameState {
-	return save.GameState{
+	state := save.GameState{
 		Name:               name,
 		GridWidth:          g.grid.Width,
 		GridHeight:         g.grid.Height,
@@ -3422,27 +3450,19 @@ func (g *Game) buildSaveState(name string) save.GameState {
 		CameraY:            g.camera.Y,
 		CameraZoom:         g.camera.Scale,
 	}
+	if g.ai != nil {
+		state.IsDuelGame = true
+		state.AIDifficulty = int(g.ai.brain.difficulty)
+		state.AIStockpile = *g.ai.stock
+		state.AIPopulation = *g.ai.pop
+		state.AIBrainCooldown = g.ai.brain.cooldown
+		state.AIBrainBuildIndex = g.ai.brain.buildIndex
+		state.AIBrainBuildAttempts = g.ai.brain.buildAttempts
+	}
+	return state
 }
 
 func (g *Game) saveGame(path, name string) error {
-	if g.ai != nil {
-		// A real, silent-corruption risk found while wiring up the duel
-		// mode's menu: buildSaveState only ever serializes the PLAYER's
-		// own controllers (g.logi/g.vills/g.soldiers/...), never g.ai's
-		// second, independent set -- and loadGame has no code path that
-		// reconstructs a faction at all. Saving would still "succeed"
-		// (both factions' Buildings share one slice, so nothing
-		// crashes), but reloading would silently freeze the AI forever:
-		// its buildings sit there as inert decoration with g.ai == nil,
-		// never ticking again. Full duel save/load support (serializing
-		// a second faction's units plus its aiBrain state) is real,
-		// substantial future work -- until then, refusing to save is
-		// far less surprising than one that quietly breaks the opponent
-		// the moment the player reloads it. i18n.T() is read here, not
-		// captured at init, so it always reflects the player's current
-		// language choice.
-		return errors.New(i18n.T().DuelSaveNotSupported)
-	}
 	return save.Save(path, g.buildSaveState(name))
 }
 
@@ -3517,13 +3537,41 @@ func (g *Game) loadGame(path string) error {
 	g.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
 	g.camera.Pan(0, 0, g.grid.Width, g.grid.Height, mapRect.Dx(), mapRect.Dy())
 	g.selection.Clear()
+	// A loaded game is never mid-result -- see duelResult's own doc
+	// comment on why a save can in practice never actually happen while
+	// it's set (Update's early return freezes the simulation loop
+	// entirely once a match is decided), but resetting it explicitly
+	// here costs nothing and documents the invariant.
+	g.duelResult = duelResultNone
+
+	// g.ai is reconstructed before any unit restoration below --
+	// restoreUnits dispatches every Owner: 1 UnitState into g.ai's own
+	// controllers, which must already exist for that to do anything. See
+	// GameState.IsDuelGame's doc comment: false means this isn't a duel
+	// save at all, the only thing every save from before duel-mode
+	// saving existed can mean.
+	g.ai = nil
+	if state.IsDuelGame {
+		if aiWarehouse := findWarehouseOwnedBy(buildings, 1); aiWarehouse != nil {
+			g.ai = restoreFaction(1, aiWarehouse, aiDifficulty(state.AIDifficulty), state.AIStockpile, state.AIPopulation, state.AIBrainCooldown, state.AIBrainBuildIndex, state.AIBrainBuildAttempts)
+		}
+		// aiWarehouse == nil (the AI had already lost its only warehouse
+		// the instant the save happened, mid-tick before pruning/
+		// checkDuelResult caught up) leaves g.ai nil -- the same "no AI
+		// faction at all" state an ordinary single-player save already
+		// means, nothing further to reconstruct.
+	}
 
 	// Jobs are rebuilt from the saved positions. The roster itself is
 	// restored, so hiring extra serfs or saving a worker halfway to the
-	// Tavern no longer silently resets the town.
+	// Tavern no longer silently resets the town. b.Owner == 0 below --
+	// a real bug found while adding duel-mode saving: this used to add
+	// ANY other operational warehouse regardless of owner, which would
+	// have handed the player's own logistics controller a route into
+	// the AI's warehouse too.
 	g.logi = logistics.NewController(warehouse, 0)
 	for _, b := range buildings {
-		if b.IsOperationalWarehouse() && b != warehouse {
+		if b.Owner == 0 && b.IsOperationalWarehouse() && b != warehouse {
 			g.logi.AddWarehouse(b)
 		}
 	}
@@ -3542,7 +3590,7 @@ func (g *Game) loadGame(path string) error {
 		// Keep those saves playable with the old sensible defaults.
 		g.logi = logistics.NewController(warehouse, startingSerfs)
 		for _, b := range buildings {
-			if b.IsOperationalWarehouse() && b != warehouse {
+			if b.Owner == 0 && b.IsOperationalWarehouse() && b != warehouse {
 				g.logi.AddWarehouse(b)
 			}
 		}
@@ -3650,9 +3698,40 @@ func (g *Game) serializeBuildingPriorities() []save.BuildingPriorityState {
 	return out
 }
 
+// serializeUnits returns the player's own units, plus the AI faction's
+// (see UnitState.Owner) when g.ai != nil -- see buildSaveState's doc
+// comment on the real gap this closes: a duel save used to be refused
+// entirely rather than lose the AI's roster silently.
 func (g *Game) serializeUnits() []save.UnitState {
-	units := make([]save.UnitState, 0, len(g.logi.Serfs)+len(g.vills.Villagers)+len(g.jacks.Lumberjacks)+len(g.fishers.Fishermen)+len(g.quarry.Quarrymen)+len(g.builders.Builders)+len(g.miners.Miners)+len(g.sentries.Sentries))
-	for _, s := range g.logi.Serfs {
+	units := serializeUnitsFor(0, g.buildings, g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.sentries, g.soldiers)
+	if g.ai != nil {
+		units = append(units, serializeUnitsFor(1, g.buildings, g.ai.logi, g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.builders, g.ai.miners, g.ai.sentries, g.ai.soldiers)...)
+	}
+	return units
+}
+
+// serializeUnitsFor is serializeUnits' body, parameterized over which
+// faction's controllers to read from -- owner is stamped onto every
+// entry (see UnitState.Owner) so restoreUnits knows which faction's
+// controllers to restore each one into. buildings is always the full,
+// shared g.buildings (both factions' buildings share one list, same as
+// everywhere else in this codebase), since HomeIndex/TargetIndex point
+// into it regardless of which faction the unit itself belongs to.
+func serializeUnitsFor(
+	owner int,
+	buildings []*building.Building,
+	logi *logistics.Controller,
+	vills *villagers.Controller,
+	jacks *lumberjack.Controller,
+	fishers *fishing.Controller,
+	quarryC *quarry.Controller,
+	builders *builder.Controller,
+	miners *miner.Controller,
+	sentries *sentry.Controller,
+	soldiers *soldier.Controller,
+) []save.UnitState {
+	units := make([]save.UnitState, 0, len(logi.Serfs)+len(vills.Villagers)+len(jacks.Lumberjacks)+len(fishers.Fishermen)+len(quarryC.Quarrymen)+len(builders.Builders)+len(miners.Miners)+len(sentries.Sentries))
+	for _, s := range logi.Serfs {
 		units = append(units, save.UnitState{
 			Kind:        save.UnitSerf,
 			X:           s.X,
@@ -3661,9 +3740,10 @@ func (g *Game) serializeUnits() []save.UnitState {
 			HungerTicks: s.HungerTicks(),
 			Starving:    s.Starving,
 			Dismissing:  s.Dismissing(),
+			Owner:       owner,
 		})
 	}
-	for _, v := range g.vills.Villagers {
+	for _, v := range vills.Villagers {
 		var kind save.UnitKind
 		switch v.Profession {
 		case villagers.Baker:
@@ -3687,21 +3767,22 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Kind:        kind,
 			X:           v.X,
 			Y:           v.Y,
-			HomeIndex:   indexOfBuilding(g.buildings, v.HomeBuilding()),
+			HomeIndex:   indexOfBuilding(buildings, v.HomeBuilding()),
 			HungerTicks: v.HungerTicks(),
 			Starving:    v.Starving,
 			State:       int(v.State()),
 			Meal:        v.Meal(),
+			Owner:       owner,
 		})
 	}
-	for _, j := range g.jacks.Lumberjacks {
+	for _, j := range jacks.Lumberjacks {
 		_, cargoAmount := j.Cargo()
-		targetIndex := indexOfBuilding(g.buildings, j.TargetTree())
+		targetIndex := indexOfBuilding(buildings, j.TargetTree())
 		units = append(units, save.UnitState{
 			Kind:        save.UnitLumberjack,
 			X:           j.X,
 			Y:           j.Y,
-			HomeIndex:   indexOfBuilding(g.buildings, j.HomeBuilding()),
+			HomeIndex:   indexOfBuilding(buildings, j.HomeBuilding()),
 			HungerTicks: j.HungerTicks(),
 			Starving:    j.Starving,
 			State:       int(j.State()),
@@ -3710,16 +3791,17 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Cargo:       resource.Log,
 			CargoAmount: cargoAmount,
 			Meal:        j.Meal(),
+			Owner:       owner,
 		})
 	}
-	for _, f := range g.fishers.Fishermen {
+	for _, f := range fishers.Fishermen {
 		_, cargoAmount := f.Cargo()
-		targetIndex := indexOfBuilding(g.buildings, f.TargetFish())
+		targetIndex := indexOfBuilding(buildings, f.TargetFish())
 		units = append(units, save.UnitState{
 			Kind:        save.UnitFisherman,
 			X:           f.X,
 			Y:           f.Y,
-			HomeIndex:   indexOfBuilding(g.buildings, f.HomeBuilding()),
+			HomeIndex:   indexOfBuilding(buildings, f.HomeBuilding()),
 			HungerTicks: f.HungerTicks(),
 			Starving:    f.Starving,
 			State:       int(f.State()),
@@ -3728,15 +3810,16 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Cargo:       resource.Fish,
 			CargoAmount: cargoAmount,
 			Meal:        f.Meal(),
+			Owner:       owner,
 		})
 	}
-	for _, q := range g.quarry.Quarrymen {
-		targetIndex := indexOfBuilding(g.buildings, q.TargetDeposit())
+	for _, q := range quarryC.Quarrymen {
+		targetIndex := indexOfBuilding(buildings, q.TargetDeposit())
 		units = append(units, save.UnitState{
 			Kind:        save.UnitQuarryman,
 			X:           q.X,
 			Y:           q.Y,
-			HomeIndex:   indexOfBuilding(g.buildings, q.HomeBuilding()),
+			HomeIndex:   indexOfBuilding(buildings, q.HomeBuilding()),
 			HungerTicks: q.HungerTicks(),
 			Starving:    q.Starving,
 			State:       int(q.State()),
@@ -3745,32 +3828,34 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Cargo:       resource.StoneBlock,
 			CargoAmount: q.RawCargo(),
 			Meal:        q.Meal(),
+			Owner:       owner,
 		})
 	}
-	for _, bl := range g.builders.Builders {
-		targetIndex := indexOfBuilding(g.buildings, bl.TargetSite())
+	for _, bl := range builders.Builders {
+		targetIndex := indexOfBuilding(buildings, bl.TargetSite())
 		units = append(units, save.UnitState{
 			Kind:        save.UnitBuilder,
 			X:           bl.X,
 			Y:           bl.Y,
-			HomeIndex:   indexOfBuilding(g.buildings, bl.Warehouse),
+			HomeIndex:   indexOfBuilding(buildings, bl.Warehouse),
 			HungerTicks: bl.HungerTicks(),
 			Starving:    bl.Starving,
 			State:       int(bl.State()),
 			TargetIndex: targetIndex,
 			WorkTicks:   bl.WorkTicks(),
 			Meal:        bl.Meal(),
+			Owner:       owner,
 		})
 	}
-	for _, mn := range g.miners.Miners {
+	for _, mn := range miners.Miners {
 		cargoResource, cargoAmount := mn.Cargo()
-		targetIndex := indexOfBuilding(g.buildings, mn.TargetDeposit())
+		targetIndex := indexOfBuilding(buildings, mn.TargetDeposit())
 		quotaIndex, quotaProgress := mn.QuotaProgress()
 		units = append(units, save.UnitState{
 			Kind:          save.UnitMiner,
 			X:             mn.X,
 			Y:             mn.Y,
-			HomeIndex:     indexOfBuilding(g.buildings, mn.HomeBuilding()),
+			HomeIndex:     indexOfBuilding(buildings, mn.HomeBuilding()),
 			HungerTicks:   mn.HungerTicks(),
 			Starving:      mn.Starving,
 			State:         int(mn.State()),
@@ -3781,21 +3866,23 @@ func (g *Game) serializeUnits() []save.UnitState {
 			Meal:          mn.Meal(),
 			QuotaIndex:    quotaIndex,
 			QuotaProgress: quotaProgress,
+			Owner:         owner,
 		})
 	}
-	for _, s := range g.sentries.Sentries {
+	for _, s := range sentries.Sentries {
 		units = append(units, save.UnitState{
 			Kind:        save.UnitSentry,
 			X:           s.X,
 			Y:           s.Y,
-			HomeIndex:   indexOfBuilding(g.buildings, s.HomeBuilding()),
+			HomeIndex:   indexOfBuilding(buildings, s.HomeBuilding()),
 			HungerTicks: s.HungerTicks(),
 			Starving:    s.Starving,
 			State:       int(s.State()),
 			Meal:        s.Meal(),
+			Owner:       owner,
 		})
 	}
-	for _, sd := range g.soldiers.Soldiers {
+	for _, sd := range soldiers.Soldiers {
 		kind := save.UnitArcher
 		if sd.Profession == soldier.Swordsman {
 			kind = save.UnitSwordsman
@@ -3807,118 +3894,151 @@ func (g *Game) serializeUnits() []save.UnitState {
 			HomeIndex:   -1,
 			HungerTicks: sd.HungerTicks(),
 			HP:          sd.HP,
+			Owner:       owner,
 		})
 	}
 	return units
 }
 
+// restoreUnits dispatches each state to the right FACTION's controllers
+// by state.Owner -- Owner: 0 always means the player's own g.logi/
+// g.vills/... (unchanged from before duel saves existed); Owner: 1 means
+// g.ai's, which must already exist (see restoreDuelAIFaction, called
+// before this from loadGame) for any Owner: 1 state to do anything.
 func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Building) {
 	for _, state := range states {
-		switch state.Kind {
-		case save.UnitSerf:
-			g.logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving, state.Dismissing)
-		case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher, save.UnitCarpenter, save.UnitSmelter, save.UnitWeaponsmith:
-			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) {
+		if state.Owner == 1 {
+			if g.ai == nil {
 				continue
 			}
-			home := buildings[state.HomeIndex]
-			var profession villagers.Profession
-			switch state.Kind {
-			case save.UnitBaker:
-				profession = villagers.Baker
-			case save.UnitWinemaker:
-				profession = villagers.Winemaker
-			case save.UnitSwineherd:
-				profession = villagers.Swineherd
-			case save.UnitButcher:
-				profession = villagers.Butcher
-			case save.UnitCarpenter:
-				profession = villagers.Carpenter
-			case save.UnitSmelter:
-				profession = villagers.Smelter
-			case save.UnitWeaponsmith:
-				profession = villagers.Weaponsmith
-			default:
-				profession = villagers.Farmer
-			}
-			if (profession == villagers.Farmer && home.Kind != building.Farm) ||
-				(profession == villagers.Baker && home.Kind != building.Bakery) ||
-				(profession == villagers.Winemaker && home.Kind != building.Winery) ||
-				(profession == villagers.Swineherd && home.Kind != building.PigFarm) ||
-				(profession == villagers.Butcher && home.Kind != building.MeatWorkshop) ||
-				(profession == villagers.Carpenter && home.Kind != building.CarpentryWorkshop) ||
-				(profession == villagers.Smelter && home.Kind != building.Smeltery) ||
-				(profession == villagers.Weaponsmith && home.Kind != building.Armory) {
-				continue
-			}
-			g.vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings, state.Meal)
-		case save.UnitLumberjack:
-			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.LumberjackHut {
-				continue
-			}
-			var target *building.Building
-			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.Tree {
-				target = buildings[state.TargetIndex]
-			}
-			g.jacks.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, lumberjack.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
-		case save.UnitFisherman:
-			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.FisherHut {
-				continue
-			}
-			var target *building.Building
-			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.Fish {
-				target = buildings[state.TargetIndex]
-			}
-			g.fishers.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, fishing.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
-		case save.UnitQuarryman:
-			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.QuarryHut {
-				continue
-			}
-			var target *building.Building
-			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.StoneDeposit {
-				target = buildings[state.TargetIndex]
-			}
-			g.quarry.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, quarry.State(state.State), target, state.WorkTicks, state.CargoAmount, g.grid, buildings, state.Meal)
-		case save.UnitBuilder:
-			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.Warehouse {
-				continue
-			}
-			var target *building.Building
-			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) {
-				candidate := buildings[state.TargetIndex]
-				// Either a fresh construction site, or a damaged, already
-				// finished building the builder was walking to or working
-				// on repairing -- see builder.StateRepairing.
-				if candidate.ConstructionStage != building.ConstructionNone ||
-					(candidate.HP > 0 && candidate.HP < building.MaxHP) {
-					target = candidate
-				}
-			}
-			g.builders.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, builder.State(state.State), target, state.WorkTicks, g.grid, buildings, state.Meal)
-		case save.UnitSentry:
-			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.WatchTower {
-				continue
-			}
-			g.sentries.RestoreSentry(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, sentry.State(state.State), buildings, state.Meal)
-		case save.UnitMiner:
-			if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.MinerHut {
-				continue
-			}
-			var target *building.Building
-			if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) {
-				switch buildings[state.TargetIndex].Kind {
-				case building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
-					target = buildings[state.TargetIndex]
-				}
-			}
-			g.miners.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, miner.State(state.State), target, state.WorkTicks, state.CargoAmount, state.Cargo, state.QuotaIndex, state.QuotaProgress, g.grid, buildings, state.Meal)
-		case save.UnitArcher, save.UnitSwordsman:
-			profession := soldier.Archer
-			if state.Kind == save.UnitSwordsman {
-				profession = soldier.Swordsman
-			}
-			g.soldiers.Restore(profession, state.X, state.Y, state.HungerTicks, state.HP)
+			restoreUnitStateInto(state, g.grid, buildings, g.ai.logi, g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.builders, g.ai.miners, g.ai.sentries, g.ai.soldiers)
+			continue
 		}
+		restoreUnitStateInto(state, g.grid, buildings, g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.sentries, g.soldiers)
+	}
+}
+
+// restoreUnitStateInto is restoreUnits' original per-unit body,
+// parameterized over which faction's controllers to restore into --
+// mirrors serializeUnitsFor's identical split.
+func restoreUnitStateInto(
+	state save.UnitState,
+	grid *world.Grid,
+	buildings []*building.Building,
+	logi *logistics.Controller,
+	vills *villagers.Controller,
+	jacks *lumberjack.Controller,
+	fishers *fishing.Controller,
+	quarryC *quarry.Controller,
+	builders *builder.Controller,
+	miners *miner.Controller,
+	sentries *sentry.Controller,
+	soldiers *soldier.Controller,
+) {
+	switch state.Kind {
+	case save.UnitSerf:
+		logi.RestoreSerf(state.X, state.Y, state.HungerTicks, state.Starving, state.Dismissing)
+	case save.UnitFarmer, save.UnitBaker, save.UnitWinemaker, save.UnitSwineherd, save.UnitButcher, save.UnitCarpenter, save.UnitSmelter, save.UnitWeaponsmith:
+		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) {
+			return
+		}
+		home := buildings[state.HomeIndex]
+		var profession villagers.Profession
+		switch state.Kind {
+		case save.UnitBaker:
+			profession = villagers.Baker
+		case save.UnitWinemaker:
+			profession = villagers.Winemaker
+		case save.UnitSwineherd:
+			profession = villagers.Swineherd
+		case save.UnitButcher:
+			profession = villagers.Butcher
+		case save.UnitCarpenter:
+			profession = villagers.Carpenter
+		case save.UnitSmelter:
+			profession = villagers.Smelter
+		case save.UnitWeaponsmith:
+			profession = villagers.Weaponsmith
+		default:
+			profession = villagers.Farmer
+		}
+		if (profession == villagers.Farmer && home.Kind != building.Farm) ||
+			(profession == villagers.Baker && home.Kind != building.Bakery) ||
+			(profession == villagers.Winemaker && home.Kind != building.Winery) ||
+			(profession == villagers.Swineherd && home.Kind != building.PigFarm) ||
+			(profession == villagers.Butcher && home.Kind != building.MeatWorkshop) ||
+			(profession == villagers.Carpenter && home.Kind != building.CarpentryWorkshop) ||
+			(profession == villagers.Smelter && home.Kind != building.Smeltery) ||
+			(profession == villagers.Weaponsmith && home.Kind != building.Armory) {
+			return
+		}
+		vills.RestoreVillager(profession, home, state.X, state.Y, state.HungerTicks, state.Starving, villagers.State(state.State), buildings, state.Meal)
+	case save.UnitLumberjack:
+		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.LumberjackHut {
+			return
+		}
+		var target *building.Building
+		if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.Tree {
+			target = buildings[state.TargetIndex]
+		}
+		jacks.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, lumberjack.State(state.State), target, state.WorkTicks, state.CargoAmount, grid, buildings, state.Meal)
+	case save.UnitFisherman:
+		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.FisherHut {
+			return
+		}
+		var target *building.Building
+		if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.Fish {
+			target = buildings[state.TargetIndex]
+		}
+		fishers.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, fishing.State(state.State), target, state.WorkTicks, state.CargoAmount, grid, buildings, state.Meal)
+	case save.UnitQuarryman:
+		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.QuarryHut {
+			return
+		}
+		var target *building.Building
+		if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.StoneDeposit {
+			target = buildings[state.TargetIndex]
+		}
+		quarryC.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, quarry.State(state.State), target, state.WorkTicks, state.CargoAmount, grid, buildings, state.Meal)
+	case save.UnitBuilder:
+		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.Warehouse {
+			return
+		}
+		var target *building.Building
+		if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) {
+			candidate := buildings[state.TargetIndex]
+			// Either a fresh construction site, or a damaged, already
+			// finished building the builder was walking to or working
+			// on repairing -- see builder.StateRepairing.
+			if candidate.ConstructionStage != building.ConstructionNone ||
+				(candidate.HP > 0 && candidate.HP < building.MaxHP) {
+				target = candidate
+			}
+		}
+		builders.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, builder.State(state.State), target, state.WorkTicks, grid, buildings, state.Meal)
+	case save.UnitSentry:
+		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.WatchTower {
+			return
+		}
+		sentries.RestoreSentry(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, sentry.State(state.State), buildings, state.Meal)
+	case save.UnitMiner:
+		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.MinerHut {
+			return
+		}
+		var target *building.Building
+		if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) {
+			switch buildings[state.TargetIndex].Kind {
+			case building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+				target = buildings[state.TargetIndex]
+			}
+		}
+		miners.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, miner.State(state.State), target, state.WorkTicks, state.CargoAmount, state.Cargo, state.QuotaIndex, state.QuotaProgress, grid, buildings, state.Meal)
+	case save.UnitArcher, save.UnitSwordsman:
+		profession := soldier.Archer
+		if state.Kind == save.UnitSwordsman {
+			profession = soldier.Swordsman
+		}
+		soldiers.Restore(profession, state.X, state.Y, state.HungerTicks, state.HP)
 	}
 }
 
@@ -5489,6 +5609,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 	if g.paused {
 		g.drawPauseMenu(screen)
+	}
+	if g.duelResult != duelResultNone {
+		g.drawDuelResult(screen)
 	}
 }
 

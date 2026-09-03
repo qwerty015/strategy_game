@@ -99,7 +99,16 @@ type Quarryman struct {
 	// at its save-compatible zero value, a freshly restored/spawned
 	// quarryman always searches immediately on its first idle tick.
 	searchCooldown int
+
+	// killed -- see villagers.Villager's identical field doc comment.
+	killed bool
 }
+
+// Kill marks this quarryman for removal on Controller's next Tick.
+func (q *Quarryman) Kill() { q.killed = true }
+
+// Alive -- see villagers.Villager's identical method doc comment.
+func (q *Quarryman) Alive() bool { return q != nil && !q.killed }
 
 // Controller owns all quarrymen in the settlement.
 type Controller struct {
@@ -333,6 +342,10 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 	var events []Event
 	remaining := c.Quarrymen[:0]
 	for _, q := range c.Quarrymen {
+		if q.killed {
+			events = append(events, Event{Kind: WorkerDied, Cargo: q.cargo * 2})
+			continue
+		}
 		q.hungerTick++
 		if hunger.Dead(q.hungerTick) {
 			// Cargo is reported already converted to Stone Blocks, like

@@ -5,6 +5,9 @@ import (
 
 	"strategy_game/internal/building"
 	"strategy_game/internal/combat"
+	"strategy_game/internal/pathfind"
+	"strategy_game/internal/resource"
+	"strategy_game/internal/sentry"
 	"strategy_game/internal/ui"
 )
 
@@ -204,6 +207,217 @@ func TestDuelGame_HireOptionsNeverCountTheOpponentsBuildings(t *testing.T) {
 		if h := m.HomeBuilding(); h != nil && h.Owner != 0 {
 			t.Fatal("a player miner ended up homed in the AI's own MinerHut")
 		}
+	}
+}
+
+// TestDuelGame_PlayerWatchTowerKillsAnOpposingIntruder is a real gap
+// found from an actual playtest report ("почему башня не убила его
+// слуг"): a WatchTower's Sentry could only ever fire at the sandbox-only
+// enemy.Enemy, never at anything belonging to the AI opponent -- an
+// enemy serf that wandered into range walked straight through unharmed.
+// Builds a real WatchTower+Sentry for the player and places one of the
+// AI's own serfs directly in range, then runs the actual game tick loop
+// (not a hand-rolled sentry.Controller.Tick call) to prove the full
+// opposingIntruderTargetsFor wiring works end to end.
+func TestDuelGame_PlayerWatchTowerKillsAnOpposingIntruder(t *testing.T) {
+	g := newDuelGame(AINormal)
+	playerWarehouse := findWarehouseOwnedBy(g.buildings, 0)
+	if playerWarehouse == nil {
+		t.Fatal("player warehouse missing")
+	}
+	tower := building.NewConstructionSite(building.WatchTower, playerWarehouse.X+2, playerWarehouse.Y)
+	tower.ConstructionStage = building.ConstructionNone
+	tower.Owner = 0
+	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
+	g.buildings = append(g.buildings, tower)
+	g.sentries.Spawn(tower)
+
+	intruder := g.ai.logi.Hire()
+	intruder.X, intruder.Y = tower.X+1, tower.Y // within WatchTowerRange
+	present := func() bool {
+		for _, s := range g.ai.logi.Serfs {
+			if s == intruder {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Not a bare serf-count comparison: the AI's own aiHireServes hires
+	// more serfs on its own schedule throughout the run, which would
+	// mask a real kill (or fake one) if only the total count were
+	// checked -- confirmed this exact pointer is what actually leaves
+	// the roster instead.
+	const maxTicks = sentry.ShotCooldownTicks + sentry.WatchTowerRange*2 + 50
+	for i := 0; i < maxTicks; i++ {
+		g.tickOnce()
+		if !present() {
+			return // killed -- the tower's own Controller.Tick removed it
+		}
+	}
+	t.Fatalf("the player's WatchTower never killed the AI's intruding serf after %d ticks", maxTicks)
+}
+
+// TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch is a real gap found
+// from the user asking "подумай над победой, что значит и как будет
+// выглядеть": factionDefeated existed (tested in isolation) but nothing
+// in the running game ever called it -- there was no way at all for a
+// "1×1 против ИИ" match to actually end, even after one side's every
+// building and unit was gone.
+func TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch(t *testing.T) {
+	g := newDuelGame(AIEasy)
+	if g.duelResult != duelResultNone {
+		t.Fatal("duelResult should start at duelResultNone")
+	}
+
+	// Wipe the AI's own faction directly -- this test is about the
+	// result screen appearing and behaving correctly, not about how a
+	// faction actually gets defeated in play (see
+	// TestDuelSimulation_AIBuildsAndFactionsFight for that).
+	for _, b := range g.buildings {
+		if b.Owner == 1 && b.Kind != building.Road && b.Kind != building.StoneWall && b.Kind != building.Gate {
+			b.HP = 0
+		}
+	}
+	g.ai.logi.Serfs = nil
+	g.ai.vills.Villagers = nil
+	g.ai.jacks.Lumberjacks = nil
+	g.ai.fishers.Fishermen = nil
+	g.ai.quarry.Quarrymen = nil
+	g.ai.builders.Builders = nil
+	g.ai.miners.Miners = nil
+	g.ai.sentries.Sentries = nil
+	g.ai.soldiers.Soldiers = nil
+	// Also empty the AI's own stockpile -- otherwise its still-fully-
+	// intact brain simply places a fresh building this same tick (it
+	// still has its starting resources), resurrecting "still has a
+	// building" before checkDuelResult ever runs.
+	g.ai.stock = resource.NewStockpile(stockpileCapacity)
+
+	g.tickOnce()
+	if g.duelResult != duelResultVictory {
+		t.Fatalf("duelResult = %v, want duelResultVictory once the AI has nothing left", g.duelResult)
+	}
+
+	// The simulation itself must freeze: ticking further must not crash
+	// on a fully-wiped faction, and must not somehow reset the result.
+	for i := 0; i < 100; i++ {
+		g.tickOnce()
+	}
+	if g.duelResult != duelResultVictory {
+		t.Fatalf("duelResult changed after the match was already decided: %v", g.duelResult)
+	}
+
+	// The result screen's "В главное меню" button resolves a click on
+	// its own rect (see updateDuelResult, which reads this same pure
+	// function) -- verified directly, the same way title.go's own
+	// titleActionAt/modeSelectActionAt are, since live ebiten cursor
+	// state isn't available in a headless test.
+	back := duelResultBackRect(g.layout.Width, g.layout.Height)
+	cx, cy := back.Min.X+back.Dx()/2, back.Min.Y+back.Dy()/2
+	if !duelResultBackClicked(cx, cy, g.layout.Width, g.layout.Height) {
+		t.Fatal("a click at the center of the back button's own rect did not resolve to it")
+	}
+	if duelResultBackClicked(0, 0, g.layout.Width, g.layout.Height) {
+		t.Fatal("a click at the corner of the screen unexpectedly resolved to the back button")
+	}
+}
+
+// TestDuelGame_PlayerLogisticsRouteOverTheDefeatedAIsOldRoads is a real
+// bug found from an actual playtest report: after the player conquers
+// the AI's territory (destroys every AI building) and builds their own
+// Tavern/workshops there, the AI's own leftover Road tiles stay tagged
+// with the AI's old Owner forever -- pruneDestroyedBuildings deliberately
+// never removes Road, and nothing ever reassigns it. ownedBuildingsWithRoads
+// used to filter those out as "not the player's", so a player serf's
+// road-only routing (Tavern hauling, a worker's own trip to eat) could
+// never physically cross them -- reported as "боевым юнитам доставляется
+// еда слугами, а рыболов не может пойти поесть... мистика!" (soldier
+// feeding uses off-road pathing, which never filtered by Owner, so it
+// kept working and made the asymmetry look like a mystery). Roads are
+// shared infrastructure now, exactly like a tree or ore deposit already
+// was -- this proves it by building a real route the player's own
+// controllers must cross an Owner=1 road segment to complete.
+func TestDuelGame_PlayerLogisticsRouteOverTheDefeatedAIsOldRoads(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0, Owner: 0, HP: building.MaxHP}
+	// A road chain the player's own logistics must cross to reach the
+	// Tavern below -- tiles 1 and 2 are still tagged Owner: 1, standing
+	// in for "the defeated AI's own leftover road", never reassigned.
+	road0 := &building.Building{Kind: building.Road, X: 1, Y: 0, Owner: 0, HP: building.MaxHP}
+	road1 := &building.Building{Kind: building.Road, X: 2, Y: 0, Owner: 1, HP: building.MaxHP}
+	road2 := &building.Building{Kind: building.Road, X: 3, Y: 0, Owner: 1, HP: building.MaxHP}
+	road3 := &building.Building{Kind: building.Road, X: 4, Y: 0, Owner: 0, HP: building.MaxHP}
+	tavern := &building.Building{Kind: building.Tavern, X: 5, Y: 0, Owner: 0, ConstructionStage: building.ConstructionNone}
+
+	g := &Game{buildings: []*building.Building{warehouse, road0, road1, road2, road3, tavern}}
+
+	playerBuildings := g.ownedBuildingsWithRoads(0)
+	if _, ok := pathfind.FindPath(playerBuildings, warehouse, tavern); !ok {
+		t.Fatal("player logistics can't route to a player Tavern across the defeated AI's leftover (Owner=1) road -- roads must be faction-neutral for connectivity")
+	}
+}
+
+// TestDuelGame_SaveAndLoadRoundTripsTheAIFaction is the feature the user
+// explicitly confirmed wanting ("Конечно нужно сохранение"), after
+// saveGame previously refused to save a duel game at all rather than
+// lose the AI's own economy silently. Plays a duel game forward for a
+// while (so the AI has real buildings/units/brain progress, not just its
+// starting Warehouse), saves it, loads it into a fresh Game, and checks
+// the AI faction actually comes back: same difficulty, same brain
+// progress, a real unit roster, and -- the point of all of it -- the
+// reloaded game keeps ticking without the AI silently freezing.
+func TestDuelGame_SaveAndLoadRoundTripsTheAIFaction(t *testing.T) {
+	g := newDuelGame(AIHard)
+	for i := 0; i < 5000; i++ {
+		g.tickOnce()
+	}
+	if g.ai == nil || len(g.ownedBuildings(1)) <= 2 {
+		t.Fatal("test setup: AI hasn't built anything yet after 5000 ticks")
+	}
+	wantDifficulty := g.ai.brain.difficulty
+	wantBuildIndex := g.ai.brain.buildIndex
+	wantAIPopCount := g.ai.pop.Count
+	wantAIGold := g.ai.stock.Amount(resource.Gold)
+
+	path := t.TempDir() + "/duel_save.json"
+	if err := g.saveGame(path, "duel test"); err != nil {
+		t.Fatalf("saveGame failed for a duel game: %v", err)
+	}
+
+	loaded := newDuelGame(AIHard) // any fresh Game to load into -- loadGame replaces everything relevant
+	if err := loaded.loadGame(path); err != nil {
+		t.Fatalf("loadGame failed: %v", err)
+	}
+	if loaded.ai == nil {
+		t.Fatal("g.ai is nil after loading a duel save -- the AI faction was not reconstructed")
+	}
+	if loaded.ai.brain.difficulty != wantDifficulty {
+		t.Fatalf("AI difficulty = %v, want %v", loaded.ai.brain.difficulty, wantDifficulty)
+	}
+	if loaded.ai.brain.buildIndex != wantBuildIndex {
+		t.Fatalf("AI brain.buildIndex = %d, want %d", loaded.ai.brain.buildIndex, wantBuildIndex)
+	}
+	if loaded.ai.pop.Count != wantAIPopCount {
+		t.Fatalf("AI population.Count = %d, want %d", loaded.ai.pop.Count, wantAIPopCount)
+	}
+	if got := loaded.ai.stock.Amount(resource.Gold); got != wantAIGold {
+		t.Fatalf("AI gold = %d, want %d", got, wantAIGold)
+	}
+	totalAIUnits := len(loaded.ai.logi.Serfs) + len(loaded.ai.vills.Villagers) + len(loaded.ai.jacks.Lumberjacks) +
+		len(loaded.ai.fishers.Fishermen) + len(loaded.ai.quarry.Quarrymen) + len(loaded.ai.builders.Builders) +
+		len(loaded.ai.miners.Miners) + len(loaded.ai.sentries.Sentries) + len(loaded.ai.soldiers.Soldiers)
+	if totalAIUnits == 0 {
+		t.Fatal("the AI's entire unit roster is empty after loading -- restoreUnits never dispatched an Owner: 1 unit anywhere")
+	}
+
+	// The point of all of it: the reloaded AI must keep functioning, not
+	// silently freeze -- run it forward and confirm its own tick doesn't
+	// panic and its population isn't just draining to zero outright.
+	for i := 0; i < 2000; i++ {
+		loaded.tickOnce()
+	}
+	if loaded.ai.pop.Count == 0 {
+		t.Fatal("the reloaded AI's population dropped to zero within 2000 ticks -- it isn't functioning after load")
 	}
 }
 

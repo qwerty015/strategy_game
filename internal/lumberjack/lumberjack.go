@@ -107,7 +107,16 @@ type Lumberjack struct {
 	// freshly restored/spawned lumberjack always searches immediately on
 	// its first idle tick, same as before this field existed.
 	searchCooldown int
+
+	// killed -- see villagers.Villager's identical field doc comment.
+	killed bool
 }
+
+// Kill marks this lumberjack for removal on Controller's next Tick.
+func (j *Lumberjack) Kill() { j.killed = true }
+
+// Alive -- see villagers.Villager's identical method doc comment.
+func (j *Lumberjack) Alive() bool { return j != nil && !j.killed }
 
 // Controller owns all lumberjacks in the settlement.
 type Controller struct {
@@ -346,6 +355,10 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 	var events []Event
 	remaining := c.Lumberjacks[:0]
 	for _, j := range c.Lumberjacks {
+		if j.killed {
+			events = append(events, Event{Kind: WorkerDied, Cargo: j.cargo})
+			continue
+		}
 		j.hungerTick++
 		if hunger.Dead(j.hungerTick) {
 			events = append(events, Event{Kind: WorkerDied, Cargo: j.cargo})

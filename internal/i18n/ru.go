@@ -210,7 +210,11 @@ func init() {
 		Saved:                 "Сохранено.",
 		Loaded:                "Загружено.",
 		LoadFailedNoWarehouse: "Не удалось загрузить: в сохранении нет склада",
-		DuelSaveNotSupported:  "сохранение недоступно в режиме \"1×1 против ИИ\"",
+		DuelVictoryTitle:      "Победа!",
+		DuelDefeatTitle:       "Поражение",
+		DuelVictorySubtitle:   "Все постройки и юниты противника уничтожены",
+		DuelDefeatSubtitle:    "Все ваши постройки и юниты уничтожены",
+		DuelResultToTitle:     "В главное меню",
 
 		SaveSlotsLabel:      "Сохранения",
 		SlotEmptyLabel:      "— пусто —",

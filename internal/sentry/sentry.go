@@ -8,6 +8,7 @@ package sentry
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/combat"
 	"strategy_game/internal/enemy"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
@@ -92,11 +93,27 @@ type Sentry struct {
 	shotTargetX, shotTargetY int
 	shotPendingTarget        *enemy.Enemy
 
+	// shotPendingIntruder is shotPendingTarget's "1×1 против ИИ"
+	// counterpart -- see IntruderTarget's doc comment. Exactly one of
+	// shotPendingTarget/shotPendingIntruder is set at a time, matching
+	// the mutually-exclusive convention soldier.factionTarget already
+	// uses for the same "debug enemy vs. real opposing faction"
+	// distinction.
+	shotPendingIntruder *IntruderTarget
+
 	// Starving mirrors package villagers' field of the same name: true
 	// once HungerInterval has passed and there was nowhere to actually go
 	// eat.
 	Starving bool
 }
+
+// IntruderTarget is combat.IntruderTarget -- kept as an alias so every
+// existing reference to sentry.IntruderTarget in this package and its
+// tests keeps working unchanged now that package soldier also needs the
+// exact same shape (see combat.IntruderTarget's doc comment for why it
+// moved to the shared, engine-free combat package instead of staying
+// sentry-only).
+type IntruderTarget = combat.IntruderTarget
 
 // State is the public, read-only activity state used by the inspector and
 // render layer.
@@ -293,19 +310,26 @@ func (c *Controller) MaxWaitingHunger() int {
 // chance to Reserve its own pre-existing in-flight units. enemies is the
 // current debug enemy roster (see cmd/game) -- a Sentry only ever reads
 // it, never mutates the slice itself, though it does lower a target's HP
-// in place.
-func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy, ledger *reservations.Ledger) int {
+// in place. intruders is this Sentry's "1×1 против ИИ" targets -- see
+// IntruderTarget's doc comment; nil/empty outside that mode.
+func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) int {
 	deaths := 0
 	remaining := c.Sentries[:0]
 	for _, s := range c.Sentries {
 		if s.shotVisualTicks > 0 {
 			s.shotVisualTicks--
-			if s.shotVisualTicks == 0 && s.shotPendingTarget != nil {
-				// The stone has visually arrived -- this is when it
-				// actually kills, not when it was thrown. See
-				// shotPendingTarget's doc comment.
-				s.shotPendingTarget.HP = 0
-				s.shotPendingTarget = nil
+			if s.shotVisualTicks == 0 {
+				if s.shotPendingTarget != nil {
+					// The stone has visually arrived -- this is when it
+					// actually kills, not when it was thrown. See
+					// shotPendingTarget's doc comment.
+					s.shotPendingTarget.HP = 0
+					s.shotPendingTarget = nil
+				}
+				if s.shotPendingIntruder != nil {
+					s.shotPendingIntruder.Kill()
+					s.shotPendingIntruder = nil
+				}
 			}
 		}
 		s.ticksSinceMeal++
@@ -313,23 +337,23 @@ func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy
 			deaths++
 			continue
 		}
-		c.tick(s, buildings, enemies, ledger)
+		c.tick(s, buildings, enemies, intruders, ledger)
 		remaining = append(remaining, s)
 	}
 	c.Sentries = remaining
 	return deaths
 }
 
-func (c *Controller) tick(s *Sentry, buildings []*building.Building, enemies []*enemy.Enemy, ledger *reservations.Ledger) {
+func (c *Controller) tick(s *Sentry, buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) {
 	switch s.ph {
 	case working:
-		c.tickWorking(s, buildings, enemies, ledger)
+		c.tickWorking(s, buildings, enemies, intruders, ledger)
 	case toTavern, toHome:
 		tickWalking(s, buildings)
 	}
 }
 
-func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, enemies []*enemy.Enemy, ledger *reservations.Ledger) {
+func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) {
 	if hunger.NeedsMeal(s.ticksSinceMeal) {
 		if tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: s.Home.X, Y: s.Home.Y}, ledger, &c.meals); ok {
 			s.Starving = false
@@ -343,24 +367,26 @@ func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, enem
 		}
 		s.Starving = true
 	}
-	c.engage(s, enemies)
+	c.engage(s, enemies, intruders)
 }
 
-// engage fires at the nearest living enemy within WatchTowerRange, once
-// per ShotCooldownTicks, consuming one stone from the tower's InputBuffer
-// per shot -- a silent no-op with no enemy in range, no stone left, or
-// still on cooldown.
+// engage fires at the nearest living target (debug enemy or opposing-
+// faction intruder, whichever is actually closer) within WatchTowerRange,
+// once per ShotCooldownTicks, consuming one stone from the tower's
+// InputBuffer per shot -- a silent no-op with nothing in range, no stone
+// left, or still on cooldown.
 //
 // Per the user's explicit request ("1 попадание камня в противника его
 // убивает"), a hit is a kill -- unlike a building, which still takes
 // combat.DamagePerHit (10%) per hit from the same stone. A stone sling is
 // lethal to a person but only chips a wall. The kill itself, though,
-// lands only once the stone visually arrives (see shotPendingTarget and
-// Controller.Tick), not the instant it's thrown here -- a real bug the
-// user caught in-game ("раньше было сперва противник погибает, а потом
-// летит камень в него"): the target must stay alive and interactable for
-// the roughly WatchTowerRange*TicksPerTile ticks the stone is airborne.
-func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy) {
+// lands only once the stone visually arrives (see shotPendingTarget/
+// shotPendingIntruder and Controller.Tick), not the instant it's thrown
+// here -- a real bug the user caught in-game ("раньше было сперва
+// противник погибает, а потом летит камень в него"): the target must
+// stay alive and interactable for the roughly WatchTowerRange*
+// TicksPerTile ticks the stone is airborne.
+func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy, intruders []IntruderTarget) {
 	if s.shotCooldown > 0 {
 		s.shotCooldown--
 		return
@@ -368,17 +394,51 @@ func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy) {
 	if s.Home == nil {
 		return
 	}
-	target := nearestEnemyInRange(s.Home.X, s.Home.Y, enemies)
-	if target == nil {
+	enemyTarget := nearestEnemyInRange(s.Home.X, s.Home.Y, enemies)
+	intruderTarget, intruderDist, intruderOK := nearestIntruderInRange(s.Home.X, s.Home.Y, intruders)
+
+	var targetX, targetY int
+	var pendingEnemy *enemy.Enemy
+	var pendingIntruder *IntruderTarget
+	switch {
+	case enemyTarget != nil && (!intruderOK || abs(enemyTarget.X-s.Home.X)+abs(enemyTarget.Y-s.Home.Y) <= intruderDist):
+		targetX, targetY, pendingEnemy = enemyTarget.X, enemyTarget.Y, enemyTarget
+	case intruderOK:
+		targetX, targetY, pendingIntruder = intruderTarget.X, intruderTarget.Y, intruderTarget
+	default:
 		return
 	}
 	if !s.Home.TakeInput(resource.StoneBlock, 1) {
 		return
 	}
-	s.shotTargetX, s.shotTargetY = target.X, target.Y
-	s.shotPendingTarget = target
+	s.shotTargetX, s.shotTargetY = targetX, targetY
+	s.shotPendingTarget = pendingEnemy
+	s.shotPendingIntruder = pendingIntruder
 	s.shotVisualTicks = shotVisualLifetime
 	s.shotCooldown = ShotCooldownTicks
+}
+
+// nearestIntruderInRange mirrors nearestEnemyInRange for IntruderTarget --
+// see its doc comment for the range convention. Returns the candidate's
+// own tile distance too, so engage can compare it directly against a
+// simultaneously-in-range enemy.Enemy candidate's distance.
+func nearestIntruderInRange(cx, cy int, intruders []IntruderTarget) (target *IntruderTarget, dist int, ok bool) {
+	bestDist := 0
+	for i := range intruders {
+		t := &intruders[i]
+		if t.Alive == nil || !t.Alive() {
+			continue
+		}
+		dx, dy := abs(t.X-cx), abs(t.Y-cy)
+		if dx > WatchTowerRange || dy > WatchTowerRange {
+			continue
+		}
+		d := dx + dy
+		if !ok || d < bestDist {
+			target, bestDist, ok = t, d, true
+		}
+	}
+	return target, bestDist, ok
 }
 
 // nearestEnemyInRange returns the closest living enemy within

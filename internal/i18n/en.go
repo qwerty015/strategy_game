@@ -210,7 +210,11 @@ func init() {
 		Saved:                 "Saved.",
 		Loaded:                "Loaded.",
 		LoadFailedNoWarehouse: "Load failed: save has no warehouse",
-		DuelSaveNotSupported:  "saving isn't available in \"1v1 vs AI\" mode yet",
+		DuelVictoryTitle:      "Victory!",
+		DuelDefeatTitle:       "Defeat",
+		DuelVictorySubtitle:   "Every one of the opponent's buildings and units is gone",
+		DuelDefeatSubtitle:    "Every one of your own buildings and units is gone",
+		DuelResultToTitle:     "Main menu",
 
 		SaveSlotsLabel:      "Save slots",
 		SlotEmptyLabel:      "— empty —",

@@ -15,7 +15,15 @@ import (
 func tickController(c *Controller, buildings []*building.Building, enemies []*enemy.Enemy) {
 	ledger := reservations.New()
 	c.Reserve(ledger)
-	c.Tick(buildings, enemies, ledger)
+	c.Tick(buildings, enemies, nil, ledger)
+}
+
+// tickControllerWithIntruders is tickController plus a "1×1 против ИИ"
+// intruders list -- see IntruderTarget's doc comment.
+func tickControllerWithIntruders(c *Controller, buildings []*building.Building, intruders []IntruderTarget) {
+	ledger := reservations.New()
+	c.Reserve(ledger)
+	c.Tick(buildings, nil, intruders, ledger)
 }
 
 func straightRoad(fromX, toX, y int) []*building.Building {
@@ -56,6 +64,46 @@ func TestSentry_FiresAtEnemyInRangeAndConsumesStone(t *testing.T) {
 	// building, which still only takes combat.DamagePerHit.
 	if e.Alive() {
 		t.Fatalf("enemy HP after the stone's full flight time = %d, want dead (one hit kills)", e.HP)
+	}
+}
+
+// TestSentry_FiresAtOpposingFactionIntruderAndKillsIt is a real gap found
+// from an actual playtest report ("почему башня не убила его слуг"): a
+// WatchTower could only ever fire at the sandbox-only enemy.Enemy, with
+// no way at all to target a "1×1 против ИИ" opponent's unit -- an enemy
+// serf could walk right past a tower unharmed. Uses a plain struct
+// (standing in for e.g. a rival serf) with its own Alive/Kill closures,
+// exactly the shape cmd/game's real intruderTargetsFrom builds from every
+// actual worker/soldier controller.
+func TestSentry_FiresAtOpposingFactionIntruderAndKillsIt(t *testing.T) {
+	tower := &building.Building{Kind: building.WatchTower, X: 10, Y: 10, ConstructionStage: building.ConstructionNone}
+	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
+
+	c := NewController()
+	c.Spawn(tower)
+
+	killed := false
+	alive := true
+	intruder := IntruderTarget{
+		X: tower.X + 1, Y: tower.Y, // within WatchTowerRange
+		Alive: func() bool { return alive },
+		Kill:  func() { killed = true; alive = false },
+	}
+
+	tickControllerWithIntruders(c, []*building.Building{tower}, []IntruderTarget{intruder})
+
+	if killed {
+		t.Fatal("intruder died on the very tick it was fired at -- the kill must wait for the stone to visually arrive, same as against a debug enemy")
+	}
+	if tower.InputBuffer[resource.StoneBlock] != building.BufferCapacity-1 {
+		t.Fatalf("tower stone = %d, want %d (one shot consumed immediately)", tower.InputBuffer[resource.StoneBlock], building.BufferCapacity-1)
+	}
+
+	for range shotVisualLifetime {
+		tickControllerWithIntruders(c, []*building.Building{tower}, []IntruderTarget{intruder})
+	}
+	if !killed {
+		t.Fatal("intruder never got killed after the stone's full flight time")
 	}
 }
 

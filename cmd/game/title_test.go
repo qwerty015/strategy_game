@@ -220,15 +220,17 @@ func TestNewGameFlow_DuelModeStartsASecondFaction(t *testing.T) {
 	}
 }
 
-// TestSaveGame_RefusesDuringADuelGame locks in saveGame's guard: a duel
-// game's AI faction (g.ai) isn't serialized at all, so saving it would
-// silently freeze the AI on the next load instead of failing loudly. See
-// saveGame's own doc comment for the full reasoning.
-func TestSaveGame_RefusesDuringADuelGame(t *testing.T) {
+// TestSaveGame_SucceedsDuringADuelGame locks in the opposite of what this
+// test used to assert: an explicit user report ("а я не могу сохранить
+// игру если играю с ботом?") turned "duel saves are refused" from a
+// deliberate guard into a missing feature, so saveGame no longer refuses
+// -- it serializes g.ai's full faction state (see buildSaveState's
+// IsDuelGame/AI* fields and restoreFaction), same as a free-map game.
+func TestSaveGame_SucceedsDuringADuelGame(t *testing.T) {
 	g := newDuelGame(AINormal)
 	tmp := t.TempDir() + "/slot1.json"
-	if err := g.saveGame(tmp, "test"); err == nil {
-		t.Fatal("saveGame unexpectedly succeeded for a duel game")
+	if err := g.saveGame(tmp, "test"); err != nil {
+		t.Fatalf("saveGame unexpectedly failed for a duel game: %v", err)
 	}
 
 	free := NewGame()

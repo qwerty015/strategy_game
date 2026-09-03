@@ -182,7 +182,11 @@ type Catalog struct {
 	Saved                 string
 	Loaded                string
 	LoadFailedNoWarehouse string
-	DuelSaveNotSupported  string
+	DuelVictoryTitle      string
+	DuelDefeatTitle       string
+	DuelVictorySubtitle   string
+	DuelDefeatSubtitle    string
+	DuelResultToTitle     string
 
 	SaveSlotsLabel      string
 	SlotEmptyLabel      string

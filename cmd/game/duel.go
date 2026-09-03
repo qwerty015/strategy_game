@@ -1,10 +1,18 @@
 package main
 
 import (
+	"image"
+	"image/color"
+
+	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/hajimehoshi/ebiten/v2/vector"
+
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/fishing"
+	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
 	"strategy_game/internal/lumberjack"
 	"strategy_game/internal/miner"
@@ -339,6 +347,34 @@ func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.B
 // dead -- per the user's explicit win condition ("все здания и юниты
 // противника уничтожены (дорога и стены не в счет)"). Only meaningful
 // once g.ai != nil (a "1×1 против ИИ" game); owner 0 or 1.
+// duelResult is the outcome of a "1×1 против ИИ" match -- see Game's own
+// duelResult field doc comment.
+type duelResult int
+
+const (
+	duelResultNone duelResult = iota
+	duelResultVictory
+	duelResultDefeat
+)
+
+// checkDuelResult sets g.duelResult the first tick either faction is
+// fully defeated -- see factionDefeated. A no-op outside "1×1 против ИИ"
+// (g.ai == nil) or once a result is already set (a finished match's
+// simulation is frozen -- see Update's early return on g.duelResult --
+// so this would never re-fire anyway, but a defensive check costs
+// nothing and documents the intent).
+func (g *Game) checkDuelResult() {
+	if g.ai == nil || g.duelResult != duelResultNone {
+		return
+	}
+	switch {
+	case g.factionDefeated(1):
+		g.duelResult = duelResultVictory
+	case g.factionDefeated(0):
+		g.duelResult = duelResultDefeat
+	}
+}
+
 func (g *Game) factionDefeated(owner int) bool {
 	for _, b := range g.buildings {
 		if b.Owner != owner {
@@ -362,4 +398,60 @@ func (g *Game) factionUnitCount(owner int) int {
 	}
 	f := g.ai
 	return len(f.logi.Serfs) + len(f.vills.Villagers) + len(f.jacks.Lumberjacks) + len(f.fishers.Fishermen) + len(f.quarry.Quarrymen) + len(f.builders.Builders) + len(f.miners.Miners) + len(f.sentries.Sentries) + len(f.soldiers.Soldiers)
+}
+
+// duelResultBackRect is the one button a finished match's overlay shows
+// -- reuses titleBackRect's exact geometry so it lands in the same,
+// already-familiar screen position as every other "Назад"-shaped button.
+func duelResultBackRect(width, height int) image.Rectangle {
+	return titleBackRect(width, height)
+}
+
+// updateDuelResult handles input while g.duelResult != duelResultNone --
+// the simulation itself is already frozen (Update's own early return
+// routes here instead of the ordinary play loop). The only action
+// available is leaving to the title screen; the finished match's own
+// buildings/units stay exactly as they ended, simply no longer ticking,
+// so nothing here needs to reset or clean up faction state itself.
+func (g *Game) updateDuelResult() error {
+	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		return nil
+	}
+	mx, my := ebiten.CursorPosition()
+	frontWidth, frontHeight := g.frontScreenDimensions()
+	if duelResultBackClicked(mx, my, frontWidth, frontHeight) {
+		g.screen = screenTitle
+		g.duelResult = duelResultNone
+	}
+	return nil
+}
+
+// duelResultBackClicked is updateDuelResult's click resolution, pulled
+// out as a pure function -- same "testable without live ebiten cursor
+// state" shape as title.go's own titleActionAt/modeSelectActionAt.
+func duelResultBackClicked(mx, my, width, height int) bool {
+	return image.Pt(mx, my).In(duelResultBackRect(width, height))
+}
+
+// drawDuelResult overlays the match outcome on top of the frozen game
+// world (already drawn by the ordinary Draw call this frame) -- the same
+// "dim the world, show a panel on top" shape drawPauseMenu already uses,
+// not a separate screen, so the player's final town stays visible behind
+// the result instead of cutting straight to a blank menu.
+func (g *Game) drawDuelResult(screen *ebiten.Image) {
+	bounds := screen.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	vector.FillRect(screen, 0, 0, float32(width), float32(height), color.RGBA{R: 12, G: 12, B: 14, A: 190}, false)
+
+	panel := image.Rect(width/2-220, height/2-110, width/2+220, height/2+110)
+	drawTitlePanel(screen, panel)
+
+	t := i18n.T()
+	title, subtitle := t.DuelVictoryTitle, t.DuelVictorySubtitle
+	if g.duelResult == duelResultDefeat {
+		title, subtitle = t.DuelDefeatTitle, t.DuelDefeatSubtitle
+	}
+	ui.DrawTitleText(screen, title, float64(panel.Min.X+24), float64(panel.Min.Y+30), 2.6)
+	ui.DrawMenuText(screen, subtitle, float64(panel.Min.X+24), float64(panel.Min.Y+78))
+	drawTitleButton(screen, duelResultBackRect(width, height), t.DuelResultToTitle, false)
 }

@@ -99,7 +99,25 @@ type Villager struct {
 	// starving-buildings map economy.Tick uses to pause this villager's
 	// building, and so rendering can show it.
 	Starving bool
+
+	// killed is set by Kill (a "1×1 против ИИ" opponent's Sentry --
+	// see package sentry's IntruderTarget) and checked once, at the top
+	// of Controller.Tick, the same place hunger.Dead already is -- a
+	// real gap found from an actual playtest report ("почему башня не
+	// убила его слуг"): every civilian profession before this had only
+	// ever died of hunger, with no way at all for combat to remove one.
+	killed bool
 }
+
+// Kill marks this villager for removal on Controller's next Tick --
+// see the killed field's doc comment.
+func (v *Villager) Kill() { v.killed = true }
+
+// Alive reports whether this villager hasn't been killed yet -- for a
+// cross-faction attacker (see package sentry's IntruderTarget) to check
+// before firing at a target that's already dead but not yet removed by
+// this villager's own Controller.Tick.
+func (v *Villager) Alive() bool { return v != nil && !v.killed }
 
 // State is the public, read-only activity state used by the inspector and
 // render layer. The movement bookkeeping itself remains private here.
@@ -324,6 +342,10 @@ func (c *Controller) Tick(buildings []*building.Building, ledger *reservations.L
 	deaths := 0
 	remaining := c.Villagers[:0]
 	for _, v := range c.Villagers {
+		if v.killed {
+			deaths++
+			continue
+		}
 		v.ticksSinceMeal++
 		if hunger.Dead(v.ticksSinceMeal) {
 			deaths++

@@ -3,6 +3,7 @@ package main
 import (
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
+	"strategy_game/internal/combat"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/logistics"
@@ -78,6 +79,39 @@ func newFaction(owner int, warehouse *building.Building, difficulty aiDifficulty
 	return f
 }
 
+// restoreFaction rebuilds a "1×1 против ИИ" save's AI faction -- unlike
+// newFaction (a brand new match's starting economy), every controller
+// starts genuinely empty: the actual roster is restored separately (see
+// cmd/game's restoreUnits, which needs g.ai to already exist before it
+// can dispatch any Owner: 1 unit into it), and stock/pop/brain come from
+// the save instead of a fresh game's starting amounts. A real gap found
+// from the user confirming they want duel saves at all ("Конечно нужно
+// сохранение"): buildSaveState/loadGame never had a way to reconstruct
+// the AI's own economy, so saveGame refused to save a duel game outright
+// rather than lose it silently.
+func restoreFaction(owner int, warehouse *building.Building, difficulty aiDifficulty, stock resource.Stockpile, pop economy.Population, brainCooldown, buildIndex, buildAttempts int) *faction {
+	stock.Capacity = 0 // same normalization loadGame already applies to the player's own Stockpile
+	f := &faction{
+		owner:    owner,
+		stock:    &stock,
+		pop:      &pop,
+		logi:     logistics.NewController(warehouse, 0),
+		vills:    villagers.NewController(),
+		jacks:    lumberjack.NewController(),
+		fishers:  fishing.NewController(),
+		quarry:   quarry.NewController(),
+		builders: builder.NewController(),
+		miners:   miner.NewController(),
+		sentries: sentry.NewController(),
+		soldiers: soldier.NewController(),
+	}
+	f.brain = newAIBrain(owner, difficulty)
+	f.brain.cooldown = brainCooldown
+	f.brain.buildIndex = buildIndex
+	f.brain.buildAttempts = buildAttempts
+	return f
+}
+
 // opponentOwner is the other faction's Owner in a two-faction "1×1"
 // game -- there are only ever two (0 = player, 1 = AI), so this is
 // simply 1-owner.
@@ -117,6 +151,118 @@ func (g *Game) opposingSoldiersFor(c *soldier.Controller) []*soldier.Soldier {
 	}
 }
 
+// opposingIntruderTargetsFor returns c's cross-faction Sentry targets --
+// every living unit (any of the 7 civilian professions, or a soldier) the
+// OTHER faction currently has, wrapped as sentry.IntruderTarget. A real
+// gap found from an actual playtest report ("почему башня не убила его
+// слуг"): a WatchTower's Sentry could only ever fire at the sandbox-only
+// enemy.Enemy, with no way at all to target anything belonging to the
+// "1×1 против ИИ" opponent. nil outside that mode, matching
+// opposingBuildingsFor/opposingSoldiersFor above.
+func (g *Game) opposingIntruderTargetsFor(c *sentry.Controller) []sentry.IntruderTarget {
+	if g.ai == nil {
+		return nil
+	}
+	switch c {
+	case g.sentries:
+		return intruderTargetsFrom(g.ai.logi, g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.builders, g.ai.miners, g.ai.soldiers)
+	case g.ai.sentries:
+		return intruderTargetsFrom(g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.soldiers)
+	default:
+		return nil
+	}
+}
+
+// opposingIntruderTargetsForSoldiers is opposingIntruderTargetsFor's twin
+// for package soldier's Controller.Tick, whose opposingIntruders parameter
+// takes the same []combat.IntruderTarget shape (sentry.IntruderTarget is a
+// type alias for it, see internal/combat) but is keyed off *soldier.
+// Controller rather than *sentry.Controller. A second playtest report --
+// "боевые юниты могут уничтожать любых юнитов противника - это враги!" --
+// wanted a Soldier able to engage ANY opposing unit, not only rival
+// soldiers/buildings, exactly like the WatchTower fix above; the target
+// list itself is identical (intruderTargetsFrom is controller-agnostic),
+// only the dispatcher's switch needs its own copy since a *soldier.
+// Controller and a *sentry.Controller are different types.
+func (g *Game) opposingIntruderTargetsForSoldiers(c *soldier.Controller) []combat.IntruderTarget {
+	if g.ai == nil {
+		return nil
+	}
+	switch c {
+	case g.soldiers:
+		return intruderTargetsFrom(g.ai.logi, g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.builders, g.ai.miners, g.ai.soldiers)
+	case g.ai.soldiers:
+		return intruderTargetsFrom(g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.soldiers)
+	default:
+		return nil
+	}
+}
+
+// intruderTargetsFrom builds one sentry.IntruderTarget per currently
+// living unit across every controller a faction owns. Each Alive/Kill
+// closure captures its own unit pointer directly (not an index), so it
+// stays correct even though every one of these controllers may reorder
+// or shrink its own slice on its next Tick.
+func intruderTargetsFrom(
+	logi *logistics.Controller,
+	vills *villagers.Controller,
+	jacks *lumberjack.Controller,
+	fishers *fishing.Controller,
+	quarry *quarry.Controller,
+	builders *builder.Controller,
+	miners *miner.Controller,
+	soldiers *soldier.Controller,
+) []sentry.IntruderTarget {
+	var out []sentry.IntruderTarget
+	for _, s := range logi.Serfs {
+		s := s
+		out = append(out, sentry.IntruderTarget{X: s.X, Y: s.Y, Alive: s.Alive, Kill: s.Kill})
+	}
+	for _, v := range vills.Villagers {
+		v := v
+		out = append(out, sentry.IntruderTarget{X: v.X, Y: v.Y, Alive: v.Alive, Kill: v.Kill})
+	}
+	for _, j := range jacks.Lumberjacks {
+		j := j
+		out = append(out, sentry.IntruderTarget{X: j.X, Y: j.Y, Alive: j.Alive, Kill: j.Kill})
+	}
+	for _, f := range fishers.Fishermen {
+		f := f
+		out = append(out, sentry.IntruderTarget{X: f.X, Y: f.Y, Alive: f.Alive, Kill: f.Kill})
+	}
+	for _, q := range quarry.Quarrymen {
+		q := q
+		out = append(out, sentry.IntruderTarget{X: q.X, Y: q.Y, Alive: q.Alive, Kill: q.Kill})
+	}
+	for _, b := range builders.Builders {
+		b := b
+		out = append(out, sentry.IntruderTarget{X: b.X, Y: b.Y, Alive: b.Alive, Kill: b.Kill})
+	}
+	for _, m := range miners.Miners {
+		m := m
+		out = append(out, sentry.IntruderTarget{X: m.X, Y: m.Y, Alive: m.Alive, Kill: m.Kill})
+	}
+	for _, sd := range soldiers.Soldiers {
+		sd := sd
+		if !sd.Alive() {
+			continue
+		}
+		out = append(out, sentry.IntruderTarget{
+			X: sd.X, Y: sd.Y,
+			Alive: sd.Alive,
+			// Soldier has no Kill() of its own (soldiers die from combat.
+			// ApplyDamage reducing HP, not a single external kill call --
+			// see combat.UnitDamagePerHit) -- a sling stone lethal to an
+			// unarmed worker in one hit is not obviously also a clean
+			// one-hit kill against an armoured Archer/Swordsman, so this
+			// applies the same per-hit damage a rival soldier's own
+			// factionTarget.hit() would, not an instant kill.
+			Kill: func() { sd.HP = combat.ApplyDamage(sd.HP, combat.UnitDamagePerHit) },
+		})
+	}
+	return out
+}
+
 // tickAIFaction advances the AI's own economy by exactly one simulation
 // tick -- a trimmed mirror of Update()'s player tick block (same
 // controllers, same Reserve/Tick/event-handling shape), scoped to the
@@ -154,8 +300,8 @@ func (g *Game) tickAIFaction(grid *world.Grid) {
 	quarryEvents := f.quarry.Tick(grid, buildings, ledger)
 	builderEvents := f.builders.Tick(grid, buildings, ledger)
 	minerEvents := f.miners.Tick(grid, buildings, ledger)
-	sentryDeaths := f.sentries.Tick(buildings, nil, ledger)
-	soldierDeaths := f.soldiers.Tick(grid, buildings, nil, g.opposingBuildingsFor(f.soldiers), g.opposingSoldiersFor(f.soldiers))
+	sentryDeaths := f.sentries.Tick(buildings, nil, g.opposingIntruderTargetsFor(f.sentries), ledger)
+	soldierDeaths := f.soldiers.Tick(grid, buildings, nil, g.opposingBuildingsFor(f.soldiers), g.opposingSoldiersFor(f.soldiers), g.opposingIntruderTargetsForSoldiers(f.soldiers))
 
 	f.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryDeaths + soldierDeaths
 	f.pop.UnitsDismissed += serfResult.Dismissed

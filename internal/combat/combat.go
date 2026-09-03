@@ -47,3 +47,23 @@ func Repair(hp, amount int) int {
 	}
 	return hp
 }
+
+// IntruderTarget is any single opposing-faction unit an attacker (a
+// Sentry's tower shot, a Soldier's melee/ranged strike) can hit -- shared
+// here, not in package sentry or soldier, for the same "engine-free,
+// neither side needs to depend on the other" reasoning this whole
+// package already follows: cmd/game (which already imports every worker
+// package) builds one of these per living opposing unit and hands the
+// whole slice to whichever attacker's Tick needs it, without soldier and
+// sentry needing to import each other or duplicate the same tiny struct.
+// A real gap found from two separate playtest reports ("почему башня не
+// убила его слуг", "боевые юниты могут уничтожать любых юнитов
+// противника - это враги!"): before this, neither a Sentry nor a Soldier
+// could target anything belonging to the "1×1 против ИИ" opponent except
+// its other soldiers (and, for a Soldier, its buildings) -- an unarmed
+// enemy serf/villager/lumberjack/... was untouchable by either.
+type IntruderTarget struct {
+	X, Y  int
+	Alive func() bool
+	Kill  func()
+}

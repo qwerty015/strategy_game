@@ -101,7 +101,16 @@ type Builder struct {
 	// working before leaving, exactly like a serf finishes an in-progress
 	// haul first.
 	dismissing bool
+
+	// killed -- see villagers.Villager's identical field doc comment.
+	killed bool
 }
+
+// Kill marks this builder for removal on Controller's next Tick.
+func (b *Builder) Kill() { b.killed = true }
+
+// Alive -- see villagers.Villager's identical method doc comment.
+func (b *Builder) Alive() bool { return b != nil && !b.killed }
 
 // Dismissing reports whether the builder will leave town after finishing
 // his current site (see RequestDismissal).
@@ -321,6 +330,10 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 	var events []Event
 	remaining := c.Builders[:0]
 	for _, b := range c.Builders {
+		if b.killed {
+			events = append(events, Event{Kind: WorkerDied})
+			continue
+		}
 		b.hungerTick++
 		if hunger.Dead(b.hungerTick) {
 			events = append(events, Event{Kind: WorkerDied})

@@ -150,7 +150,16 @@ type Miner struct {
 	// save-compatible zero value, a freshly restored/spawned miner
 	// always searches immediately on its first idle tick.
 	searchCooldown int
+
+	// killed -- see villagers.Villager's identical field doc comment.
+	killed bool
 }
+
+// Kill marks this miner for removal on Controller's next Tick.
+func (m *Miner) Kill() { m.killed = true }
+
+// Alive -- see villagers.Villager's identical method doc comment.
+func (m *Miner) Alive() bool { return m != nil && !m.killed }
 
 // Controller owns all miners in the settlement.
 type Controller struct {
@@ -389,6 +398,10 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 	var events []Event
 	remaining := c.Miners[:0]
 	for _, m := range c.Miners {
+		if m.killed {
+			events = append(events, Event{Kind: WorkerDied, Cargo: m.cargo, CargoResource: m.cargoResource})
+			continue
+		}
 		m.hungerTick++
 		if hunger.Dead(m.hungerTick) {
 			events = append(events, Event{Kind: WorkerDied, Cargo: m.cargo, CargoResource: m.cargoResource})

@@ -23,7 +23,7 @@ func TestMoveTo_WalksToTheClickedTileAndStops(t *testing.T) {
 	}
 
 	for range 50 {
-		c.Tick(grid, nil, nil, nil, nil)
+		c.Tick(grid, nil, nil, nil, nil, nil)
 	}
 
 	if s.X != 5 || s.Y != 0 {
@@ -42,7 +42,7 @@ func TestSwordsman_MeleeOnlyHitsAdjacent(t *testing.T) {
 	target := enemy.New(5, 6) // adjacent
 	s.AttackOrder(grid, nil, target)
 
-	c.Tick(grid, nil, nil, nil, nil)
+	c.Tick(grid, nil, nil, nil, nil, nil)
 	if target.HP != combat.MaxHP-combat.UnitDamagePerHit {
 		t.Fatalf("adjacent target HP after one swordsman tick = %d, want %d", target.HP, combat.MaxHP-combat.UnitDamagePerHit)
 	}
@@ -57,7 +57,7 @@ func TestArcher_HitsAtRangeThreeButNotFour(t *testing.T) {
 	c := NewController()
 	s := c.Spawn(Archer, 5, 5)
 	s.AttackOrder(grid, nil, near)
-	c.Tick(grid, nil, nil, nil, nil)
+	c.Tick(grid, nil, nil, nil, nil, nil)
 	if near.HP != combat.MaxHP-combat.UnitDamagePerHit {
 		t.Fatalf("target at exactly ArcherRange (%d) HP = %d, want a landed hit (%d)", ArcherRange, near.HP, combat.MaxHP-combat.UnitDamagePerHit)
 	}
@@ -66,7 +66,7 @@ func TestArcher_HitsAtRangeThreeButNotFour(t *testing.T) {
 	c2 := NewController()
 	s2 := c2.Spawn(Archer, 5, 5)
 	s2.AttackOrder(grid, nil, far)
-	c2.Tick(grid, nil, nil, nil, nil)
+	c2.Tick(grid, nil, nil, nil, nil, nil)
 	if far.HP != combat.MaxHP {
 		t.Fatal("target one tile beyond ArcherRange took damage -- should still be out of range on the first tick")
 	}
@@ -89,18 +89,18 @@ func TestTwoHitsKillTheTarget(t *testing.T) {
 	target := enemy.New(5, 6)
 	s.AttackOrder(grid, nil, target)
 
-	c.Tick(grid, nil, nil, nil, nil)
+	c.Tick(grid, nil, nil, nil, nil, nil)
 	if target.HP != combat.MaxHP-combat.UnitDamagePerHit {
 		t.Fatalf("target HP after 1 hit = %d, want %d", target.HP, combat.MaxHP-combat.UnitDamagePerHit)
 	}
 
-	c.Tick(grid, nil, nil, nil, nil) // the second, lethal hit -- HP not applied yet
+	c.Tick(grid, nil, nil, nil, nil, nil) // the second, lethal hit -- HP not applied yet
 	if !target.Alive() {
 		t.Fatal("target died the instant the killing blow registered -- its death must wait for the attack visual (pendingKillTarget)")
 	}
 
 	for range attackVisualLifetime {
-		c.Tick(grid, nil, nil, nil, nil)
+		c.Tick(grid, nil, nil, nil, nil, nil)
 	}
 	if target.Alive() {
 		t.Fatal("target still alive after its killing blow's attack visual finished")
@@ -119,17 +119,17 @@ func TestTwoHitsKillTheTarget_ExactThreeTickTimeline(t *testing.T) {
 	target := enemy.New(5, 8) // within ArcherRange (3)
 	s.AttackOrder(grid, nil, target)
 
-	c.Tick(grid, nil, nil, nil, nil) // tick 1: first shot
+	c.Tick(grid, nil, nil, nil, nil, nil) // tick 1: first shot
 	if target.HP != combat.MaxHP-combat.UnitDamagePerHit {
 		t.Fatalf("HP after tick 1 = %d, want %d", target.HP, combat.MaxHP-combat.UnitDamagePerHit)
 	}
 
-	c.Tick(grid, nil, nil, nil, nil) // tick 2: second (lethal) shot registers
+	c.Tick(grid, nil, nil, nil, nil, nil) // tick 2: second (lethal) shot registers
 	if !target.Alive() {
 		t.Fatal("target died on tick 2 -- the killing blow's death must not land until tick 3")
 	}
 
-	c.Tick(grid, nil, nil, nil, nil) // tick 3: the deferred kill resolves
+	c.Tick(grid, nil, nil, nil, nil, nil) // tick 3: the deferred kill resolves
 	if target.Alive() {
 		t.Fatal("target still alive on tick 3 -- want it dead by exactly this tick")
 	}
@@ -152,7 +152,7 @@ func TestMoveTo_SurvivesAutoEngageWhenTheOldTargetIsStillNearby(t *testing.T) {
 	target := enemy.New(5, 6) // adjacent -- within AttackRange and EngageRange
 	enemies := []*enemy.Enemy{target}
 	s.AttackOrder(grid, nil, target)
-	c.Tick(grid, nil, enemies, nil, nil) // lands the first, non-lethal hit
+	c.Tick(grid, nil, enemies, nil, nil, nil) // lands the first, non-lethal hit
 
 	if !s.MoveTo(grid, nil, 15, 5) {
 		t.Fatal("MoveTo failed to find a route away from the enemy")
@@ -161,7 +161,7 @@ func TestMoveTo_SurvivesAutoEngageWhenTheOldTargetIsStillNearby(t *testing.T) {
 		t.Fatal("MoveTo did not start a route")
 	}
 
-	c.Tick(grid, nil, enemies, nil, nil) // the tick that used to cancel it
+	c.Tick(grid, nil, enemies, nil, nil, nil) // the tick that used to cancel it
 	if len(s.RemainingPath()) == 0 {
 		t.Fatal("the move order was cancelled by auto-engage even though the player just issued it")
 	}
@@ -184,7 +184,7 @@ func TestAttackOrder_ChasesATargetThatMovesOutOfRange(t *testing.T) {
 	}
 
 	for range 60 {
-		c.Tick(grid, nil, nil, nil, nil)
+		c.Tick(grid, nil, nil, nil, nil, nil)
 	}
 	if target.Alive() {
 		t.Fatal("swordsman never closed the distance to melee range")
@@ -205,7 +205,7 @@ func TestController_AutoEngagesAnEnemyWithinEngageRangeWithNoPlayerOrder(t *test
 	s := c.Spawn(Archer, 5, 5)
 	target := enemy.New(5, 5+EngageRange) // exactly at the auto-engage edge
 
-	c.Tick(grid, nil, []*enemy.Enemy{target}, nil, nil)
+	c.Tick(grid, nil, []*enemy.Enemy{target}, nil, nil, nil)
 	if !s.HasAttackOrder() {
 		t.Fatal("soldier did not auto-engage an enemy within EngageRange")
 	}
@@ -223,7 +223,7 @@ func TestController_DoesNotAutoEngageBeyondEngageRange(t *testing.T) {
 	s := c.Spawn(Swordsman, 5, 5)
 	target := enemy.New(5, 5+EngageRange+1)
 
-	c.Tick(grid, nil, []*enemy.Enemy{target}, nil, nil)
+	c.Tick(grid, nil, []*enemy.Enemy{target}, nil, nil, nil)
 	if s.HasAttackOrder() {
 		t.Fatal("soldier auto-engaged an enemy beyond EngageRange")
 	}
@@ -254,7 +254,7 @@ func TestController_StarvationStillKills(t *testing.T) {
 
 	deaths := 0
 	for range hunger.MaxTicks + 10 {
-		deaths += c.Tick(grid, nil, nil, nil, nil)
+		deaths += c.Tick(grid, nil, nil, nil, nil, nil)
 	}
 	if deaths != 1 {
 		t.Fatalf("deaths after starving out a soldier with no delivery = %d, want 1", deaths)
@@ -277,9 +277,35 @@ func TestController_AutoEngagesAnOpposingBuildingWithinFactionEngageRange(t *tes
 	rival := &building.Building{Kind: building.Warehouse, X: 5, Y: 6, HP: combat.DamagePerHit}
 	opposingBuildings := []*building.Building{rival}
 
-	c.Tick(grid, nil, nil, opposingBuildings, nil) // auto-engage + kill in one hit (HP == one hit's worth)
+	c.Tick(grid, nil, nil, opposingBuildings, nil, nil) // auto-engage + kill in one hit (HP == one hit's worth)
 	if rival.HP > 0 {
 		t.Fatalf("rival building HP = %d, want 0 after one hit at exactly combat.DamagePerHit health", rival.HP)
+	}
+}
+
+// TestController_AutoEngagesAnOpposingIntruder covers the user's explicit
+// request "боевые юниты могут уничтожать любых юнитов противника - это
+// враги!": a Soldier must be able to auto-engage ANY opposing unit, not
+// only a rival Soldier or building -- an unarmed rival serf/villager/etc.
+// (represented here the same way cmd/game's real intruderTargetsFrom
+// wraps one, and sentry_test.go's own intruder test does) is a one-hit
+// kill via its own Kill callback, same as a WatchTower's shot.
+func TestController_AutoEngagesAnOpposingIntruder(t *testing.T) {
+	grid := world.NewGrid(10, 10)
+	c := NewController()
+	c.Spawn(Swordsman, 5, 5)
+
+	killed := false
+	alive := true
+	intruder := combat.IntruderTarget{
+		X: 5, Y: 6, // within FactionEngageRange
+		Alive: func() bool { return alive },
+		Kill:  func() { killed = true; alive = false },
+	}
+
+	c.Tick(grid, nil, nil, nil, nil, []combat.IntruderTarget{intruder})
+	if !killed {
+		t.Fatal("intruder was not killed after one auto-engaged tick")
 	}
 }
 
@@ -292,7 +318,7 @@ func TestController_AutoEngagesAnOpposingSoldier(t *testing.T) {
 	rivalController := NewController()
 	rival := rivalController.Spawn(Swordsman, 5, 5+FactionEngageRange) // within both FactionEngageRange and ArcherRange
 
-	c.Tick(grid, nil, nil, nil, rivalController.Soldiers)
+	c.Tick(grid, nil, nil, nil, rivalController.Soldiers, nil)
 	if rival.HP != combat.MaxHP-combat.UnitDamagePerHit {
 		t.Fatalf("rival soldier HP = %d, want %d after one auto-engaged hit", rival.HP, combat.MaxHP-combat.UnitDamagePerHit)
 	}

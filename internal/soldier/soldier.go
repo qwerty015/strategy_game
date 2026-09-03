@@ -87,14 +87,23 @@ const (
 const FactionEngageRange = 2
 
 // factionTarget is a soldier's current cross-faction combat target -- a
-// rival building or soldier (Owner different from this Soldier's own),
-// used only by "1×1 против ИИ" mode. Exactly one field is non-nil, or
-// both nil for "no target". Deliberately separate from
-// attackTarget/AttackOrder above, which stays the sandbox-only debug
+// rival building, soldier, or any other opposing unit (see intruder,
+// combat.IntruderTarget), used only by "1×1 против ИИ" mode. Exactly one
+// field is non-nil, or all nil for "no target". Deliberately separate
+// from attackTarget/AttackOrder above, which stays the sandbox-only debug
 // enemy.Enemy mechanism, untouched by any of this.
 type factionTarget struct {
 	building *building.Building
 	soldier  *Soldier
+
+	// intruder is any opposing unit that isn't a rival Soldier -- a real
+	// gap found from an actual playtest report ("боевые юниты могут
+	// уничтожать любых юнитов противника - это враги!"): before this, a
+	// Soldier could only ever fight a rival Soldier or a building, never
+	// an unarmed enemy serf/villager/lumberjack/.... See
+	// combat.IntruderTarget's doc comment -- the exact same shape
+	// package sentry's WatchTower already uses for its own identical gap.
+	intruder *combat.IntruderTarget
 }
 
 func (t factionTarget) alive() bool {
@@ -103,6 +112,8 @@ func (t factionTarget) alive() bool {
 		return t.building.HP > 0
 	case t.soldier != nil:
 		return t.soldier.Alive()
+	case t.intruder != nil:
+		return t.intruder.Alive != nil && t.intruder.Alive()
 	default:
 		return false
 	}
@@ -114,6 +125,8 @@ func (t factionTarget) pos() (int, int) {
 		return t.building.X, t.building.Y
 	case t.soldier != nil:
 		return t.soldier.X, t.soldier.Y
+	case t.intruder != nil:
+		return t.intruder.X, t.intruder.Y
 	default:
 		return 0, 0
 	}
@@ -123,22 +136,28 @@ func (t factionTarget) pos() (int, int) {
 // other structure-damaging attack in the game uses) against a building,
 // combat.UnitDamagePerHit (50%, two hits kill) against a rival soldier --
 // matching the unit-damage rule already established for every other
-// soldier-vs-unit fight in this package.
+// soldier-vs-unit fight in this package. An intruder (any other opposing
+// unit) is a one-hit kill via its own Kill callback, the same convention
+// package sentry's WatchTower already uses against the same kind of
+// target -- these units have no HP concept to apply partial damage to at
+// all (see package villagers' Kill method and its siblings).
 func (t factionTarget) hit() {
 	switch {
 	case t.building != nil:
 		t.building.HP = combat.ApplyDamage(t.building.HP, combat.DamagePerHit)
 	case t.soldier != nil:
 		t.soldier.HP = combat.ApplyDamage(t.soldier.HP, combat.UnitDamagePerHit)
+	case t.intruder != nil:
+		t.intruder.Kill()
 	}
 }
 
-// nearestFactionTarget returns the closest living opposing building or
-// soldier to (x, y) within a square (Chebyshev) radius, or ok == false if
-// none qualifies. Buildings and soldiers are compared on equal footing by
-// raw tile distance -- whichever is actually closer wins, not "always
-// prefer a building".
-func nearestFactionTarget(x, y int, buildings []*building.Building, soldiers []*Soldier, radius int) (t factionTarget, ok bool) {
+// nearestFactionTarget returns the closest living opposing building,
+// soldier, or other unit (intruders) to (x, y) within a square
+// (Chebyshev) radius, or ok == false if none qualifies. Every candidate
+// kind is compared on equal footing by raw tile distance -- whichever is
+// actually closer wins, not "always prefer a building".
+func nearestFactionTarget(x, y int, buildings []*building.Building, soldiers []*Soldier, intruders []combat.IntruderTarget, radius int) (t factionTarget, ok bool) {
 	bestDist := -1
 	consider := func(px, py int, candidate factionTarget) {
 		if !inRange(x, y, px, py, radius) {
@@ -160,6 +179,13 @@ func nearestFactionTarget(x, y int, buildings []*building.Building, soldiers []*
 			continue
 		}
 		consider(s.X, s.Y, factionTarget{soldier: s})
+	}
+	for i := range intruders {
+		in := &intruders[i]
+		if in.Alive == nil || !in.Alive() {
+			continue
+		}
+		consider(in.X, in.Y, factionTarget{intruder: in})
 	}
 	return t, ok
 }
@@ -387,11 +413,13 @@ func (c *Controller) Restore(profession Profession, x, y, hungerTicks, hp int) *
 // every living soldier; a starved soldier is removed from the roster and
 // counted in the returned death total. enemies is used only for
 // auto-engage against the sandbox debug enemy (see EngageRange) --
-// nil/empty is fine when there's nothing to fight there. opposingBuildings
-// and opposingSoldiers are this soldier's cross-faction targets for "1×1
-// против ИИ" mode (see TickFactionCombat's doc comment) -- also nil/empty
-// outside that mode. Call once per simulation tick.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enemies []*enemy.Enemy, opposingBuildings []*building.Building, opposingSoldiers []*Soldier) int {
+// nil/empty is fine when there's nothing to fight there. opposingBuildings,
+// opposingSoldiers and opposingIntruders are this soldier's cross-faction
+// targets for "1×1 против ИИ" mode (see TickFactionCombat's doc comment,
+// and combat.IntruderTarget for opposingIntruders -- any opposing unit
+// that isn't itself a rival Soldier) -- also nil/empty outside that mode.
+// Call once per simulation tick.
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enemies []*enemy.Enemy, opposingBuildings []*building.Building, opposingSoldiers []*Soldier, opposingIntruders []combat.IntruderTarget) int {
 	deaths := 0
 	remaining := c.Soldiers[:0]
 	for _, s := range c.Soldiers {
@@ -427,7 +455,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 			}
 		}
 		if s.attackTarget == nil && !s.faction.alive() && len(s.path) == 0 {
-			if t, ok := nearestFactionTarget(s.X, s.Y, opposingBuildings, opposingSoldiers, FactionEngageRange); ok {
+			if t, ok := nearestFactionTarget(s.X, s.Y, opposingBuildings, opposingSoldiers, opposingIntruders, FactionEngageRange); ok {
 				s.faction = t
 			}
 		}
