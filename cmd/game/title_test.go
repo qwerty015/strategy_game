@@ -2,12 +2,51 @@ package main
 
 import (
 	"image"
+	"os"
+	"path/filepath"
 	"testing"
 
+	gamehelp "strategy_game"
 	"strategy_game/internal/building"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/render"
 )
+
+// TestHelpMarkdownImageReferencesExistOnDisk parses the REAL, embedded
+// docs/HELP.md (not a hand-built fixture, unlike
+// TestParseHelpMarkdownSplitsPagesAndAssets above) and checks every
+// ![...](...) reference actually resolves to a file on disk -- sprites
+// load from disk at runtime, not go:embed (see AGENTS.md/the project's own
+// "no large embedded assets" rule), so a typo'd or renamed filename here
+// would only surface as a blank tile the next time someone opens the
+// in-game help screen, not a build failure.
+func TestHelpMarkdownImageReferencesExistOnDisk(t *testing.T) {
+	pages := parseHelpMarkdown(gamehelp.HelpMarkdown)
+	if len(pages) == 0 {
+		t.Fatal("parsed zero pages out of the real docs/HELP.md")
+	}
+	checked := 0
+	for _, page := range pages {
+		for _, line := range page.lines {
+			if line.kind != helpLineImage {
+				continue
+			}
+			checked++
+			// line.image is a path relative to docs/HELP.md's own
+			// directory (docs/), e.g. "../internal/assets/generated/x.png"
+			// -- this test's own working directory is cmd/game, two
+			// levels below the repo root (cmd/game, not just cmd/), so
+			// docs/ itself is "../../docs" from here.
+			path := filepath.Join("..", "..", "docs", line.image)
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("page %q references missing image %q (resolved to %q): %v", page.title, line.image, path, err)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("docs/HELP.md has no image references at all -- suspicious for this project's own established style")
+	}
+}
 
 func TestParseHelpMarkdownSplitsPagesAndAssets(t *testing.T) {
 	pages := parseHelpMarkdown(`# Document title
