@@ -188,7 +188,7 @@ func TestTitleLanguageChoicesCoverBothLanguages(t *testing.T) {
 }
 
 func TestBuildVersionIsVisibleReleaseMarker(t *testing.T) {
-	const want = "ver_0.1_alpha_build_2026.31.08"
+	const want = "ver_0.15_alpha_build_2026.03.09"
 	if BuildVersion != want {
 		t.Fatalf("BuildVersion = %q, want %q", BuildVersion, want)
 	}

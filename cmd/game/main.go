@@ -976,6 +976,59 @@ func (g *Game) finishedBuildingCounts() map[building.Kind]int {
 	return counts
 }
 
+// producedResourceTypes scans the player's own completed buildings once
+// and reports every resource type at least one of them can currently
+// output (primary or secondary, primary or alt recipe) -- the "a producer
+// already exists" half of building.Unlocked's two-way check, computed
+// once per caller rather than re-scanning every building per palette
+// entry. g.ownedBuildings(0), same real-bug class as finishedBuildingCounts
+// above: an AI-owned building in a duel game must never unlock the
+// player's own palette.
+func (g *Game) producedResourceTypes() map[resource.Type]bool {
+	produced := map[resource.Type]bool{}
+	for _, b := range g.ownedBuildings(0) {
+		if b.ConstructionStage != building.ConstructionNone {
+			continue
+		}
+		for _, r := range building.Types[b.Kind].AllRecipes() {
+			if r.OutputAmount > 0 {
+				produced[r.Output] = true
+			}
+			if r.SecondaryOutputAmount > 0 {
+				produced[r.SecondaryOutput] = true
+			}
+		}
+	}
+	return produced
+}
+
+// buildingUnlocked reports whether kind is currently buildable -- see
+// building.Unlocked's doc comment for the "producer built OR already on
+// the stockpile" rule applied per input resource. produced is a
+// caller-supplied producedResourceTypes() result: pass the same one
+// across every kind checked in a single Draw/click rather than
+// recomputing it per card.
+func (g *Game) buildingUnlocked(kind building.Kind, produced map[resource.Type]bool) bool {
+	return building.Unlocked(kind,
+		func(t resource.Type) bool { return produced[t] },
+		func(t resource.Type) bool { return g.stock.Amount(t) > 0 },
+	)
+}
+
+// paletteUnlocked computes buildingUnlocked for every palette entry at
+// once, sharing one producedResourceTypes() scan across all of them --
+// used both by the Build tab's Draw call and by its click handler (see
+// BuildIndexAt's call site), so a locked card can neither be drawn as
+// available nor actually selected for placement.
+func (g *Game) paletteUnlocked() map[building.Kind]bool {
+	produced := g.producedResourceTypes()
+	unlocked := make(map[building.Kind]bool, len(g.palette.Kinds))
+	for _, kind := range g.palette.Kinds {
+		unlocked[kind] = g.buildingUnlocked(kind, produced)
+	}
+	return unlocked
+}
+
 // completedTownBuildingCount reports finished player structures for the town
 // summary. Roads and naturally generated objects are deliberately excluded:
 // the number answers "how many buildings does my town have?", not "how many
@@ -1640,10 +1693,12 @@ func (g *Game) handleLeftClick(mx, my int) {
 			return
 		}
 		if index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds), g.leftScrollBuild); ok {
-			g.palette.Select(index)
-			g.buildMode = true
-			g.clearWallAnchor()
-			g.statusMsg = ""
+			if index < len(g.palette.Kinds) && g.buildingUnlocked(g.palette.Kinds[index], g.producedResourceTypes()) {
+				g.palette.Select(index)
+				g.buildMode = true
+				g.clearWallAnchor()
+				g.statusMsg = ""
+			}
 			return
 		}
 	}
@@ -5562,7 +5617,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 	ui.BeginResourceTooltips()
-	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts(), g.leftScrollBuild, g.leftScrollHire)
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts(), g.leftScrollBuild, g.leftScrollHire, g.paletteUnlocked())
 	trimServesPrompt := ""
 	if g.dialog == ui.DialogConfirmTrimServes {
 		trimServesPrompt = fmt.Sprintf(i18n.T().TrimServesConfirmPrompt, len(g.logi.Serfs), g.recommendedServeCount())

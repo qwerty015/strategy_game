@@ -1528,6 +1528,138 @@ func TestBuildModePlacesRoadUnderWalkingUnitInsteadOfSelectingIt(t *testing.T) {
 	}
 }
 
+// TestPaletteUnlocked_FreshGameLocksTheWholeDownstreamChain locks in the
+// real playtest gap the whole feature exists for: "мы можем построить
+// свиноферму при том, что у нас нет фермы, или построить плавильню без
+// шахты" -- a brand-new game (only the starting Warehouse+Road, no Wheat/
+// Flour/Log/Carcass/ore/Coal on the stockpile) must lock every building
+// whose recipe needs a resource nothing yet produces, while every
+// no-input building stays open from the very first tick.
+func TestPaletteUnlocked_FreshGameLocksTheWholeDownstreamChain(t *testing.T) {
+	game := NewGame()
+	unlocked := game.paletteUnlocked()
+
+	for _, kind := range []building.Kind{
+		building.Farm, building.Winery, building.FisherHut, building.LumberjackHut,
+		building.QuarryHut, building.MinerHut, building.Warehouse, building.Road,
+		building.Tavern, building.StoneWall, building.WatchTower, building.Barracks,
+		building.Armory,
+	} {
+		if !unlocked[kind] {
+			t.Errorf("kind %v locked on a fresh game, want unlocked (no recipe inputs)", kind)
+		}
+	}
+	for _, kind := range []building.Kind{
+		building.Mill, building.Bakery, building.PigFarm, building.MeatWorkshop,
+		building.CarpentryWorkshop, building.Smeltery,
+	} {
+		if unlocked[kind] {
+			t.Errorf("kind %v unlocked on a fresh game, want locked (no producer built, nothing in stock)", kind)
+		}
+	}
+}
+
+// TestPaletteUnlocked_StockAloneUnlocksCarpentryAndSmeltery is the user's
+// own example: "я собрал достаточное для меня количество руды, угля и
+// бревен... и мне больше нет необходимости в юнитах и постройках для
+// сбора... и я могу построить плавилку и столярку" -- banking the raw
+// material must unlock the processing building even with zero producers
+// ever built.
+func TestPaletteUnlocked_StockAloneUnlocksCarpentryAndSmeltery(t *testing.T) {
+	game := NewGame()
+	game.stock.Add(resource.Log, 1)
+	game.stock.Add(resource.IronOre, 1)
+	game.stock.Add(resource.Coal, 1)
+
+	unlocked := game.paletteUnlocked()
+	if !unlocked[building.CarpentryWorkshop] {
+		t.Error("Carpentry Workshop still locked with Log already on the stockpile")
+	}
+	if !unlocked[building.Smeltery] {
+		t.Error("Smeltery still locked with IronOre+Coal already on the stockpile")
+	}
+	// A building further down a DIFFERENT chain must stay locked: banking
+	// wood/ore says nothing about Wheat existing anywhere.
+	if unlocked[building.PigFarm] {
+		t.Error("Pig Farm unlocked by unrelated Log/ore/coal stock")
+	}
+}
+
+// TestPaletteUnlocked_CompletedProducerUnlocksItsConsumer covers the
+// building-based half of the rule with a REAL completed building (not
+// just stock), and confirms an under-construction one doesn't count yet.
+func TestPaletteUnlocked_CompletedProducerUnlocksItsConsumer(t *testing.T) {
+	game := NewGame()
+	farm := &building.Building{Kind: building.Farm, X: 1, Y: 1, ConstructionStage: building.ConstructionFoundation}
+	game.buildings = append(game.buildings, farm)
+	if game.paletteUnlocked()[building.PigFarm] {
+		t.Fatal("Pig Farm unlocked by a Farm that's still under construction")
+	}
+
+	farm.ConstructionStage = building.ConstructionNone
+	unlocked := game.paletteUnlocked()
+	if !unlocked[building.PigFarm] {
+		t.Error("Pig Farm still locked with a completed Farm on the map")
+	}
+	if !unlocked[building.Mill] {
+		t.Error("Mill still locked with a completed Farm on the map")
+	}
+}
+
+// TestBuildPaletteClick_LockedCardCannotBeSelected is the actual UI path,
+// not just the underlying paletteUnlocked map: clicking a locked card must
+// be a no-op (mirrors how a too-poor hire card already behaves), while an
+// unlocked one still selects normally.
+func TestBuildPaletteClick_LockedCardCannotBeSelected(t *testing.T) {
+	game := NewGame()
+	lockedIndex, unlockedIndex := -1, -1
+	for i, kind := range game.palette.Kinds {
+		switch kind {
+		case building.PigFarm:
+			lockedIndex = i
+		case building.Farm:
+			unlockedIndex = i
+		}
+	}
+	if lockedIndex < 0 || unlockedIndex < 0 {
+		t.Fatal("test setup lacks Pig Farm and/or Farm in the palette")
+	}
+
+	x, y, ok := buildCardScreenPos(game.layout, len(game.palette.Kinds), game.leftScrollBuild, lockedIndex)
+	if !ok {
+		t.Fatal("could not find an on-screen position for the locked Pig Farm card")
+	}
+	game.handleLeftClick(x, y)
+	if game.buildMode {
+		t.Fatal("clicking a locked build card entered build mode")
+	}
+	if game.palette.Selected == lockedIndex {
+		t.Fatal("clicking a locked build card changed the palette selection to it")
+	}
+
+	x, y, ok = buildCardScreenPos(game.layout, len(game.palette.Kinds), game.leftScrollBuild, unlockedIndex)
+	if !ok {
+		t.Fatal("could not find an on-screen position for the unlocked Farm card")
+	}
+	game.handleLeftClick(x, y)
+	if !game.buildMode || game.palette.Selected != unlockedIndex {
+		t.Fatalf("clicking the unlocked Farm card: buildMode=%v selected=%d, want true/%d", game.buildMode, game.palette.Selected, unlockedIndex)
+	}
+}
+
+// buildCardScreenPos brute-forces the on-screen (x, y) of build-palette
+// card wantIndex under layout's current geometry -- Layout's own card
+// y-positions are unexported, so this drives BuildIndexAt (its public,
+// input-side counterpart) backwards instead of duplicating its arithmetic.
+func buildCardScreenPos(layout ui.Layout, count, scroll, wantIndex int) (x, y int, ok bool) {
+	for y := 0; y < 4000; y++ {
+		if idx, found := layout.BuildIndexAt(20, y, count, scroll); found && idx == wantIndex {
+			return 20, y, true
+		}
+	}
+	return 0, 0, false
+}
+
 func TestReserveConstructionMaterialsUsesAvailableStockOnly(t *testing.T) {
 	stock := resource.NewStockpile(0)
 	stock.Add(resource.Plank, 3)

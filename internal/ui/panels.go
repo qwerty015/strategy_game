@@ -34,6 +34,10 @@ var (
 	panelEdgeColor  = color.RGBA{R: 151, G: 111, B: 64, A: 255}
 	selectedColor   = color.RGBA{R: 179, G: 126, B: 48, A: 255}
 	mutedTextColor  = color.RGBA{R: 201, G: 190, B: 168, A: 255}
+	// unavailableCardColor marks a card the player can't act on right now --
+	// a hire option with too little gold, or (see DrawBuildPanel) a building
+	// whose production chain isn't ready yet (building.Unlocked).
+	unavailableCardColor = color.RGBA{R: 69, G: 50, B: 48, A: 245}
 )
 
 func drawPanel(screen *ebiten.Image, r imageRect, title string) {
@@ -49,7 +53,7 @@ type imageRect struct{ x, y, w, h int }
 // DrawBuildPanel renders the two always-available world actions: construction
 // and NPC hiring. Pause/options, saves and speed live behind Esc, so map input
 // remains focused on the settlement itself.
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int, scrollBuild, scrollHire int) {
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int, scrollBuild, scrollHire int, unlocked map[building.Kind]bool) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
@@ -66,7 +70,9 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		x, y := 12, leftBuildCardsStartY+row*stride
 		w, h := layout.LeftWidth-24, cardH
 		fill := panelInnerColor
-		if i == p.Selected {
+		if !unlocked[kind] {
+			fill = unavailableCardColor
+		} else if i == p.Selected {
 			fill = selectedColor
 		}
 		vector.FillRect(screen, float32(x), float32(y), float32(w), float32(h), fill, false)
@@ -152,7 +158,7 @@ func drawHireCards(screen *ebiten.Image, layout Layout, options []HireOption, sc
 		w, h := layout.LeftWidth-24, cardH
 		fill := panelInnerColor
 		if !option.Available {
-			fill = color.RGBA{R: 69, G: 50, B: 48, A: 245}
+			fill = unavailableCardColor
 		}
 		vector.FillRect(screen, float32(x), float32(y), float32(w), float32(h), fill, false)
 		vector.FillRect(screen, float32(x), float32(y+h-3), float32(w), 3, panelEdgeColor, false)
