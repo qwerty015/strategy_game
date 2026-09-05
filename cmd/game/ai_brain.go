@@ -613,10 +613,16 @@ func (g *Game) aiHireSoldiers(f *faction) {
 }
 
 // aiConsiderAttack marches every idle soldier at once toward the
-// opponent's Warehouse once the AI has gathered attackSquadSize of them
-// -- actual fighting along the way is entirely the existing
-// FactionEngageRange auto-engage mechanism (see soldier.Controller.Tick),
-// not anything this function does directly.
+// NEAREST opposing faction's Warehouse once the AI has gathered
+// attackSquadSize of them -- actual fighting along the way is entirely
+// the existing FactionEngageRange auto-engage mechanism (see
+// soldier.Controller.Tick), not anything this function does directly.
+//
+// "Nearest" (not the first opponent found, and not random) matters once
+// there can be more than one: per the user's explicit "все против всех",
+// a bot in one corner of a 4-quadrant map should march on its actual
+// neighbour, not blindly cross the whole map to reach a farther rival
+// while ignoring the one next door.
 func (b *aiBrain) aiConsiderAttack(g *Game, f *faction) {
 	idle := 0
 	for _, s := range f.soldiers.Soldiers {
@@ -627,7 +633,22 @@ func (b *aiBrain) aiConsiderAttack(g *Game, f *faction) {
 	if idle < b.difficulty.attackSquadSize() {
 		return
 	}
-	target := findWarehouseOwnedBy(g.buildings, opponentOwner(f.owner))
+	own := findWarehouseOwnedBy(g.buildings, f.owner)
+	if own == nil {
+		return
+	}
+	var target *building.Building
+	bestDist := -1
+	for _, opponent := range g.opposingOwners(f.owner) {
+		candidate := findWarehouseOwnedBy(g.buildings, opponent)
+		if candidate == nil {
+			continue
+		}
+		dist := squaredDistance(own.X, own.Y, candidate.X, candidate.Y)
+		if target == nil || dist < bestDist {
+			target, bestDist = candidate, dist
+		}
+	}
 	if target == nil {
 		return
 	}
@@ -636,4 +657,13 @@ func (b *aiBrain) aiConsiderAttack(g *Game, f *faction) {
 			s.MoveTo(g.grid, g.buildings, target.X, target.Y)
 		}
 	}
+}
+
+// squaredDistance is a plain Euclidean-squared distance -- enough to
+// compare which of several candidates is nearer without ever needing an
+// actual (and much more expensive) pathfinding distance just to rank
+// targets.
+func squaredDistance(x1, y1, x2, y2 int) int {
+	dx, dy := x1-x2, y1-y2
+	return dx*dx + dy*dy
 }

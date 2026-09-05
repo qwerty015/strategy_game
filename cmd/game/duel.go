@@ -26,86 +26,145 @@ import (
 	"strategy_game/internal/world"
 )
 
-// duelMapWidth/duelMapHeight are the "1×1 против ИИ" map dimensions --
-// roughly double the ordinary mapWidth*mapHeight area (per the user's
-// explicit "увеличим карту в 2 раза [по общей площади]"), scaled by
-// sqrt(2) on each axis rather than doubling each dimension outright.
+// duelMapWidth/duelMapHeight are the "N против ИИ" map dimensions.
+// Originally sized for a 2-territory map ("общая площадь ×2" of the
+// free-map size); kept as-is for the 4-quadrant map too, per the user's
+// explicit choice to use ONE map shape "вне зависимости от количества
+// игроков" -- a quadrant here is roughly the size the old 2-territory
+// map gave each half, not cramped further.
 const (
 	duelMapWidth  = 71
 	duelMapHeight = 54
 
-	// duelWaterStripWidth/duelIsthmusWidth size the vertical water divide
-	// carved by growCenterWaterStrip -- wide enough to read as a real sea
-	// channel, with one narrow dry crossing.
+	// duelWaterStripWidth/duelIsthmusWidth size the water cross carved by
+	// growQuadrantWaterCross -- wide enough to read as a real sea channel,
+	// with narrow dry crossings between neighbouring quadrants.
 	duelWaterStripWidth = 6
 	duelIsthmusWidth    = 4
 )
 
-// growCenterWaterStrip carves a vertical water divide down the middle of
-// a duel map, with one narrow land isthmus left dry at a seeded row
-// range -- per the user's explicit "вода разделяет 2 земли... земли
-// соединяются небольшим перешейком на котором не спавнятся ресурсы".
-// Unlike growSeaRegion (which hugs a single map edge with a random-walk
-// depth, for the ordinary single-player map), this fills a fixed-width
-// band around the vertical center line, uniform except for the isthmus
-// gap -- deliberately simple and exactly reproducible, since both
-// territories must end up geometrically identical in shape.
+// quadrant identifies one of the four territories a duel map is divided
+// into. Values double as an index into arrays keyed by quadrant (see
+// quadrantWarehouseTargets) -- deliberately NOT the same thing as a
+// faction's Owner (a 1×1 match only uses quadrantNW/quadrantSE, say, and
+// still assigns Owner 0/1 to whichever factions actually exist).
+type quadrant int
+
+const (
+	quadrantNW quadrant = iota
+	quadrantNE
+	quadrantSW
+	quadrantSE
+	quadrantCount
+)
+
+// mirrorX/mirrorY reflect a coordinate across the map's vertical/
+// horizontal center line -- the transform a duel map needs to guarantee
+// every faction's starting point is equidistant from the map's center,
+// per the user's explicit "респы противников должны быть равно удалены
+// друг от друга", now generalized to two axes for four quadrants.
+func mirrorX(width, x int) int  { return width - 1 - x }
+func mirrorY(height, y int) int { return height - 1 - y }
+
+// growQuadrantWaterCross divides a duel map into four quadrants (NW/NE/
+// SW/SE) with a vertical and a horizontal water band crossing at the
+// map's center, per the user's explicit "карту разделенную на 4 участка"
+// -- used for every duel match regardless of how many factions actually
+// occupy it (1, 2 or 3 opponents), not a separate simpler map for the
+// 1×1 case.
 //
-// The returned rectangle is the isthmus's own tile bounds (the water-strip
-// X range × the dry Y range) -- newDuelGame passes it to
-// pruneNaturalResourcesFromIsthmus so nothing seeded afterward can end up
-// blocking the one dry crossing. Discarding this return value used to be
-// exactly the bug: the doc comment above already promised a resource-free
-// isthmus, but nothing actually enforced it until a real playtest report
-// ("деревья... перекрывали проход по перешейку").
-func growCenterWaterStrip(g *world.Grid, seed uint32) (isthmus image.Rectangle) {
+// Four dry crossings, one per pair of ADJACENT quadrants (NW-NE, SW-SE
+// across the vertical band; NW-SW, NE-SE across the horizontal band),
+// arranged in mirrored pairs (the NW-NE crossing's exact Y-mirror is the
+// SW-SE crossing; the NW-SW crossing's exact X-mirror is the NE-SE
+// crossing) -- this keeps the whole water layout itself symmetric under
+// mirrorX/mirrorY/both, not just the resources placed on top of it (see
+// mirrorNaturalResourcesForFairness), and forms a 4-cycle (NW-NE-SE-SW-NW)
+// so every quadrant reaches every other one, never leaving one isolated.
+//
+// Deliberately simpler than the old growCenterWaterStrip's randomly
+// seeded single isthmus: each crossing sits at a fixed offset (half of
+// its own margin) rather than a random one. A random offset risks two
+// independently-placed crossings colliding or leaving a gap depending on
+// where they land; a fixed, geometry-derived offset is exactly
+// reproducible and trivially proven connected once, rather than needing
+// to re-verify connectivity for every random seed.
+func growQuadrantWaterCross(g *world.Grid) []image.Rectangle {
 	centerX := g.Width / 2
+	centerY := g.Height / 2
 	left := centerX - duelWaterStripWidth/2
-	// right is derived as g.Width-left, not centerX+duelWaterStripWidth/2,
-	// so the band is exactly symmetric under mirrorX (mirrorX(w,x) =
-	// w-1-x): a tile x is in [left,right) iff mirrorX(w,x) is too only
-	// when left+right == w. A real bug found from an actual playtest
-	// report: the old centerX+width/2 formula left left+right == w-1,
-	// off by exactly one tile -- every mirrored natural resource whose
-	// original sat right at that one edge column landed back on dry
-	// land (or vice versa) instead of water, silently failing to place
-	// and leaving the two sides' Fish counts visibly unequal (61 vs 41
-	// in one recorded run) despite mirrorNaturalResourcesForFairness
-	// otherwise mirroring everything correctly.
-	right := g.Width - left
+	right := g.Width - left // see mirrorX symmetry note on the old version
 	if left < 1 {
 		left = 1
 	}
 	if right > g.Width-1 {
 		right = g.Width - 1
 	}
-
-	margin := 3
-	span := g.Height - 2*margin - duelIsthmusWidth
-	if span < 1 {
-		span = 1
+	top := centerY - duelWaterStripWidth/2
+	bottom := g.Height - top
+	if top < 1 {
+		top = 1
 	}
-	isthmusMinY := margin + int(seed%uint32(span))
-	isthmusMaxY := isthmusMinY + duelIsthmusWidth
+	if bottom > g.Height-1 {
+		bottom = g.Height - 1
+	}
+
+	// North/south isthmus rows on the vertical band -- confined to
+	// y<top / y>=bottom respectively, so they never overlap the
+	// horizontal band's own rectangle (rows [top,bottom)) and the two
+	// passes below never fight over the same tile.
+	northMidY := top / 2
+	northMinY := northMidY - duelIsthmusWidth/2
+	northMaxY := northMinY + duelIsthmusWidth
+	southMinY := g.Height - northMaxY
+	southMaxY := g.Height - northMinY
+
+	// West/east isthmus columns on the horizontal band -- confined to
+	// x<left / x>=right, same reasoning.
+	westMidX := left / 2
+	westMinX := westMidX - duelIsthmusWidth/2
+	westMaxX := westMinX + duelIsthmusWidth
+	eastMinX := g.Width - westMaxX
+	eastMaxX := g.Width - westMinX
 
 	for y := 0; y < g.Height; y++ {
-		if y >= isthmusMinY && y < isthmusMaxY {
-			continue // the one dry crossing
+		if (y >= northMinY && y < northMaxY) || (y >= southMinY && y < southMaxY) {
+			continue // NW-NE or SW-SE crossing
 		}
 		for x := left; x < right; x++ {
 			g.Set(x, y, world.Tile{Terrain: world.Water})
 		}
 	}
-	return image.Rect(left, isthmusMinY, right, isthmusMaxY)
+	for x := 0; x < g.Width; x++ {
+		if (x >= westMinX && x < westMaxX) || (x >= eastMinX && x < eastMaxX) {
+			continue // NW-SW or NE-SE crossing
+		}
+		for y := top; y < bottom; y++ {
+			g.Set(x, y, world.Tile{Terrain: world.Water})
+		}
+	}
+
+	return []image.Rectangle{
+		image.Rect(left, northMinY, right, northMaxY),
+		image.Rect(left, southMinY, right, southMaxY),
+		image.Rect(westMinX, top, westMaxX, bottom),
+		image.Rect(eastMinX, top, eastMaxX, bottom),
+	}
 }
 
-// mirrorX reflects x across the map's vertical center line -- the one
-// coordinate transform a duel map needs to guarantee the two factions'
-// starting points are exactly equidistant from the map's center, per the
-// user's explicit "респы противников должны быть равно удалены друг от
-// друга".
-func mirrorX(width, x int) int {
-	return width - 1 - x
+// quadrantWarehouseTargets returns one search-anchor point per quadrant,
+// symmetric under mirrorX/mirrorY -- findDuelWarehouseSpot expands
+// outward from each to find the actual placeable tile. Mirrors the old
+// duelMapWidth/4-style anchor (a quarter of the way in from the edge on
+// each axis) into all four quadrants at once.
+func quadrantWarehouseTargets(width, height int) [quadrantCount]gridPoint {
+	x0, y0 := width/4, height/4
+	return [quadrantCount]gridPoint{
+		quadrantNW: {x0, y0},
+		quadrantNE: {mirrorX(width, x0), y0},
+		quadrantSW: {x0, mirrorY(height, y0)},
+		quadrantSE: {mirrorX(width, x0), mirrorY(height, y0)},
+	}
 }
 
 // findDuelWarehouseSpot searches outward in growing square rings from
@@ -139,34 +198,43 @@ func findDuelWarehouseSpot(grid *world.Grid, targetX, targetY int) (gridPoint, b
 	return gridPoint{}, false
 }
 
-// newDuelGame builds a fresh "1×1 против ИИ" game: a symmetric
-// water-divided map (see growCenterWaterStrip), a player Warehouse on
-// the west shore and an AI Warehouse mirrored onto the east shore (so
-// both starting points are exactly equidistant from the map's own
-// center), identical starting resources for both sides, and a second,
-// fully independent faction (see faction/newFaction) driving the AI's
-// own economy and army every simulation tick (tickAIFaction).
+// quadrantAssignmentOrder picks which quadrant each faction starts in,
+// player first -- NW then the diagonally opposite SE for a 1-opponent
+// match (as far apart as the map allows, matching the original
+// 2-territory design's "opposite shores" intent), then NE/SW filling in
+// as more opponents join. Index 0 is always the player.
+var quadrantAssignmentOrder = [quadrantCount]quadrant{quadrantNW, quadrantSE, quadrantNE, quadrantSW}
+
+// newDuelGame builds a fresh "N против ИИ" game: a symmetric,
+// four-quadrant water-crossed map (see growQuadrantWaterCross) used
+// regardless of how many opponents this particular match has, a player
+// Warehouse in one quadrant and one AI Warehouse (each its own fully
+// independent faction, see faction/newFaction) in as many of the
+// remaining three quadrants as len(difficulties) calls for, and
+// identical starting resources for every faction on any difficulty.
 //
 // Deliberately reuses the ordinary single-player generation functions
 // (seedTrees/seedThickets/seedFish/seedStoneDeposits/seedOreDeposits)
-// called once across the whole map rather than mirroring one half's
-// output into the other -- a real simplification from the original
-// design (see AGENTS.md's "1×1 против ИИ" notes): both sides still get
-// comparable resources at the same density the single-player map
-// already uses, just not a pixel-exact mirror image of each other.
-func newDuelGame(difficulty aiDifficulty) *Game {
+// called once across the whole map rather than mirroring one quadrant's
+// output into the other three -- a real simplification from the
+// original design (see AGENTS.md's "1×1 против ИИ" notes): every
+// quadrant still gets comparable resources at the same density the
+// single-player map already uses, just not a pixel-exact mirror image
+// of each other before mirrorNaturalResourcesForFairness folds them into
+// one.
+func newDuelGame(difficulties []aiDifficulty) *Game {
 	mapSeed := newMapSeed()
 	grid := world.NewGrid(duelMapWidth, duelMapHeight)
-	isthmus := growCenterWaterStrip(grid, mapSeed^0x9e3779b9)
+	isthmuses := growQuadrantWaterCross(grid)
 
-	playerPoint, ok := findDuelWarehouseSpot(grid, duelMapWidth/4, duelMapHeight/2)
-	if !ok {
-		playerPoint = gridPoint{2, duelMapHeight / 2}
-	}
-	aiTargetX := mirrorX(duelMapWidth, playerPoint.x)
-	aiPoint, ok := findDuelWarehouseSpot(grid, aiTargetX, playerPoint.y)
-	if !ok {
-		aiPoint = gridPoint{mirrorX(duelMapWidth, playerPoint.x), playerPoint.y}
+	targets := quadrantWarehouseTargets(duelMapWidth, duelMapHeight)
+	var points [quadrantCount]gridPoint
+	for q := quadrant(0); q < quadrantCount; q++ {
+		p, ok := findDuelWarehouseSpot(grid, targets[q].x, targets[q].y)
+		if !ok {
+			p = targets[q]
+		}
+		points[q] = p
 	}
 
 	// HP is set explicitly on every building below (building.MaxHP) --
@@ -175,12 +243,23 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	// pruneDestroyedBuildings actually removes a building whose HP
 	// reaches 0, an unset HP would make a building vanish the instant
 	// this game's very first tick runs.
-	warehouse := &building.Building{Kind: building.Warehouse, X: playerPoint.x, Y: playerPoint.y, Owner: 0, HP: building.MaxHP}
-	initialRoad := &building.Building{Kind: building.Road, X: playerPoint.x, Y: playerPoint.y + 1, Owner: 0, HP: building.MaxHP}
-	aiWarehouse := &building.Building{Kind: building.Warehouse, X: aiPoint.x, Y: aiPoint.y, Owner: 1, HP: building.MaxHP}
-	aiRoad := &building.Building{Kind: building.Road, X: aiPoint.x, Y: aiPoint.y + 1, Owner: 1, HP: building.MaxHP}
+	var buildings []*building.Building
+	var warehouses [quadrantCount]*building.Building
+	activeCount := 1 + len(difficulties)
+	if activeCount > int(quadrantCount) {
+		activeCount = int(quadrantCount)
+	}
+	for i := 0; i < activeCount; i++ {
+		q := quadrantAssignmentOrder[i]
+		p := points[q]
+		owner := i // 0 = player, 1..N = bots, in quadrantAssignmentOrder
+		wh := &building.Building{Kind: building.Warehouse, X: p.x, Y: p.y, Owner: owner, HP: building.MaxHP}
+		road := &building.Building{Kind: building.Road, X: p.x, Y: p.y + 1, Owner: owner, HP: building.MaxHP}
+		warehouses[q] = wh
+		buildings = append(buildings, wh, road)
+	}
 
-	buildings := []*building.Building{warehouse, initialRoad, aiWarehouse, aiRoad}
+	playerPoint := points[quadrantAssignmentOrder[0]]
 	buildings = seedTrees(grid, buildings)
 	buildings = seedThickets(grid, buildings, mapSeed^0x27d4eb2f)
 	buildings = seedFish(grid, buildings)
@@ -188,8 +267,8 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse)
-	buildings = pruneNaturalResourcesFromIsthmus(buildings, isthmus)
-	buildings = mirrorNaturalResourcesForFairness(grid, buildings, playerPoint, aiPoint)
+	buildings = pruneNaturalResourcesFromIsthmus(buildings, isthmuses)
+	buildings = mirrorNaturalResourcesForFairness(grid, buildings, points)
 
 	stock := resource.NewStockpile(stockpileCapacity)
 	stock.Add(resource.Plank, startingPlanks)
@@ -205,13 +284,21 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	mapRect := layout.MapRect()
 	camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
 
+	var ais []*faction
+	for i, difficulty := range difficulties {
+		owner := i + 1
+		q := quadrantAssignmentOrder[owner]
+		ais = append(ais, newFaction(owner, warehouses[q], difficulty))
+	}
+
+	playerWarehouse := warehouses[quadrantAssignmentOrder[0]]
 	game := &Game{
 		grid:           grid,
 		buildings:      buildings,
 		stock:          stock,
 		pop:            &economy.Population{},
 		sim:            economy.NewSimulator(framesPerSimTick),
-		logi:           logistics.NewController(warehouse, startingSerfs),
+		logi:           logistics.NewController(playerWarehouse, startingSerfs),
 		vills:          villagers.NewController(),
 		jacks:          lumberjack.NewController(),
 		fishers:        fishing.NewController(),
@@ -220,7 +307,7 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 		miners:         miner.NewController(),
 		sentries:       sentry.NewController(),
 		soldiers:       soldier.NewController(),
-		ai:             newFaction(1, aiWarehouse, difficulty),
+		ais:            ais,
 		formationLines: 2,
 		treeSeed:       defaultTreeSeed,
 		fishSeed:       defaultFishSeed,
@@ -235,53 +322,72 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	return game
 }
 
+// isthmusApproachBuffer widens each isthmus's no-resource zone beyond its
+// own strict dry-crossing rectangle -- a real connectivity bug found
+// while testing this exact map: the tree/fish/deposit density right at
+// the crossing's own immediate edge (still legitimately outside the
+// crossing rectangle, so the original exact-rectangle check let it
+// stand) could still wall off the single row/column that actually leads
+// into it, sealing a quadrant off with a solid tree line one tile short
+// of the isthmus itself. A pathfind.FindLandPath connectivity test
+// between two quadrant warehouses is what actually caught this --
+// nothing sat ON the isthmus, but nothing could reach it either.
+const isthmusApproachBuffer = 5
+
 // pruneNaturalResourcesFromIsthmus removes any natural resource node
 // (isNaturalResourceKind -- Tree/Fish/StoneDeposit/CoalDeposit/
-// GoldOreDeposit/IronOreDeposit) that landed inside isthmus, the duel
-// map's one dry land crossing between the two territories (see
-// growCenterWaterStrip's doc comment). Every seed function only ever
-// places on dry, walkable terrain, and the only dry tiles within the
-// water strip's X range ARE the isthmus's Y rows -- so anything that
-// lands with an X inside isthmus is, by construction, also inside its Y
-// range, making a plain rectangle containment check exact, not an
-// approximation. Called right after the last seed*/before
-// mirrorNaturalResourcesForFairness: a resource pruned here never gets a
-// mirrored counterpart created for it either, so this can't introduce any
-// left/right imbalance of its own.
-func pruneNaturalResourcesFromIsthmus(buildings []*building.Building, isthmus image.Rectangle) []*building.Building {
+// GoldOreDeposit/IronOreDeposit) that landed inside any of isthmuses
+// (widened by isthmusApproachBuffer -- see its own doc comment), the
+// duel map's dry land crossings between quadrants (see
+// growQuadrantWaterCross's doc comment). Called right after the last
+// seed*/before mirrorNaturalResourcesForFairness: a resource pruned here
+// never gets a mirrored counterpart created for it either, so this
+// can't introduce any quadrant imbalance of its own.
+func pruneNaturalResourcesFromIsthmus(buildings []*building.Building, isthmuses []image.Rectangle) []*building.Building {
 	kept := buildings[:0]
 	for _, b := range buildings {
-		if isNaturalResourceKind(b.Kind) && (image.Point{X: b.X, Y: b.Y}).In(isthmus) {
+		if !isNaturalResourceKind(b.Kind) {
+			kept = append(kept, b)
 			continue
 		}
-		kept = append(kept, b)
+		p := image.Point{X: b.X, Y: b.Y}
+		blocked := false
+		for _, isthmus := range isthmuses {
+			if p.In(isthmus.Inset(-isthmusApproachBuffer)) {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
+			kept = append(kept, b)
+		}
 	}
 	return kept
 }
 
 // mirrorNaturalResourcesForFairness replaces every natural resource node
 // (Tree/Fish/StoneDeposit/CoalDeposit/GoldOreDeposit/IronOreDeposit) with
-// a left/right-symmetric layout: only the left half (the player's side,
-// x < duelMapWidth/2) of what the ordinary single-player seed functions
-// generated is kept, and each surviving node gets an exact mirrorX
-// counterpart placed on the AI's side.
+// a four-quadrant-symmetric layout: only the NW quadrant's (x<centerX,
+// y<centerY) share of what the ordinary single-player seed functions
+// generated is kept as canonical, and each surviving node gets an exact
+// mirrorX/mirrorY/mirrorXY counterpart placed in the other three
+// quadrants -- generalizes the original two-territory (mirrorX-only)
+// version to two axes, per the user's explicit "карту разделенную на 4
+// участка с зеркальным распределением ресурсов", placed regardless of
+// how many of the 4 quadrants an actual faction occupies this match (an
+// empty quadrant still gets its share of resources -- neutral,
+// contestable territory).
 //
-// A real fairness bug found from an actual playtest report: the original
-// design deliberately called the single-player seed functions once
-// across the WHOLE map, unmirrored, as a documented simplification ("a
-// real simplification from the original plan... both sides still get
-// comparable resources at the same density... just not a pixel-exact
-// mirror image"). In practice this meant no per-side balancing at all --
-// stone/ore deposits only avoided the PLAYER's warehouse point (see
-// seedStoneDeposits/seedOreDeposits' avoid parameter above), never the
-// AI's, and each deposit type's 2-5 regions each start from one
-// seed-derived point with no left/right balancing whatsoever. The
-// reported outcome: one match had the AI's side holding effectively all
-// the stone and iron ore, the player's holding almost none. Exact
-// mirroring is the only approach that actually guarantees fairness
-// rather than leaving it to chance.
-func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.Building, playerPoint, aiPoint gridPoint) []*building.Building {
+// A real fairness bug found from an actual playtest report, in the
+// original two-territory version, still guarded against here: naively
+// discarding "the other half" instead of folding to canonical can zero
+// out a resource type entirely if generation happened to place all of it
+// on the discarded side (confirmed: 76/76 stone in one recorded run).
+// Folding first (instead of discarding) keeps whatever generation
+// actually produced, wherever it landed, and only repositions it.
+func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.Building, warehousePoints [quadrantCount]gridPoint) []*building.Building {
 	centerX := duelMapWidth / 2
+	centerY := duelMapHeight / 2
 	isDeposit := func(kind building.Kind) bool {
 		switch kind {
 		case building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
@@ -292,21 +398,6 @@ func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.B
 	}
 
 	kept := make([]*building.Building, 0, len(buildings))
-	// canonical folds every natural resource to its left-half (x <
-	// centerX) position, deduplicated by (kind, foldedX, y) -- not
-	// simply "discard anything already on the right half", which was a
-	// real, severe bug found from an actual playtest report ("камня - 0,
-	// золота - 0"): seedStoneDeposits/seedOreDeposits' avoid parameter
-	// only ever pushes a deposit AWAY from the player's own warehouse,
-	// with nothing pulling it toward either half specifically -- given
-	// growStoneRegion's deterministic, fixed-seed scoring and a
-	// near-constant playerPoint, this consistently placed *100%* of
-	// stone (confirmed: 76/76 across 5 independent runs) on the AI's
-	// side. Discarding the right half then meant discarding ALL of it,
-	// leaving nothing at all to mirror -- worse than the original
-	// fairness bug, not better. Folding first (instead of discarding)
-	// keeps the deposits that generation actually produced, wherever
-	// they landed, and only repositions them into a symmetric layout.
 	type canonicalKey struct {
 		kind building.Kind
 		x, y int
@@ -318,11 +409,14 @@ func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.B
 			kept = append(kept, b)
 			continue
 		}
-		foldedX := b.X
+		foldedX, foldedY := b.X, b.Y
 		if foldedX >= centerX {
 			foldedX = mirrorX(duelMapWidth, foldedX)
 		}
-		key := canonicalKey{b.Kind, foldedX, b.Y}
+		if foldedY >= centerY {
+			foldedY = mirrorY(duelMapHeight, foldedY)
+		}
+		key := canonicalKey{b.Kind, foldedX, foldedY}
 		if _, seen := canonical[key]; seen {
 			continue
 		}
@@ -330,17 +424,16 @@ func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.B
 		order = append(order, key)
 	}
 
-	// canOK/place are split, and every pair below is checked with canOK
-	// on BOTH the left and mirrored position before either is committed
-	// -- a real bug found immediately after the fold rewrite above: with
-	// two independent, unconditional place() calls, one side succeeding
-	// could commit a tile that then blocks its own pair's other side (or
-	// a LATER pair's side) from ever placing, silently drifting the
-	// left/right counts apart (confirmed: 69 vs 88 Fish in one run) even
-	// though the fold itself is exactly symmetric. Checking the whole
-	// pair against a single, shared, not-yet-mutated kept snapshot
-	// before adding either keeps every pair atomic: either both sides
-	// land, or neither does.
+	// canOK/place split, and every quadrant's copy in a group is checked
+	// with canOK against a single, shared, not-yet-mutated kept snapshot
+	// before ANY of them is committed -- a real bug found in the
+	// original two-quadrant version: independent, unconditional place()
+	// calls let one quadrant's copy commit a tile that then blocks
+	// another quadrant's copy in the SAME group (or a later group) from
+	// ever placing, silently drifting the per-quadrant counts apart
+	// (confirmed: 69 vs 88 Fish in one run) even though the fold itself
+	// is exactly symmetric. Checking the whole group atomically keeps
+	// every quadrant's share equal: either all of them land, or none do.
 	canOK := func(kind building.Kind, x, y int, avoid gridPoint) bool {
 		if isDeposit(kind) && tooCloseToPoint(x, y, avoid, minDepositDistanceFromWarehouse) {
 			return false
@@ -359,17 +452,44 @@ func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.B
 	}
 	for _, key := range order {
 		src := canonical[key]
-		mx := mirrorX(duelMapWidth, key.x)
-		if mx == key.x {
-			// The one self-mirroring column -- a single copy, no pair.
-			if canOK(src.Kind, key.x, key.y, playerPoint) {
-				place(src.Kind, key.x, key.y, src.Reserve, src.GrowthTicks, src.GrowthTargetTicks)
+		mx, my := mirrorX(duelMapWidth, key.x), mirrorY(duelMapHeight, key.y)
+
+		// Up to 4 candidate positions, one per quadrant -- deduplicated
+		// (a resource sitting exactly on one or both mirror axes yields
+		// fewer than 4 distinct tiles) and using that quadrant's own
+		// warehouse point for the deposit min-distance check.
+		type candidate struct {
+			x, y  int
+			avoid gridPoint
+		}
+		seen := map[[2]int]bool{}
+		var candidates []candidate
+		for _, c := range []candidate{
+			{key.x, key.y, warehousePoints[quadrantNW]},
+			{mx, key.y, warehousePoints[quadrantNE]},
+			{key.x, my, warehousePoints[quadrantSW]},
+			{mx, my, warehousePoints[quadrantSE]},
+		} {
+			pos := [2]int{c.x, c.y}
+			if seen[pos] {
+				continue
 			}
+			seen[pos] = true
+			candidates = append(candidates, c)
+		}
+
+		allOK := true
+		for _, c := range candidates {
+			if !canOK(src.Kind, c.x, c.y, c.avoid) {
+				allOK = false
+				break
+			}
+		}
+		if !allOK {
 			continue
 		}
-		if canOK(src.Kind, key.x, key.y, playerPoint) && canOK(src.Kind, mx, key.y, aiPoint) {
-			place(src.Kind, key.x, key.y, src.Reserve, src.GrowthTicks, src.GrowthTargetTicks)
-			place(src.Kind, mx, key.y, src.Reserve, src.GrowthTicks, src.GrowthTargetTicks)
+		for _, c := range candidates {
+			place(src.Kind, c.x, c.y, src.Reserve, src.GrowthTicks, src.GrowthTargetTicks)
 		}
 	}
 	return kept
@@ -378,9 +498,9 @@ func mirrorNaturalResourcesForFairness(grid *world.Grid, buildings []*building.B
 // factionDefeated reports whether owner has been fully wiped out --
 // every building except Road/StoneWall/Gate destroyed, and every unit
 // dead -- per the user's explicit win condition ("все здания и юниты
-// противника уничтожены (дорога и стены не в счет)"). Only meaningful
-// once g.ai != nil (a "1×1 против ИИ" game); owner 0 or 1.
-// duelResult is the outcome of a "1×1 против ИИ" match -- see Game's own
+// противника уничтожены (дорога и стены не в счет)"). Meaningful for the
+// player (owner 0) or any AI faction's owner.
+// duelResult is the outcome of an "N против ИИ" match -- see Game's own
 // duelResult field doc comment.
 type duelResult int
 
@@ -390,27 +510,48 @@ const (
 	duelResultDefeat
 )
 
-// checkDuelResult sets g.duelResult the first tick either faction is
-// fully defeated -- see factionDefeated. A no-op outside "1×1 против ИИ"
-// (g.ai == nil) or once a result is already set (a finished match's
+// checkDuelResult sets g.duelResult once the match is actually decided --
+// per the user's explicit "все против всех": the player loses the
+// instant their OWN faction is defeated (it doesn't matter which bot
+// eventually wins the rest), and wins only once every single AI faction
+// is defeated too, however many there are. A no-op outside "N против ИИ"
+// (g.ais empty) or once a result is already set (a finished match's
 // simulation is frozen -- see Update's early return on g.duelResult --
 // so this would never re-fire anyway, but a defensive check costs
 // nothing and documents the intent).
 func (g *Game) checkDuelResult() {
-	if g.ai == nil || g.duelResult != duelResultNone {
+	if len(g.ais) == 0 || g.duelResult != duelResultNone {
 		return
 	}
-	switch {
-	case g.factionDefeated(1):
-		g.duelResult = duelResultVictory
-	case g.factionDefeated(0):
+	if g.factionDefeated(0) {
 		g.duelResult = duelResultDefeat
+		return
 	}
+	for _, f := range g.ais {
+		if !g.factionDefeated(f.owner) {
+			return // at least one bot still stands -- the match continues
+		}
+	}
+	g.duelResult = duelResultVictory
 }
 
+// factionDefeated's isNaturalResourceKind exclusion matters far more here
+// than it first looks: every Tree/Fish/StoneDeposit/CoalDeposit/
+// GoldOreDeposit/IronOreDeposit on the whole map is built via a plain
+// &building.Building{Kind: ..., X: ..., Y: ...} literal with no Owner
+// field set at all -- meaning its Owner is the zero value, 0, the same
+// as the player's. Without this exclusion, factionDefeated(0) (the
+// player) would hit the very first tree anywhere on the map and return
+// false immediately, no matter how thoroughly the player's own buildings
+// were actually destroyed: a real bug found while adding a test for the
+// player's own defeat specifically (every existing test up to that point
+// only ever exercised the AI's defeat, factionDefeated(1), which was
+// never at risk of this -- nothing seeds a natural resource with Owner:
+// 1). Left the player's own defeat condition silently unreachable until
+// caught.
 func (g *Game) factionDefeated(owner int) bool {
 	for _, b := range g.buildings {
-		if b.Owner != owner {
+		if b.Owner != owner || isNaturalResourceKind(b.Kind) {
 			continue
 		}
 		switch b.Kind {
@@ -426,10 +567,10 @@ func (g *Game) factionUnitCount(owner int) int {
 	if owner == 0 {
 		return len(g.logi.Serfs) + len(g.vills.Villagers) + len(g.jacks.Lumberjacks) + len(g.fishers.Fishermen) + len(g.quarry.Quarrymen) + len(g.builders.Builders) + len(g.miners.Miners) + len(g.sentries.Sentries) + len(g.soldiers.Soldiers)
 	}
-	if g.ai == nil {
+	f := g.factionByOwner(owner)
+	if f == nil {
 		return 0
 	}
-	f := g.ai
 	return len(f.logi.Serfs) + len(f.vills.Villagers) + len(f.jacks.Lumberjacks) + len(f.fishers.Fishermen) + len(f.quarry.Quarrymen) + len(f.builders.Builders) + len(f.miners.Miners) + len(f.sentries.Sentries) + len(f.soldiers.Soldiers)
 }
 

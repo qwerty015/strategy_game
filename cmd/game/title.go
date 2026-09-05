@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -38,12 +39,20 @@ const (
 	screenTitle
 	screenLoad
 	screenHelp
-	// screenModeSelect/screenDifficultySelect are the "Новая игра" flow's
-	// two steps -- free map (single player, unchanged) vs "1×1 против
-	// ИИ" (needs a difficulty pick next). See enterModeSelect.
+	// screenModeSelect/screenOpponentCountSelect/screenDifficultySelect
+	// are the "Новая игра" flow's steps -- free map (single player,
+	// unchanged) vs "N против ИИ" (needs an opponent count, then one
+	// difficulty pick per opponent). See enterModeSelect.
 	screenModeSelect
+	screenOpponentCountSelect
 	screenDifficultySelect
 )
+
+// maxDuelOpponents caps how many AI factions a duel match can have --
+// one fewer than the map's own quadrantCount (one quadrant is always the
+// player's), which per the user's own framing ("3 бота и юзер, 2 бота и
+// юзер") comes out to up to 3 bots on the 4-quadrant map.
+const maxDuelOpponents = int(quadrantCount) - 1
 
 // gameMode is the "Новая игра" flow's first choice -- the ordinary
 // single-player free map (unchanged), or "1×1 против ИИ" (needs a
@@ -70,10 +79,12 @@ type titleCopy struct {
 	back, previous, next string
 	loadTitle, noSaves   string
 
-	modeSelectTitle, freeMap, freeMapDesc string
-	duelMode, duelModeDesc                string
-	difficultyTitle                       string
-	easy, normal, hard                    string
+	modeSelectTitle, freeMap, freeMapDesc   string
+	duelMode, duelModeDesc                  string
+	opponentCountTitle                      string
+	opponentOne, opponentTwo, opponentThree string
+	difficultyTitleFmt                      string // formatted with the opponent's 1-based index
+	easy, normal, hard                      string
 }
 
 func activeTitleCopy() titleCopy {
@@ -85,9 +96,11 @@ func activeTitleCopy() titleCopy {
 			loadTitle: "Load a save", noSaves: "No saved games yet",
 			modeSelectTitle: "Choose a mode",
 			freeMap:         "Free map", freeMapDesc: "Just you, build at your own pace",
-			duelMode: "1v1 vs AI", duelModeDesc: "A rival settlement across the water -- destroy it to win",
-			difficultyTitle: "Choose a difficulty",
-			easy:            "Easy", normal: "Normal", hard: "Hard",
+			duelMode: "Duel vs AI", duelModeDesc: "One or more rival settlements across the water -- destroy them all to win",
+			opponentCountTitle: "How many opponents?",
+			opponentOne:        "1 opponent", opponentTwo: "2 opponents", opponentThree: "3 opponents",
+			difficultyTitleFmt: "Opponent %d -- choose a difficulty",
+			easy:               "Easy", normal: "Normal", hard: "Hard",
 		}
 	}
 	return titleCopy{
@@ -97,9 +110,11 @@ func activeTitleCopy() titleCopy {
 		loadTitle: "Загрузить сохранение", noSaves: "Сохранений пока нет",
 		modeSelectTitle: "Выберите режим",
 		freeMap:         "Свободная карта", freeMapDesc: "Только вы, стройте в своём темпе",
-		duelMode: "1×1 с противником", duelModeDesc: "Вражеское поселение за проливом — победа, когда оно уничтожено",
-		difficultyTitle: "Выберите сложность",
-		easy:            "Лёгкий", normal: "Средний", hard: "Сложный",
+		duelMode: "Дуэль с ИИ", duelModeDesc: "Одно или несколько вражеских поселений за проливом — победа, когда все уничтожены",
+		opponentCountTitle: "Сколько противников?",
+		opponentOne:        "1 противник", opponentTwo: "2 противника", opponentThree: "3 противника",
+		difficultyTitleFmt: "Противник %d — выберите сложность",
+		easy:               "Лёгкий", normal: "Средний", hard: "Сложный",
 	}
 }
 
@@ -256,15 +271,37 @@ func (g *Game) updateFrontScreen() error {
 		case mode == gameModeFreeMap:
 			g.startFreeMapGame()
 		case mode == gameModeDuel:
-			g.screen = screenDifficultySelect
+			g.duelDifficulties = nil
+			g.screen = screenOpponentCountSelect
 		}
-	case screenDifficultySelect:
+	case screenOpponentCountSelect:
 		if image.Pt(mx, my).In(titleBackRect(frontWidth, frontHeight)) {
 			g.screen = screenModeSelect
 			return nil
 		}
+		if count, ok := opponentCountSelectActionAt(mx, my, frontWidth, frontHeight); ok {
+			g.duelOpponentCount = count
+			g.duelDifficulties = nil
+			g.screen = screenDifficultySelect
+		}
+	case screenDifficultySelect:
+		if image.Pt(mx, my).In(titleBackRect(frontWidth, frontHeight)) {
+			// Back from the first opponent's difficulty pick returns to
+			// the opponent-count screen; back from a later one just
+			// re-asks the previous opponent instead of losing the whole
+			// flow.
+			if len(g.duelDifficulties) == 0 {
+				g.screen = screenOpponentCountSelect
+			} else {
+				g.duelDifficulties = g.duelDifficulties[:len(g.duelDifficulties)-1]
+			}
+			return nil
+		}
 		if difficulty, ok := difficultySelectActionAt(mx, my, frontWidth, frontHeight); ok {
-			g.startDuelGame(difficulty)
+			g.duelDifficulties = append(g.duelDifficulties, difficulty)
+			if len(g.duelDifficulties) >= g.duelOpponentCount {
+				g.startDuelGame(g.duelDifficulties)
+			}
 		}
 	}
 	return nil
@@ -358,13 +395,14 @@ func (g *Game) startFreeMapGame() {
 	*g = *fresh
 }
 
-// startDuelGame is the "1×1 против ИИ" choice, once a difficulty is
-// picked -- mirrors startFreeMapGame's own layout/camera/status-message
-// handling exactly, just building a newDuelGame(difficulty) instead of
+// startDuelGame is the "N против ИИ" choice, once every opponent has its
+// own difficulty picked (one entry per bot, in the order they were
+// asked) -- mirrors startFreeMapGame's own layout/camera/status-message
+// handling exactly, just building a newDuelGame(difficulties) instead of
 // an ordinary NewGame().
-func (g *Game) startDuelGame(difficulty aiDifficulty) {
+func (g *Game) startDuelGame(difficulties []aiDifficulty) {
 	layout := g.layout
-	fresh := newDuelGame(difficulty)
+	fresh := newDuelGame(difficulties)
 	fresh.layout = layout
 	mapRect := layout.MapRect()
 	fresh.camera.SetViewport(mapRect.Min.X, mapRect.Min.Y, mapRect.Dx(), mapRect.Dy())
@@ -587,6 +625,8 @@ func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 		g.drawHelpScreen(screen)
 	case screenModeSelect:
 		g.drawModeSelectScreen(screen)
+	case screenOpponentCountSelect:
+		g.drawOpponentCountSelectScreen(screen)
 	case screenDifficultySelect:
 		g.drawDifficultySelectScreen(screen)
 	default:
@@ -628,12 +668,34 @@ func (g *Game) drawModeSelectScreen(screen *ebiten.Image) {
 	drawTitleButton(screen, titleBackRect(width, height), copy.back, false)
 }
 
+// drawOpponentCountSelectScreen reuses difficultyButtonRects' exact 3-card
+// layout (1/2/3 is the same shape as easy/normal/hard) for "how many
+// bots" -- per the user's own examples ("3 бота и юзер, 2 бота и юзер").
+func (g *Game) drawOpponentCountSelectScreen(screen *ebiten.Image) {
+	copy := activeTitleCopy()
+	bounds := screen.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	rects := difficultyButtonRects(width, height)
+	ui.DrawTitleText(screen, copy.opponentCountTitle, float64(rects[0].Min.X), float64(rects[0].Min.Y-56), 2.2)
+	labels := [3]string{copy.opponentOne, copy.opponentTwo, copy.opponentThree}
+	for index, rect := range rects {
+		drawTitleButton(screen, rect, labels[index], false)
+	}
+	drawTitleButton(screen, titleBackRect(width, height), copy.back, false)
+}
+
+// drawDifficultySelectScreen asks for ONE opponent's difficulty at a
+// time -- per the user's explicit "подумай над выбором уровня сложности
+// для каждого противника": g.duelDifficulties' current length is both
+// how many picks are already made and (0-indexed) which opponent this
+// visit is asking about.
 func (g *Game) drawDifficultySelectScreen(screen *ebiten.Image) {
 	copy := activeTitleCopy()
 	bounds := screen.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 	rects := difficultyButtonRects(width, height)
-	ui.DrawTitleText(screen, copy.difficultyTitle, float64(rects[0].Min.X), float64(rects[0].Min.Y-56), 2.2)
+	title := fmt.Sprintf(copy.difficultyTitleFmt, len(g.duelDifficulties)+1)
+	ui.DrawTitleText(screen, title, float64(rects[0].Min.X), float64(rects[0].Min.Y-56), 2.2)
 	labels := [3]string{copy.easy, copy.normal, copy.hard}
 	for index, rect := range rects {
 		drawTitleButton(screen, rect, labels[index], false)
@@ -898,6 +960,19 @@ func difficultyButtonRects(width, height int) []image.Rectangle {
 		image.Rect(x0+cardW+gap, y, x0+cardW+gap+cardW, y+cardH),
 		image.Rect(x0+2*(cardW+gap), y, x0+2*(cardW+gap)+cardW, y+cardH),
 	}
+}
+
+// opponentCountSelectActionAt resolves a click on the "how many
+// opponents" screen -- reuses difficultyButtonRects' exact geometry
+// (see drawOpponentCountSelectScreen), returning 1/2/3.
+func opponentCountSelectActionAt(x, y, width, height int) (int, bool) {
+	point := image.Pt(x, y)
+	for index, rect := range difficultyButtonRects(width, height) {
+		if point.In(rect) {
+			return index + 1, true
+		}
+	}
+	return 0, false
 }
 
 func difficultySelectActionAt(x, y, width, height int) (aiDifficulty, bool) {

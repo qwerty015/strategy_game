@@ -230,9 +230,25 @@ func TestDifficultySelectActionAt(t *testing.T) {
 	}
 }
 
+// TestOpponentCountSelectActionAt mirrors TestDifficultySelectActionAt --
+// same 3-card geometry (difficultyButtonRects), different meaning (1/2/3
+// opponents instead of a difficulty level).
+func TestOpponentCountSelectActionAt(t *testing.T) {
+	rects := difficultyButtonRects(1280, 720)
+	for index, rect := range rects {
+		count, ok := opponentCountSelectActionAt(rect.Min.X+1, rect.Min.Y+1, 1280, 720)
+		if !ok || count != index+1 {
+			t.Fatalf("card %d: count=%d ok=%v, want %d", index, count, ok, index+1)
+		}
+	}
+	if _, ok := opponentCountSelectActionAt(0, 0, 1280, 720); ok {
+		t.Fatal("empty point unexpectedly has an opponent count")
+	}
+}
+
 // TestNewGameFlow_FreeMapStaysSinglePlayer locks in that picking "Свободная
 // карта" from the mode-select screen behaves exactly like the old direct
-// "Новая игра" button always did: an ordinary single-player game, g.ai nil.
+// "Новая игра" button always did: an ordinary single-player game, g.ais empty.
 func TestNewGameFlow_FreeMapStaysSinglePlayer(t *testing.T) {
 	g := NewGame()
 	g.screen = screenTitle
@@ -241,7 +257,7 @@ func TestNewGameFlow_FreeMapStaysSinglePlayer(t *testing.T) {
 		t.Fatalf("screen = %v, want screenModeSelect", g.screen)
 	}
 	g.startFreeMapGame()
-	if g.ai != nil {
+	if len(g.ais) != 0 {
 		t.Fatal("free map game unexpectedly has an AI faction")
 	}
 	if g.buildings == nil {
@@ -251,7 +267,7 @@ func TestNewGameFlow_FreeMapStaysSinglePlayer(t *testing.T) {
 
 // TestNewGameFlow_DuelModeStartsASecondFaction locks in the other half of
 // the goal this screen exists for: picking "1×1 с ИИ" then a difficulty
-// must actually reach a playable duel game (g.ai set, g.screen back to
+// must actually reach a playable duel game (g.ais set, g.screen back to
 // screenPlay) -- before this screen existed there was no way to reach
 // newDuelGame from the running application at all.
 func TestNewGameFlow_DuelModeStartsASecondFaction(t *testing.T) {
@@ -259,12 +275,47 @@ func TestNewGameFlow_DuelModeStartsASecondFaction(t *testing.T) {
 	g.screen = screenTitle
 	g.enterModeSelect()
 	g.screen = screenDifficultySelect
-	g.startDuelGame(AIHard)
-	if g.ai == nil {
+	g.startDuelGame([]aiDifficulty{AIHard})
+	if len(g.ais) == 0 {
 		t.Fatal("duel game has no AI faction")
 	}
-	if g.ai.brain.difficulty != AIHard {
-		t.Fatalf("ai difficulty = %v, want AIHard", g.ai.brain.difficulty)
+	if g.ais[0].brain.difficulty != AIHard {
+		t.Fatalf("ai difficulty = %v, want AIHard", g.ais[0].brain.difficulty)
+	}
+}
+
+// TestNewGameFlow_DuelModeWithMultipleOpponentsPicksOneDifficultyEach
+// covers the "N против ИИ" extension of TestNewGameFlow_DuelModeStartsASecondFaction
+// -- per the user's explicit "подумай над выбором уровня сложности для
+// каждого противника", each opponent gets its own pick, not one shared
+// difficulty for the whole match. Drives the actual accumulation state
+// (g.duelDifficulties) the real screenDifficultySelect flow builds up
+// one visit at a time, rather than simulating live cursor clicks (same
+// convention as TestNewGameFlow_DuelModeStartsASecondFaction, which
+// already sets g.screen directly rather than clicking through it).
+func TestNewGameFlow_DuelModeWithMultipleOpponentsPicksOneDifficultyEach(t *testing.T) {
+	g := NewGame()
+	g.screen = screenTitle
+	g.enterModeSelect()
+	g.duelOpponentCount = 3
+	g.duelDifficulties = nil
+	g.screen = screenDifficultySelect
+
+	picks := []aiDifficulty{AIEasy, AINormal, AIHard}
+	for _, difficulty := range picks {
+		g.duelDifficulties = append(g.duelDifficulties, difficulty)
+		if len(g.duelDifficulties) >= g.duelOpponentCount {
+			g.startDuelGame(g.duelDifficulties)
+		}
+	}
+
+	if len(g.ais) != 3 {
+		t.Fatalf("len(g.ais) = %d, want 3", len(g.ais))
+	}
+	for i, want := range picks {
+		if g.ais[i].brain.difficulty != want {
+			t.Fatalf("bot %d difficulty = %v, want %v (picked in order)", i, g.ais[i].brain.difficulty, want)
+		}
 	}
 }
 
@@ -272,10 +323,10 @@ func TestNewGameFlow_DuelModeStartsASecondFaction(t *testing.T) {
 // test used to assert: an explicit user report ("а я не могу сохранить
 // игру если играю с ботом?") turned "duel saves are refused" from a
 // deliberate guard into a missing feature, so saveGame no longer refuses
-// -- it serializes g.ai's full faction state (see buildSaveState's
+// -- it serializes g.ais' full faction state (see buildSaveState's
 // IsDuelGame/AI* fields and restoreFaction), same as a free-map game.
 func TestSaveGame_SucceedsDuringADuelGame(t *testing.T) {
-	g := newDuelGame(AINormal)
+	g := newDuelGame([]aiDifficulty{AINormal})
 	tmp := t.TempDir() + "/slot1.json"
 	if err := g.saveGame(tmp, "test"); err != nil {
 		t.Fatalf("saveGame unexpectedly failed for a duel game: %v", err)

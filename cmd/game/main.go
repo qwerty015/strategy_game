@@ -222,11 +222,15 @@ type Game struct {
 	sentries  *sentry.Controller
 	soldiers  *soldier.Controller
 
-	// ai is the second faction in "1×1 против ИИ" mode -- nil in ordinary
-	// single-player "free map" games, where every existing g.xxx field
-	// above is the only town that exists. See cmd/game/ai.go's faction
-	// type and cmd/game/ai_brain.go's aiBrain for the rest of this mode.
-	ai *faction
+	// ais holds every AI opponent faction in a duel match ("1×N против
+	// ИИ") -- empty in ordinary single-player "free map" games, where
+	// every existing g.xxx field above is the only town that exists. A
+	// slice, not a map: iteration order must be deterministic (matters
+	// for a future networked match too, not just this session), and
+	// there are only ever 1-3 of these, so a linear scan by owner is
+	// never a real cost. See cmd/game/ai.go's faction type and
+	// cmd/game/ai_brain.go's aiBrain for the rest of this mode.
+	ais []*faction
 
 	// leftScrollBuild/leftScrollHire are the first-visible-card index for
 	// the Build/Hire tab lists, per the user's explicit request to make
@@ -391,8 +395,18 @@ type Game struct {
 	preModeSelectScreen appScreen
 	preModeSelectPaused bool
 
-	// duelResult is the "1×1 против ИИ" win/loss outcome, checked once
-	// per tick (see tickOnce) whenever g.ai != nil. A real gap found from
+	// duelOpponentCount/duelDifficulties are the "N против ИИ" setup
+	// flow's own transient state -- per the user's explicit "подумай над
+	// выбором уровня сложности для каждого противника", each opponent
+	// gets its own difficulty pick, one screenDifficultySelect visit at a
+	// time (see screenOpponentCountSelect/startDuelGame). duelDifficulties
+	// accumulates one entry per bot already picked; its length is also
+	// "which opponent's difficulty screen is this" (0-indexed).
+	duelOpponentCount int
+	duelDifficulties  []aiDifficulty
+
+	// duelResult is the "N против ИИ" win/loss outcome, checked once per
+	// tick (see tickOnce) whenever g.ais is non-empty. A real gap found from
 	// the user asking "что значит победа, как будет выглядеть" --
 	// factionDefeated already existed (tested in isolation) but nothing
 	// in the actual running game ever called it: there was no way at all
@@ -579,11 +593,11 @@ func (g *Game) tickOnce() {
 		g.tickFishRegrowth()
 		g.updateAutomaticGates()
 		inactiveWorkers := g.inactiveWorkerBuildings()
-		if g.ai != nil {
-			// The AI's own RequiresWorker buildings must be judged by ITS
-			// OWN rosters, not the player's -- see
-			// inactiveWorkerBuildingsFor's doc comment.
-			for b, v := range inactiveWorkerBuildingsFor(g.ownedBuildings(g.ai.owner), g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.miners, g.ai.sentries) {
+		for _, f := range g.ais {
+			// Each AI faction's own RequiresWorker buildings must be
+			// judged by ITS OWN rosters, not the player's (or another
+			// bot's) -- see inactiveWorkerBuildingsFor's doc comment.
+			for b, v := range inactiveWorkerBuildingsFor(g.ownedBuildings(f.owner), f.vills, f.jacks, f.fishers, f.quarry, f.miners, f.sentries) {
 				inactiveWorkers[b] = v
 			}
 		}
@@ -745,7 +759,9 @@ func (g *Game) tickOnce() {
 				}
 			}
 		}
-		g.tickAIFaction(g.grid)
+		for _, f := range g.ais {
+			g.tickAIFaction(f, g.grid)
+		}
 		g.pruneDestroyedBuildings()
 		g.checkDuelResult()
 
@@ -3543,14 +3559,19 @@ func (g *Game) buildSaveState(name string) save.GameState {
 		CameraY:            g.camera.Y,
 		CameraZoom:         g.camera.Scale,
 	}
-	if g.ai != nil {
+	if len(g.ais) > 0 {
 		state.IsDuelGame = true
-		state.AIDifficulty = int(g.ai.brain.difficulty)
-		state.AIStockpile = *g.ai.stock
-		state.AIPopulation = *g.ai.pop
-		state.AIBrainCooldown = g.ai.brain.cooldown
-		state.AIBrainBuildIndex = g.ai.brain.buildIndex
-		state.AIBrainBuildAttempts = g.ai.brain.buildAttempts
+		for _, f := range g.ais {
+			state.AIFactions = append(state.AIFactions, save.AIFactionSave{
+				Owner:              f.owner,
+				Difficulty:         int(f.brain.difficulty),
+				Stockpile:          *f.stock,
+				Population:         *f.pop,
+				BrainCooldown:      f.brain.cooldown,
+				BrainBuildIndex:    f.brain.buildIndex,
+				BrainBuildAttempts: f.brain.buildAttempts,
+			})
+		}
 	}
 	return state
 }
@@ -3637,22 +3658,41 @@ func (g *Game) loadGame(path string) error {
 	// here costs nothing and documents the invariant.
 	g.duelResult = duelResultNone
 
-	// g.ai is reconstructed before any unit restoration below --
-	// restoreUnits dispatches every Owner: 1 UnitState into g.ai's own
-	// controllers, which must already exist for that to do anything. See
-	// GameState.IsDuelGame's doc comment: false means this isn't a duel
-	// save at all, the only thing every save from before duel-mode
-	// saving existed can mean.
-	g.ai = nil
+	// g.ais is reconstructed before any unit restoration below --
+	// restoreUnits dispatches every Owner>0 UnitState into its matching
+	// faction's own controllers, which must already exist for that to do
+	// anything. See GameState.IsDuelGame's doc comment: false means this
+	// isn't a duel save at all, the only thing every save from before
+	// duel-mode saving existed can mean.
+	g.ais = nil
 	if state.IsDuelGame {
-		if aiWarehouse := findWarehouseOwnedBy(buildings, 1); aiWarehouse != nil {
-			g.ai = restoreFaction(1, aiWarehouse, aiDifficulty(state.AIDifficulty), state.AIStockpile, state.AIPopulation, state.AIBrainCooldown, state.AIBrainBuildIndex, state.AIBrainBuildAttempts)
+		factions := state.AIFactions
+		if len(factions) == 0 {
+			// A save written before AIFactions existed (at most one
+			// opponent, Owner 1, in the legacy flat fields) -- see
+			// save.GameState's own doc comment on this fallback.
+			factions = []save.AIFactionSave{{
+				Owner:              1,
+				Difficulty:         state.AIDifficulty,
+				Stockpile:          state.AIStockpile,
+				Population:         state.AIPopulation,
+				BrainCooldown:      state.AIBrainCooldown,
+				BrainBuildIndex:    state.AIBrainBuildIndex,
+				BrainBuildAttempts: state.AIBrainBuildAttempts,
+			}}
 		}
-		// aiWarehouse == nil (the AI had already lost its only warehouse
-		// the instant the save happened, mid-tick before pruning/
-		// checkDuelResult caught up) leaves g.ai nil -- the same "no AI
-		// faction at all" state an ordinary single-player save already
-		// means, nothing further to reconstruct.
+		for _, fs := range factions {
+			aiWarehouse := findWarehouseOwnedBy(buildings, fs.Owner)
+			if aiWarehouse == nil {
+				// The AI had already lost its only warehouse the instant
+				// the save happened, mid-tick before pruning/
+				// checkDuelResult caught up -- this faction simply isn't
+				// reconstructed, the same "no longer in the match" state
+				// an ordinary single-player save already means for it.
+				continue
+			}
+			g.ais = append(g.ais, restoreFaction(fs.Owner, aiWarehouse, aiDifficulty(fs.Difficulty), fs.Stockpile, fs.Population, fs.BrainCooldown, fs.BrainBuildIndex, fs.BrainBuildAttempts))
+		}
 	}
 
 	// Jobs are rebuilt from the saved positions. The roster itself is
@@ -3791,14 +3831,14 @@ func (g *Game) serializeBuildingPriorities() []save.BuildingPriorityState {
 	return out
 }
 
-// serializeUnits returns the player's own units, plus the AI faction's
-// (see UnitState.Owner) when g.ai != nil -- see buildSaveState's doc
-// comment on the real gap this closes: a duel save used to be refused
-// entirely rather than lose the AI's roster silently.
+// serializeUnits returns the player's own units, plus every AI faction's
+// (see UnitState.Owner) in g.ais -- see buildSaveState's doc comment on
+// the real gap this closes: a duel save used to be refused entirely
+// rather than lose the AI's roster silently.
 func (g *Game) serializeUnits() []save.UnitState {
 	units := serializeUnitsFor(0, g.buildings, g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.sentries, g.soldiers)
-	if g.ai != nil {
-		units = append(units, serializeUnitsFor(1, g.buildings, g.ai.logi, g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.builders, g.ai.miners, g.ai.sentries, g.ai.soldiers)...)
+	for _, f := range g.ais {
+		units = append(units, serializeUnitsFor(f.owner, g.buildings, f.logi, f.vills, f.jacks, f.fishers, f.quarry, f.builders, f.miners, f.sentries, f.soldiers)...)
 	}
 	return units
 }
@@ -3995,16 +4035,18 @@ func serializeUnitsFor(
 
 // restoreUnits dispatches each state to the right FACTION's controllers
 // by state.Owner -- Owner: 0 always means the player's own g.logi/
-// g.vills/... (unchanged from before duel saves existed); Owner: 1 means
-// g.ai's, which must already exist (see restoreDuelAIFaction, called
-// before this from loadGame) for any Owner: 1 state to do anything.
+// g.vills/... (unchanged from before duel saves existed); any other
+// Owner means the matching faction in g.ais, which must already exist
+// (see the AI-faction reconstruction loop, run before this from
+// loadGame) for that state to do anything.
 func (g *Game) restoreUnits(states []save.UnitState, buildings []*building.Building) {
 	for _, state := range states {
-		if state.Owner == 1 {
-			if g.ai == nil {
+		if state.Owner != 0 {
+			f := g.factionByOwner(state.Owner)
+			if f == nil {
 				continue
 			}
-			restoreUnitStateInto(state, g.grid, buildings, g.ai.logi, g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.builders, g.ai.miners, g.ai.sentries, g.ai.soldiers)
+			restoreUnitStateInto(state, g.grid, buildings, f.logi, f.vills, f.jacks, f.fishers, f.quarry, f.builders, f.miners, f.sentries, f.soldiers)
 			continue
 		}
 		restoreUnitStateInto(state, g.grid, buildings, g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.sentries, g.soldiers)
@@ -5586,16 +5628,16 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// invisible on screen. opponent=true marks each with
 	// render.DrawOpponentUnitMarker so the player can tell them apart
 	// from their own once they're actually visible.
-	if g.ai != nil {
-		render.DrawSerfs(screen, g.ai.logi.Serfs, g.camera, true)
-		render.DrawVillagers(screen, g.ai.vills.Villagers, g.camera, true)
-		render.DrawLumberjacks(screen, g.ai.jacks.Lumberjacks, g.camera, true)
-		render.DrawFishermen(screen, g.ai.fishers.Fishermen, g.camera, true)
-		render.DrawQuarrymen(screen, g.ai.quarry.Quarrymen, g.camera, true)
-		render.DrawBuilders(screen, g.ai.builders.Builders, g.camera, true)
-		render.DrawMiners(screen, g.ai.miners.Miners, g.camera, true)
-		render.DrawSentries(screen, g.ai.sentries.Sentries, g.camera, true)
-		render.DrawSoldiers(screen, g.ai.soldiers.Soldiers, g.camera, true)
+	for _, f := range g.ais {
+		render.DrawSerfs(screen, f.logi.Serfs, g.camera, true)
+		render.DrawVillagers(screen, f.vills.Villagers, g.camera, true)
+		render.DrawLumberjacks(screen, f.jacks.Lumberjacks, g.camera, true)
+		render.DrawFishermen(screen, f.fishers.Fishermen, g.camera, true)
+		render.DrawQuarrymen(screen, f.quarry.Quarrymen, g.camera, true)
+		render.DrawBuilders(screen, f.builders.Builders, g.camera, true)
+		render.DrawMiners(screen, f.miners.Miners, g.camera, true)
+		render.DrawSentries(screen, f.sentries.Sentries, g.camera, true)
+		render.DrawSoldiers(screen, f.soldiers.Soldiers, g.camera, true)
 	}
 	render.DrawEnemies(screen, g.enemies, g.camera)
 	if g.attackMarkerTarget != nil && g.attackMarkerTarget.Alive() {
@@ -5603,9 +5645,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 	render.DrawSentryProjectiles(screen, g.sentries.Sentries, g.camera)
 	render.DrawSoldierProjectiles(screen, g.soldiers.Soldiers, g.camera)
-	if g.ai != nil {
-		render.DrawSentryProjectiles(screen, g.ai.sentries.Sentries, g.camera)
-		render.DrawSoldierProjectiles(screen, g.ai.soldiers.Soldiers, g.camera)
+	for _, f := range g.ais {
+		render.DrawSentryProjectiles(screen, f.sentries.Sentries, g.camera)
+		render.DrawSoldierProjectiles(screen, f.soldiers.Soldiers, g.camera)
 	}
 	render.DrawDeathEffects(screen, g.deathEffects, g.camera)
 	// Foreground layers (porches/fences/eaves) intentionally come after units;

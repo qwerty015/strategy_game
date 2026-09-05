@@ -112,65 +112,155 @@ func restoreFaction(owner int, warehouse *building.Building, difficulty aiDiffic
 	return f
 }
 
-// opponentOwner is the other faction's Owner in a two-faction "1×1"
-// game -- there are only ever two (0 = player, 1 = AI), so this is
-// simply 1-owner.
-func opponentOwner(owner int) int {
-	return 1 - owner
+// factionOwners returns every faction's Owner currently in the match --
+// 0 (the player) first, then each g.ais entry in slice order (never a
+// map: iteration order must be deterministic, both for this session and
+// for a future networked match). Empty g.ais (ordinary single-player
+// "free map" games) still returns [0].
+func (g *Game) factionOwners() []int {
+	owners := make([]int, 0, 1+len(g.ais))
+	owners = append(owners, 0)
+	for _, f := range g.ais {
+		owners = append(owners, f.owner)
+	}
+	return owners
+}
+
+// opposingOwners returns every faction's Owner except owner itself --
+// generalizes the old two-faction opponentOwner (which was simply
+// 1-owner) to however many opponents an "N против ИИ" match actually
+// has, per the user's explicit "все против всех".
+func (g *Game) opposingOwners(owner int) []int {
+	var out []int
+	for _, o := range g.factionOwners() {
+		if o != owner {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// factionByOwner returns the AI faction with the given Owner, or nil if
+// none matches -- owner 0 (the player) always returns nil here, since
+// the player's own controllers live directly on Game, not in g.ais.
+func (g *Game) factionByOwner(owner int) *faction {
+	for _, f := range g.ais {
+		if f.owner == owner {
+			return f
+		}
+	}
+	return nil
+}
+
+// ownerOfSoldiers/ownerOfSentries identify which faction a live
+// controller pointer belongs to -- the opposing*For dispatchers below
+// need this to know whose "everyone else" to gather.
+func (g *Game) ownerOfSoldiers(c *soldier.Controller) (int, bool) {
+	if c == g.soldiers {
+		return 0, true
+	}
+	for _, f := range g.ais {
+		if f.soldiers == c {
+			return f.owner, true
+		}
+	}
+	return 0, false
+}
+
+func (g *Game) ownerOfSentries(c *sentry.Controller) (int, bool) {
+	if c == g.sentries {
+		return 0, true
+	}
+	for _, f := range g.ais {
+		if f.sentries == c {
+			return f.owner, true
+		}
+	}
+	return 0, false
 }
 
 // opposingBuildingsFor/opposingSoldiersFor return c's cross-faction
 // combat candidates -- see soldier.Controller.Tick's opposingBuildings/
 // opposingSoldiers parameters. Both are nil (no cross-faction combat at
-// all) outside "1×1 против ИИ" mode, i.e. whenever g.ai is nil.
+// all) outside "N против ИИ" mode, i.e. whenever g.ais is empty.
 func (g *Game) opposingBuildingsFor(c *soldier.Controller) []*building.Building {
-	if g.ai == nil {
+	owner, ok := g.ownerOfSoldiers(c)
+	if !ok {
 		return nil
 	}
-	switch c {
-	case g.soldiers:
-		return g.ownedBuildings(g.ai.owner)
-	case g.ai.soldiers:
-		return g.ownedBuildings(0)
-	default:
+	opposing := g.opposingOwners(owner)
+	if len(opposing) == 0 {
 		return nil
 	}
+	// g.ownedBuildings(o) already includes every natural resource node
+	// (Tree/Fish/deposit) regardless of o -- harmless for a single
+	// opposing faction (the original two-faction case), but
+	// concatenating it once per opposing owner here would duplicate
+	// every one of those pointers once per extra opponent. Take
+	// resources from the first owner queried, buildings-only from the
+	// rest.
+	out := g.ownedBuildings(opposing[0])
+	for _, o := range opposing[1:] {
+		for _, b := range g.ownedBuildings(o) {
+			if !isNaturalResourceKind(b.Kind) {
+				out = append(out, b)
+			}
+		}
+	}
+	return out
 }
 
 func (g *Game) opposingSoldiersFor(c *soldier.Controller) []*soldier.Soldier {
-	if g.ai == nil {
+	owner, ok := g.ownerOfSoldiers(c)
+	if !ok {
 		return nil
 	}
-	switch c {
-	case g.soldiers:
-		return g.ai.soldiers.Soldiers
-	case g.ai.soldiers:
-		return g.soldiers.Soldiers
-	default:
+	var out []*soldier.Soldier
+	for _, o := range g.opposingOwners(owner) {
+		if o == 0 {
+			out = append(out, g.soldiers.Soldiers...)
+			continue
+		}
+		if f := g.factionByOwner(o); f != nil {
+			out = append(out, f.soldiers.Soldiers...)
+		}
+	}
+	return out
+}
+
+// intruderTargetsForOwner builds intruderTargetsFrom's argument list for
+// whichever faction owns owner -- owner 0 reads the player's own
+// controllers directly off Game, any other owner looks up its faction in
+// g.ais. Shared by opposingIntruderTargetsFor and its Soldier twin below.
+func (g *Game) intruderTargetsForOwner(owner int) []sentry.IntruderTarget {
+	if owner == 0 {
+		return intruderTargetsFrom(g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.soldiers)
+	}
+	f := g.factionByOwner(owner)
+	if f == nil {
 		return nil
 	}
+	return intruderTargetsFrom(f.logi, f.vills, f.jacks, f.fishers, f.quarry, f.builders, f.miners, f.soldiers)
 }
 
 // opposingIntruderTargetsFor returns c's cross-faction Sentry targets --
-// every living unit (any of the 7 civilian professions, or a soldier) the
-// OTHER faction currently has, wrapped as sentry.IntruderTarget. A real
-// gap found from an actual playtest report ("почему башня не убила его
-// слуг"): a WatchTower's Sentry could only ever fire at the sandbox-only
-// enemy.Enemy, with no way at all to target anything belonging to the
-// "1×1 против ИИ" opponent. nil outside that mode, matching
+// every living unit (any of the 7 civilian professions, or a soldier)
+// EVERY other faction currently has, wrapped as sentry.IntruderTarget. A
+// real gap found from an actual playtest report ("почему башня не убила
+// его слуг"): a WatchTower's Sentry could only ever fire at the
+// sandbox-only enemy.Enemy, with no way at all to target anything
+// belonging to a "N против ИИ" opponent. nil outside that mode, matching
 // opposingBuildingsFor/opposingSoldiersFor above.
 func (g *Game) opposingIntruderTargetsFor(c *sentry.Controller) []sentry.IntruderTarget {
-	if g.ai == nil {
+	owner, ok := g.ownerOfSentries(c)
+	if !ok {
 		return nil
 	}
-	switch c {
-	case g.sentries:
-		return intruderTargetsFrom(g.ai.logi, g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.builders, g.ai.miners, g.ai.soldiers)
-	case g.ai.sentries:
-		return intruderTargetsFrom(g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.soldiers)
-	default:
-		return nil
+	var out []sentry.IntruderTarget
+	for _, o := range g.opposingOwners(owner) {
+		out = append(out, g.intruderTargetsForOwner(o)...)
 	}
+	return out
 }
 
 // opposingIntruderTargetsForSoldiers is opposingIntruderTargetsFor's twin
@@ -182,20 +272,18 @@ func (g *Game) opposingIntruderTargetsFor(c *sentry.Controller) []sentry.Intrude
 // wanted a Soldier able to engage ANY opposing unit, not only rival
 // soldiers/buildings, exactly like the WatchTower fix above; the target
 // list itself is identical (intruderTargetsFrom is controller-agnostic),
-// only the dispatcher's switch needs its own copy since a *soldier.
-// Controller and a *sentry.Controller are different types.
+// only the owner-lookup needs its own copy since a *soldier.Controller
+// and a *sentry.Controller are different types.
 func (g *Game) opposingIntruderTargetsForSoldiers(c *soldier.Controller) []combat.IntruderTarget {
-	if g.ai == nil {
+	owner, ok := g.ownerOfSoldiers(c)
+	if !ok {
 		return nil
 	}
-	switch c {
-	case g.soldiers:
-		return intruderTargetsFrom(g.ai.logi, g.ai.vills, g.ai.jacks, g.ai.fishers, g.ai.quarry, g.ai.builders, g.ai.miners, g.ai.soldiers)
-	case g.ai.soldiers:
-		return intruderTargetsFrom(g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.soldiers)
-	default:
-		return nil
+	var out []combat.IntruderTarget
+	for _, o := range g.opposingOwners(owner) {
+		out = append(out, g.intruderTargetsForOwner(o)...)
 	}
+	return out
 }
 
 // intruderTargetsFrom builds one sentry.IntruderTarget per currently
@@ -263,22 +351,18 @@ func intruderTargetsFrom(
 	return out
 }
 
-// tickAIFaction advances the AI's own economy by exactly one simulation
-// tick -- a trimmed mirror of Update()'s player tick block (same
-// controllers, same Reserve/Tick/event-handling shape), scoped to the
-// AI's own buildings/stock/population instead of the player's. Runs
-// after the player's own tick block, using its own fresh reservation
-// ledger (the two factions never compete for the same Tavern/warehouse,
-// so there is nothing to share). Deliberately simpler than the player's
-// block in two ways: no debug enemy.Enemy interaction at all (that tool
-// is sandbox/free-map only), and Sentries do not yet fight cross-faction
+// tickAIFaction advances f's own economy by exactly one simulation tick
+// -- a trimmed mirror of Update()'s player tick block (same controllers,
+// same Reserve/Tick/event-handling shape), scoped to f's own buildings/
+// stock/population instead of the player's. Called once per AI faction
+// in g.ais (see Update's tick loop), each with its own fresh reservation
+// ledger (factions never compete for the same Tavern/warehouse, so there
+// is nothing to share). Deliberately simpler than the player's block in
+// two ways: no debug enemy.Enemy interaction at all (that tool is
+// sandbox/free-map only), and Sentries do not yet fight cross-faction
 // (only soldiers do, see soldier.Controller.Tick's opposing* params) --
 // a noted, deliberate scope cut for this first pass, not an oversight.
-func (g *Game) tickAIFaction(grid *world.Grid) {
-	f := g.ai
-	if f == nil {
-		return
-	}
+func (g *Game) tickAIFaction(f *faction, grid *world.Grid) {
 	buildings := g.ownedBuildingsWithRoads(f.owner)
 
 	f.brain.tick(g, f, grid)

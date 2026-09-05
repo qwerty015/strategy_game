@@ -1,6 +1,8 @@
 package main
 
 import (
+	"image"
+	"math"
 	"testing"
 
 	"strategy_game/internal/building"
@@ -12,76 +14,101 @@ import (
 	"strategy_game/internal/world"
 )
 
-// TestNewDuelGame_MapIsSymmetricAndIsthmusIsClear locks in the "1×1
-// против ИИ" map shape the user explicitly asked for: a water divide
-// splitting the map into two territories, joined by exactly one dry
-// isthmus with no resources on it, and both starting Warehouses exactly
-// equidistant from the map's own vertical center line.
-func TestNewDuelGame_MapIsSymmetricAndIsthmusIsClear(t *testing.T) {
-	g := newDuelGame(AINormal)
+// TestNewDuelGame_MapIsSymmetricAndConnected locks in the "N против ИИ"
+// map shape: a 4-quadrant water cross (see growQuadrantWaterCross), the
+// player and its one opponent placed in diagonally opposite quadrants
+// (NW/SE, per quadrantAssignmentOrder) exactly equidistant from the
+// map's own center, and a real, walkable land route between them --
+// this test's old, pre-4-quadrant version was actually named
+// "...IsthmusIsClear" and manually re-derived isthmus geometry by hand;
+// pathfind.FindLandPath (already used elsewhere in this file) is a much
+// more direct way to assert "these two points are actually connected"
+// without duplicating growQuadrantWaterCross's own arithmetic.
+func TestNewDuelGame_MapIsSymmetricAndConnected(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AINormal})
 
 	playerWarehouse := findWarehouseOwnedBy(g.buildings, 0)
 	aiWarehouse := findWarehouseOwnedBy(g.buildings, 1)
 	if playerWarehouse == nil || aiWarehouse == nil {
 		t.Fatal("both factions must start with an operational warehouse")
 	}
-	centerX := float64(g.grid.Width-1) / 2
-	playerDist := centerX - float64(playerWarehouse.X)
-	aiDist := float64(aiWarehouse.X) - centerX
-	if playerDist < 0 {
-		playerDist = -playerDist
+	if playerWarehouse.X >= g.grid.Width/2 || playerWarehouse.Y >= g.grid.Height/2 {
+		t.Fatalf("player warehouse (%d,%d) is not in the NW quadrant of a %dx%d map", playerWarehouse.X, playerWarehouse.Y, g.grid.Width, g.grid.Height)
 	}
-	if aiDist < 0 {
-		aiDist = -aiDist
-	}
-	if diff := playerDist - aiDist; diff > 0.01 || diff < -0.01 {
-		t.Fatalf("player warehouse is %.1f tiles from center, AI warehouse is %.1f -- want equal", playerDist, aiDist)
-	}
-	if playerWarehouse.X >= g.grid.Width/2 || aiWarehouse.X < g.grid.Width/2 {
-		t.Fatalf("warehouses are not on opposite shores: player X=%d, AI X=%d, map width=%d", playerWarehouse.X, aiWarehouse.X, g.grid.Width)
+	if aiWarehouse.X < g.grid.Width/2 || aiWarehouse.Y < g.grid.Height/2 {
+		t.Fatalf("the sole opponent's warehouse (%d,%d) is not in the diagonally opposite SE quadrant", aiWarehouse.X, aiWarehouse.Y)
 	}
 
-	// The isthmus itself: derive its Y-range straight from the generated
-	// grid (whichever rows are dry within the water strip's own X band),
-	// then confirm no natural resource landed anywhere in it and that it's
-	// actually walkable land the whole way across. A real bug found from
-	// an actual playtest report ("деревья... перекрывали проход по
-	// перешейку"): this test's own name already promised "IsthmusIsClear"
-	// but never once checked it -- growCenterWaterStrip computed the
-	// isthmus bounds and the call site discarded them (`_, _ =`), so
-	// seedTrees/seedThickets/seedOreDeposits/... were always free to place
-	// right on top of the one dry crossing.
-	stripCenterX := duelMapWidth / 2
-	left := stripCenterX - duelWaterStripWidth/2
-	right := duelMapWidth - left
-	isthmusMinY, isthmusMaxY := -1, -1
-	for y := 0; y < g.grid.Height; y++ {
-		if g.grid.At(left, y).Terrain == world.Water {
-			continue // a real water row of the strip -- not the crossing
+	centerX, centerY := float64(g.grid.Width-1)/2, float64(g.grid.Height-1)/2
+	playerDist := math.Hypot(centerX-float64(playerWarehouse.X), centerY-float64(playerWarehouse.Y))
+	aiDist := math.Hypot(float64(aiWarehouse.X)-centerX, float64(aiWarehouse.Y)-centerY)
+	if diff := playerDist - aiDist; diff > 0.01 || diff < -0.01 {
+		t.Fatalf("player warehouse is %.2f tiles from center, AI warehouse is %.2f -- want equal", playerDist, aiDist)
+	}
+
+	if _, ok := pathfind.FindLandPath(g.grid, g.buildings,
+		pathfind.Point{X: playerWarehouse.X, Y: playerWarehouse.Y},
+		pathfind.Point{X: aiWarehouse.X, Y: aiWarehouse.Y},
+	); !ok {
+		t.Fatal("no walkable land route between the player's and the AI's warehouse -- the quadrants are not actually connected")
+	}
+}
+
+// TestNewDuelGame_AllFourQuadrantsAreMutuallyConnected is
+// TestNewDuelGame_MapIsSymmetricAndConnected's full-map version: a 3
+// opponent match uses every one of the 4 quadrants (see
+// quadrantAssignmentOrder), and every one of them must be able to reach
+// every other one -- the exact real bug a naive two-independent-
+// crossings design could produce (see growQuadrantWaterCross's doc
+// comment on why its crossings come in mirrored pairs instead).
+func TestNewDuelGame_AllFourQuadrantsAreMutuallyConnected(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy, AIEasy, AIEasy})
+	var warehouses []*building.Building
+	for owner := 0; owner < 4; owner++ {
+		wh := findWarehouseOwnedBy(g.buildings, owner)
+		if wh == nil {
+			t.Fatalf("owner %d has no warehouse in a 3-opponent (4-faction) match", owner)
 		}
-		if isthmusMinY < 0 {
-			isthmusMinY = y
-		}
-		isthmusMaxY = y + 1
-		for x := left; x < right; x++ {
-			if g.grid.At(x, y).Terrain == world.Water {
-				t.Fatalf("isthmus row y=%d is not dry all the way across at x=%d", y, x)
+		warehouses = append(warehouses, wh)
+	}
+	for i, from := range warehouses {
+		for j, to := range warehouses {
+			if i == j {
+				continue
+			}
+			if _, ok := pathfind.FindLandPath(g.grid, g.buildings,
+				pathfind.Point{X: from.X, Y: from.Y},
+				pathfind.Point{X: to.X, Y: to.Y},
+			); !ok {
+				t.Fatalf("no walkable land route from owner %d's warehouse to owner %d's -- a quadrant is isolated", i, j)
 			}
 		}
 	}
-	if isthmusMinY < 0 || isthmusMaxY-isthmusMinY != duelIsthmusWidth {
-		t.Fatalf("found isthmus Y-range [%d,%d), want exactly %d rows (duelIsthmusWidth)", isthmusMinY, isthmusMaxY, duelIsthmusWidth)
-	}
-	for _, b := range g.buildings {
-		// Both X (the strip's own band) AND Y (the dry crossing's rows,
-		// not the strip's plain water rows) matter here -- a Fish
-		// legitimately living in the strip's water, just outside the dry
-		// crossing, must NOT trip this check the way a first draft of
-		// this test once did (X alone isn't enough: Fish only ever spawns
-		// on Water, which every non-isthmus row of this same band already
-		// is by construction).
-		if isNaturalResourceKind(b.Kind) && b.X >= left && b.X < right && b.Y >= isthmusMinY && b.Y < isthmusMaxY {
-			t.Fatalf("kind %v sits at (%d,%d), inside the isthmus's dry crossing -- it must stay clear", b.Kind, b.X, b.Y)
+}
+
+// TestPruneNaturalResourcesFromIsthmus_KeepsAllIsthmusesClear runs the
+// real map generator several times (map shape is otherwise fixed --
+// growQuadrantWaterCross has no seed -- but resource placement still
+// varies) and confirms no natural resource ever lands inside any of the
+// 4 dry crossings, per the user's explicit request that trees (or
+// anything else) must not block the isthmus. Rebuilds the crossings the
+// same way newDuelGame itself does, rather than re-deriving them from
+// the finished grid, so this stays exactly in sync with production.
+func TestPruneNaturalResourcesFromIsthmus_KeepsAllIsthmusesClear(t *testing.T) {
+	for attempt := 0; attempt < 5; attempt++ {
+		g := newDuelGame([]aiDifficulty{AINormal})
+		grid := world.NewGrid(duelMapWidth, duelMapHeight)
+		isthmuses := growQuadrantWaterCross(grid)
+		for _, b := range g.buildings {
+			if !isNaturalResourceKind(b.Kind) {
+				continue
+			}
+			p := image.Point{X: b.X, Y: b.Y}
+			for _, isthmus := range isthmuses {
+				if p.In(isthmus) {
+					t.Fatalf("attempt %d: kind %v sits at (%d,%d), inside a dry crossing -- it must stay clear", attempt, b.Kind, b.X, b.Y)
+				}
+			}
 		}
 	}
 }
@@ -95,7 +122,7 @@ func TestNewDuelGame_MapIsSymmetricAndIsthmusIsClear(t *testing.T) {
 func TestNewDuelGame_NaturalResourcesAreExactlyMirrored(t *testing.T) {
 	kinds := []building.Kind{building.Tree, building.Fish, building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit}
 	for attempt := 0; attempt < 5; attempt++ {
-		g := newDuelGame(AINormal)
+		g := newDuelGame([]aiDifficulty{AINormal})
 		centerX := g.grid.Width / 2
 		for _, kind := range kinds {
 			left, right := 0, 0
@@ -156,7 +183,7 @@ func countAIConstructedBuildings(g *Game) int {
 // buildings. Runs a real simulation and checks every player serf's
 // current building references every tick.
 func TestDuelSimulation_PlayerControllersNeverTargetTheOpponentsBuildings(t *testing.T) {
-	g := newDuelGame(AIHard)
+	g := newDuelGame([]aiDifficulty{AIHard})
 	belongsToOpponent := func(b *building.Building) bool {
 		return b != nil && b.Owner != 0
 	}
@@ -183,7 +210,7 @@ func TestDuelSimulation_PlayerControllersNeverTargetTheOpponentsBuildings(t *tes
 // buildingSelectionAt (the latter is what continuous demolition itself
 // resolves a click through) never checked Owner at all.
 func TestDuelGame_PlayerCannotSelectOrDemolishOpponentBuildings(t *testing.T) {
-	g := newDuelGame(AINormal)
+	g := newDuelGame([]aiDifficulty{AINormal})
 	aiWarehouse := findWarehouseOwnedBy(g.buildings, 1)
 	if aiWarehouse == nil {
 		t.Fatal("AI warehouse missing")
@@ -208,7 +235,7 @@ func TestDuelGame_PlayerCannotSelectOrDemolishOpponentBuildings(t *testing.T) {
 // -- clicking one of those cards would have spawned a player worker
 // straight into the AI's building.
 func TestDuelGame_HireOptionsNeverCountTheOpponentsBuildings(t *testing.T) {
-	g := newDuelGame(AIHard)
+	g := newDuelGame([]aiDifficulty{AIHard})
 	for i := 0; i < 5000; i++ {
 		g.tickOnce()
 	}
@@ -265,7 +292,7 @@ func TestDuelGame_HireOptionsNeverCountTheOpponentsBuildings(t *testing.T) {
 // (not a hand-rolled sentry.Controller.Tick call) to prove the full
 // opposingIntruderTargetsFor wiring works end to end.
 func TestDuelGame_PlayerWatchTowerKillsAnOpposingIntruder(t *testing.T) {
-	g := newDuelGame(AINormal)
+	g := newDuelGame([]aiDifficulty{AINormal})
 	playerWarehouse := findWarehouseOwnedBy(g.buildings, 0)
 	if playerWarehouse == nil {
 		t.Fatal("player warehouse missing")
@@ -277,10 +304,10 @@ func TestDuelGame_PlayerWatchTowerKillsAnOpposingIntruder(t *testing.T) {
 	g.buildings = append(g.buildings, tower)
 	g.sentries.Spawn(tower)
 
-	intruder := g.ai.logi.Hire()
+	intruder := g.ais[0].logi.Hire()
 	intruder.X, intruder.Y = tower.X+1, tower.Y // within WatchTowerRange
 	present := func() bool {
-		for _, s := range g.ai.logi.Serfs {
+		for _, s := range g.ais[0].logi.Serfs {
 			if s == intruder {
 				return true
 			}
@@ -310,7 +337,7 @@ func TestDuelGame_PlayerWatchTowerKillsAnOpposingIntruder(t *testing.T) {
 // "1×1 против ИИ" match to actually end, even after one side's every
 // building and unit was gone.
 func TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch(t *testing.T) {
-	g := newDuelGame(AIEasy)
+	g := newDuelGame([]aiDifficulty{AIEasy})
 	if g.duelResult != duelResultNone {
 		t.Fatal("duelResult should start at duelResultNone")
 	}
@@ -319,25 +346,7 @@ func TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch(t *testing.T) {
 	// result screen appearing and behaving correctly, not about how a
 	// faction actually gets defeated in play (see
 	// TestDuelSimulation_AIBuildsAndFactionsFight for that).
-	for _, b := range g.buildings {
-		if b.Owner == 1 && b.Kind != building.Road && b.Kind != building.StoneWall && b.Kind != building.Gate {
-			b.HP = 0
-		}
-	}
-	g.ai.logi.Serfs = nil
-	g.ai.vills.Villagers = nil
-	g.ai.jacks.Lumberjacks = nil
-	g.ai.fishers.Fishermen = nil
-	g.ai.quarry.Quarrymen = nil
-	g.ai.builders.Builders = nil
-	g.ai.miners.Miners = nil
-	g.ai.sentries.Sentries = nil
-	g.ai.soldiers.Soldiers = nil
-	// Also empty the AI's own stockpile -- otherwise its still-fully-
-	// intact brain simply places a fresh building this same tick (it
-	// still has its starting resources), resurrecting "still has a
-	// building" before checkDuelResult ever runs.
-	g.ai.stock = resource.NewStockpile(stockpileCapacity)
+	wipeFactionForTest(g, 1)
 
 	g.tickOnce()
 	if g.duelResult != duelResultVictory {
@@ -365,6 +374,84 @@ func TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch(t *testing.T) {
 	}
 	if duelResultBackClicked(0, 0, g.layout.Width, g.layout.Height) {
 		t.Fatal("a click at the corner of the screen unexpectedly resolved to the back button")
+	}
+}
+
+// wipeFactionForTest zeroes owner's buildings (except Road/StoneWall/
+// Gate, matching factionDefeated's own exclusion), clears its unit
+// rosters and empties its stockpile -- the exact steps
+// TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch already needed,
+// pulled out so the FFA test below can wipe one specific faction among
+// several (including the player, owner 0, whose controllers live
+// directly on Game rather than in g.ais) without duplicating this dance.
+func wipeFactionForTest(g *Game, owner int) {
+	for _, b := range g.buildings {
+		if b.Owner == owner && b.Kind != building.Road && b.Kind != building.StoneWall && b.Kind != building.Gate {
+			b.HP = 0
+		}
+	}
+	logi, vills, jacks, fishers, quarryC, builders, miners, sentries, soldiers := g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.sentries, g.soldiers
+	stockSet := func(s *resource.Stockpile) { g.stock = s }
+	if owner != 0 {
+		f := g.factionByOwner(owner)
+		if f == nil {
+			return
+		}
+		logi, vills, jacks, fishers, quarryC, builders, miners, sentries, soldiers = f.logi, f.vills, f.jacks, f.fishers, f.quarry, f.builders, f.miners, f.sentries, f.soldiers
+		stockSet = func(s *resource.Stockpile) { f.stock = s }
+	}
+	logi.Serfs = nil
+	vills.Villagers = nil
+	jacks.Lumberjacks = nil
+	fishers.Fishermen = nil
+	quarryC.Quarrymen = nil
+	builders.Builders = nil
+	miners.Miners = nil
+	sentries.Sentries = nil
+	soldiers.Soldiers = nil
+	// Otherwise the still-fully-intact brain (or, for the player, a
+	// still-nonzero stockpile) leaves something to rebuild from before
+	// checkDuelResult even runs.
+	stockSet(resource.NewStockpile(stockpileCapacity))
+}
+
+// TestDuelGame_FFAResultRequiresEveryBotDefeated is the "все против
+// всех" generalization of TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch:
+// with more than one opponent, defeating only SOME of them must not end
+// the match either way -- victory needs every last one gone, and the
+// player's own defeat ends it immediately regardless of how many bots
+// are still standing (see checkDuelResult's own doc comment on "все
+// против всех").
+func TestDuelGame_FFAResultRequiresEveryBotDefeated(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy, AIEasy})
+	if g.duelResult != duelResultNone {
+		t.Fatal("duelResult should start at duelResultNone")
+	}
+
+	wipeFactionForTest(g, 1)
+	g.tickOnce()
+	if g.duelResult != duelResultNone {
+		t.Fatalf("duelResult = %v after defeating only one of two bots, want duelResultNone (match continues)", g.duelResult)
+	}
+
+	wipeFactionForTest(g, 2)
+	g.tickOnce()
+	if g.duelResult != duelResultVictory {
+		t.Fatalf("duelResult = %v after defeating every bot, want duelResultVictory", g.duelResult)
+	}
+}
+
+// TestDuelGame_FFAPlayerDefeatEndsTheMatchEvenWithBotsStillFighting
+// covers the other half: the player's own elimination must end the
+// match in defeat right away, without waiting to see which of the
+// surviving bots would eventually "win" the rest of the fight -- per the
+// user's explicit framing ("не важно кто победит из ботов дальше").
+func TestDuelGame_FFAPlayerDefeatEndsTheMatchEvenWithBotsStillFighting(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy, AIEasy})
+	wipeFactionForTest(g, 0)
+	g.tickOnce()
+	if g.duelResult != duelResultDefeat {
+		t.Fatalf("duelResult = %v after the player's own defeat with two bots still alive, want duelResultDefeat", g.duelResult)
 	}
 }
 
@@ -412,45 +499,45 @@ func TestDuelGame_PlayerLogisticsRouteOverTheDefeatedAIsOldRoads(t *testing.T) {
 // progress, a real unit roster, and -- the point of all of it -- the
 // reloaded game keeps ticking without the AI silently freezing.
 func TestDuelGame_SaveAndLoadRoundTripsTheAIFaction(t *testing.T) {
-	g := newDuelGame(AIHard)
+	g := newDuelGame([]aiDifficulty{AIHard})
 	for i := 0; i < 5000; i++ {
 		g.tickOnce()
 	}
-	if g.ai == nil || len(g.ownedBuildings(1)) <= 2 {
+	if len(g.ais) == 0 || len(g.ownedBuildings(1)) <= 2 {
 		t.Fatal("test setup: AI hasn't built anything yet after 5000 ticks")
 	}
-	wantDifficulty := g.ai.brain.difficulty
-	wantBuildIndex := g.ai.brain.buildIndex
-	wantAIPopCount := g.ai.pop.Count
-	wantAIGold := g.ai.stock.Amount(resource.Gold)
+	wantDifficulty := g.ais[0].brain.difficulty
+	wantBuildIndex := g.ais[0].brain.buildIndex
+	wantAIPopCount := g.ais[0].pop.Count
+	wantAIGold := g.ais[0].stock.Amount(resource.Gold)
 
 	path := t.TempDir() + "/duel_save.json"
 	if err := g.saveGame(path, "duel test"); err != nil {
 		t.Fatalf("saveGame failed for a duel game: %v", err)
 	}
 
-	loaded := newDuelGame(AIHard) // any fresh Game to load into -- loadGame replaces everything relevant
+	loaded := newDuelGame([]aiDifficulty{AIHard}) // any fresh Game to load into -- loadGame replaces everything relevant
 	if err := loaded.loadGame(path); err != nil {
 		t.Fatalf("loadGame failed: %v", err)
 	}
-	if loaded.ai == nil {
-		t.Fatal("g.ai is nil after loading a duel save -- the AI faction was not reconstructed")
+	if len(loaded.ais) == 0 {
+		t.Fatal("g.ais is empty after loading a duel save -- the AI faction was not reconstructed")
 	}
-	if loaded.ai.brain.difficulty != wantDifficulty {
-		t.Fatalf("AI difficulty = %v, want %v", loaded.ai.brain.difficulty, wantDifficulty)
+	if loaded.ais[0].brain.difficulty != wantDifficulty {
+		t.Fatalf("AI difficulty = %v, want %v", loaded.ais[0].brain.difficulty, wantDifficulty)
 	}
-	if loaded.ai.brain.buildIndex != wantBuildIndex {
-		t.Fatalf("AI brain.buildIndex = %d, want %d", loaded.ai.brain.buildIndex, wantBuildIndex)
+	if loaded.ais[0].brain.buildIndex != wantBuildIndex {
+		t.Fatalf("AI brain.buildIndex = %d, want %d", loaded.ais[0].brain.buildIndex, wantBuildIndex)
 	}
-	if loaded.ai.pop.Count != wantAIPopCount {
-		t.Fatalf("AI population.Count = %d, want %d", loaded.ai.pop.Count, wantAIPopCount)
+	if loaded.ais[0].pop.Count != wantAIPopCount {
+		t.Fatalf("AI population.Count = %d, want %d", loaded.ais[0].pop.Count, wantAIPopCount)
 	}
-	if got := loaded.ai.stock.Amount(resource.Gold); got != wantAIGold {
+	if got := loaded.ais[0].stock.Amount(resource.Gold); got != wantAIGold {
 		t.Fatalf("AI gold = %d, want %d", got, wantAIGold)
 	}
-	totalAIUnits := len(loaded.ai.logi.Serfs) + len(loaded.ai.vills.Villagers) + len(loaded.ai.jacks.Lumberjacks) +
-		len(loaded.ai.fishers.Fishermen) + len(loaded.ai.quarry.Quarrymen) + len(loaded.ai.builders.Builders) +
-		len(loaded.ai.miners.Miners) + len(loaded.ai.sentries.Sentries) + len(loaded.ai.soldiers.Soldiers)
+	totalAIUnits := len(loaded.ais[0].logi.Serfs) + len(loaded.ais[0].vills.Villagers) + len(loaded.ais[0].jacks.Lumberjacks) +
+		len(loaded.ais[0].fishers.Fishermen) + len(loaded.ais[0].quarry.Quarrymen) + len(loaded.ais[0].builders.Builders) +
+		len(loaded.ais[0].miners.Miners) + len(loaded.ais[0].sentries.Sentries) + len(loaded.ais[0].soldiers.Soldiers)
 	if totalAIUnits == 0 {
 		t.Fatal("the AI's entire unit roster is empty after loading -- restoreUnits never dispatched an Owner: 1 unit anywhere")
 	}
@@ -461,7 +548,7 @@ func TestDuelGame_SaveAndLoadRoundTripsTheAIFaction(t *testing.T) {
 	for i := 0; i < 2000; i++ {
 		loaded.tickOnce()
 	}
-	if loaded.ai.pop.Count == 0 {
+	if loaded.ais[0].pop.Count == 0 {
 		t.Fatal("the reloaded AI's population dropped to zero within 2000 ticks -- it isn't functioning after load")
 	}
 }
@@ -476,7 +563,7 @@ func TestDuelGame_SaveAndLoadRoundTripsTheAIFaction(t *testing.T) {
 // meet, all through the ordinary auto-engage mechanism, no scripted
 // combat outcome.
 func TestDuelSimulation_AIBuildsAndFactionsFight(t *testing.T) {
-	g := newDuelGame(AIHard) // fastest decisions/attacks -- fewest ticks needed to observe both behaviours
+	g := newDuelGame([]aiDifficulty{AIHard}) // fastest decisions/attacks -- fewest ticks needed to observe both behaviours
 	initialAIBuildings := countAIConstructedBuildings(g)
 
 	// 150000, not the original 60000: decisionIntervalTicks was tripled
@@ -534,8 +621,8 @@ func TestDuelSimulation_AIBuildsAndFactionsFight(t *testing.T) {
 				}
 			}
 		}
-		if !combatDamageSeen && g.ai != nil {
-			for _, s := range g.ai.soldiers.Soldiers {
+		if !combatDamageSeen && len(g.ais) > 0 {
+			for _, s := range g.ais[0].soldiers.Soldiers {
 				if s.HP < combat.MaxHP {
 					combatDamageSeen = true
 					break

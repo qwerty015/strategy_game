@@ -136,9 +136,38 @@ type GameState struct {
 	// AI's own decision-maker's state (see cmd/game's aiBrain) -- without
 	// these, a reloaded AI would restart its build order from scratch
 	// and could place a duplicate of whatever it was already building.
+	//
+	// IsDuelGame/AIDifficulty/AIStockpile/AIPopulation/AIBrainCooldown/
+	// AIBrainBuildIndex/AIBrainBuildAttempts above are now legacy,
+	// single-opponent fields, kept only so a save written before "N
+	// против ИИ" (more than one bot) still loads correctly -- see
+	// AIFactions below, which replaced them once a match could hold more
+	// than one AI faction. A save with a non-empty AIFactions always
+	// takes priority; these are only consulted when AIFactions is empty
+	// but IsDuelGame is true (an old, one-opponent save).
 	AIBrainCooldown      int
 	AIBrainBuildIndex    int
 	AIBrainBuildAttempts int
+
+	// AIFactions holds every AI opponent's own economy/decision state in
+	// a duel match -- one entry per bot, in the same order cmd/game's
+	// Game.ais keeps them (a slice, not a map, so load order is exactly
+	// reproducible). Empty for a free-map save, and for a duel save
+	// written before this field existed (see the legacy fields above).
+	AIFactions []AIFactionSave
+}
+
+// AIFactionSave is one AI opponent's full economy/decision-maker state --
+// the N-faction replacement for the single flat AIDifficulty/AIStockpile/
+// ... fields above, once a duel match could hold more than one bot.
+type AIFactionSave struct {
+	Owner              int
+	Difficulty         int
+	Stockpile          resource.Stockpile
+	Population         economy.Population
+	BrainCooldown      int
+	BrainBuildIndex    int
+	BrainBuildAttempts int
 }
 
 // UnitKind identifies a unit in a save file without coupling the save format
