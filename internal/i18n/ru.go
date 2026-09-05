@@ -178,6 +178,7 @@ func init() {
 		ConfirmDemolitionModeButton:    "Включить",
 		ConfirmRemovalPrompt:           "Удалить «%s»?",
 		ConfirmRemovalButton:           "Удалить",
+		BuildLockedReason:              "Не хватает: %s",
 		Deleted:                        "Удалено.",
 		SerfDismissRequested:           "Слуга завершит рейс и уйдёт.",
 		SerfsTrimmedToRecommended:      "Уволено слуг: %d, останется %d (по рекомендации).",

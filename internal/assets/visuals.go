@@ -38,23 +38,22 @@ type VisualLayer struct {
 	Tint             color.RGBA
 }
 
-// ConstructionVisual keeps the art for a single simulation construction state.
-// Site is the ground-level frame; Preview is an optional partly-built silhouette
-// above it. Each field can use a dedicated PNG from assets/sprites/buildings,
-// while the first art pass safely falls back to the common construction sheets.
-type ConstructionVisual struct {
-	Site    VisualLayer
-	Preview VisualLayer
-}
-
 // BuildingVisual is the art contract for one building kind. Front is rendered
 // in the foreground pass after units, so future porches, fences and roof eaves
 // can correctly cover a unit that walks behind them. The current base sprites
 // do not yet need a front slice, therefore Front is usually empty.
+//
+// There is deliberately no per-construction-stage art contract any more
+// (no ConstructionVisual/Site/Preview) -- see render.drawConstructionSite,
+// which instead fades Body itself in from translucent to opaque as
+// building.Building.ConstructionProgress() advances. Per the user's
+// explicit request: "если для какого-то здания есть спрайты этапов
+// строительства, сразу используем прозрачное зданий/дорогу которая
+// принимает видимость в процессе строительства" -- one real sprite per
+// kind, faded, rather than a family of dedicated per-stage sprites.
 type BuildingVisual struct {
-	Body         VisualLayer
-	Front        VisualLayer
-	Construction [building.ConstructionFinishing + 1]ConstructionVisual
+	Body  VisualLayer
+	Front VisualLayer
 }
 
 // BuildingVisualFor returns the visual definition for a gameplay building kind.
@@ -162,32 +161,31 @@ var buildingVisuals = map[building.Kind]BuildingVisual{
 	building.Armory:            standardBuildingVisual("armory", Armory, 2.00),
 }
 
+// roadVisual gives Road the same treatment as every other kind now (see
+// standardBuildingVisual's doc comment): its Body IS the real, finished
+// cobblestone tile (assets.Road), drawn in footprint mode since a road has
+// no standing height -- render.drawConstructionSite fades this in exactly
+// like a building's Body, per the user's explicit "и если для какого-то
+// здания есть спрайты этапов строительства, сразу используем прозрачное
+// зданий/дорогу которая принимает видимость в процессе строительства".
 func roadVisual() BuildingVisual {
-	site := func(stage string, fallback *ebiten.Image) VisualLayer {
-		image := loadNativeIfPresent(filepath.Join("buildings", "road", "construction_"+stage+".png"), fallback)
-		return footprintLayer(image, color.RGBA{255, 255, 255, 255})
-	}
-	return BuildingVisual{
-		Construction: [building.ConstructionFinishing + 1]ConstructionVisual{
-			building.ConstructionFoundation:       {Site: site("foundation", ConstructionFoundation)},
-			building.ConstructionWaitingMaterials: {Site: site("waiting", ConstructionFoundation)},
-			building.ConstructionFinishing:        {Site: site("finishing", ConstructionScaffolding)},
-		},
-	}
+	return BuildingVisual{Body: footprintLayer(Road, color.RGBA{255, 255, 255, 255})}
 }
 
+// standardBuildingVisual builds the art contract for a building that has a
+// normal standing Body sprite. It deliberately does not fill in any
+// per-stage construction art: a building under construction fades its own
+// finished Body sprite up from translucent to opaque as it progresses (see
+// render.drawConstructionSite) instead of needing separate foundation/
+// waiting/finishing art per building. That dedicated art was only ever
+// finished for Farm before this change -- every other building already fell
+// back to the shared generic site sheets, so nothing else loses real art;
+// see AGENTS.md for the full reasoning.
 func standardBuildingVisual(slug string, body *ebiten.Image, tilesTall float64) BuildingVisual {
 	// body.png is optional during the migration. Once a dedicated natural-size
 	// sprite is present it replaces the legacy 64px fallback automatically.
 	body = loadNativeIfPresent(filepath.Join("buildings", slug, "body.png"), body)
 	bodyLayer := standingLayer(body, tilesTall, color.RGBA{255, 255, 255, 255})
-	site := func(stage string, fallback *ebiten.Image) VisualLayer {
-		image := loadNativeIfPresent(filepath.Join("buildings", slug, "construction_"+stage+".png"), fallback)
-		return footprintLayer(image, color.RGBA{255, 255, 255, 255})
-	}
-	preview := func(alpha uint8) VisualLayer {
-		return standingLayer(body, tilesTall, color.RGBA{R: 202, G: 167, B: 105, A: alpha})
-	}
 
 	return BuildingVisual{
 		Body: bodyLayer,
@@ -196,20 +194,6 @@ func standardBuildingVisual(slug string, body *ebiten.Image, tilesTall float64) 
 			tilesTall,
 			color.RGBA{255, 255, 255, 255},
 		),
-		Construction: [building.ConstructionFinishing + 1]ConstructionVisual{
-			building.ConstructionFoundation: {
-				Site:    site("foundation", ConstructionFoundation),
-				Preview: preview(58),
-			},
-			building.ConstructionWaitingMaterials: {
-				Site:    site("waiting", ConstructionFoundation),
-				Preview: preview(84),
-			},
-			building.ConstructionFinishing: {
-				Site:    site("finishing", ConstructionScaffolding),
-				Preview: preview(205),
-			},
-		},
 	}
 }
 

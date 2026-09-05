@@ -804,8 +804,6 @@ func drawHelpAsset(screen *ebiten.Image, source string, x, y, size int) bool {
 		img = assets.WatchTower
 	case "building_barracks.png":
 		img = assets.Barracks
-	case "construction_foundation.png":
-		img = assets.ConstructionFoundation
 	}
 	if img == nil {
 		return false

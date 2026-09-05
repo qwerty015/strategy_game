@@ -95,10 +95,6 @@ var (
 	WatchTower        = mustLoad("generated/building_watch_tower.png")
 	Barracks          = mustLoad("generated/building_barracks.png")
 	Armory            = mustLoad("generated/building_armory.png")
-	// Construction art is deliberately generic: the same site can scale from
-	// a one-tile road to a 3×3 farm without previewing the finished building.
-	ConstructionFoundation  = mustLoad("generated/construction_foundation_v2.png")
-	ConstructionScaffolding = mustLoad("generated/construction_scaffolding_v2.png")
 	// The source fishing hut's pier points south. CPU-rotated variants let the
 	// renderer orient it toward whichever cardinal water tile borders the hut.
 	FisherHutFrames = [4]*ebiten.Image{

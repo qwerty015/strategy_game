@@ -178,6 +178,7 @@ func init() {
 		ConfirmDemolitionModeButton:    "Enable",
 		ConfirmRemovalPrompt:           "Remove \"%s\"?",
 		ConfirmRemovalButton:           "Remove",
+		BuildLockedReason:              "Missing: %s",
 		Deleted:                        "Deleted.",
 		SerfDismissRequested:           "The serf will leave after this delivery.",
 		SerfsTrimmedToRecommended:      "Dismissed %d serfs, down to %d (recommended).",

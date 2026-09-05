@@ -146,6 +146,7 @@ type Catalog struct {
 	ConfirmDemolitionModeButton    string
 	ConfirmRemovalPrompt           string // formatted with the selected object name
 	ConfirmRemovalButton           string
+	BuildLockedReason              string // formatted with a comma-joined list of missing resource names
 	Deleted                        string
 	SerfDismissRequested           string
 	SerfsTrimmedToRecommended      string // formatted with (dismissed count, recommended headcount)

@@ -1,6 +1,10 @@
 package building
 
-import "strategy_game/internal/resource"
+import (
+	"slices"
+
+	"strategy_game/internal/resource"
+)
 
 // Unlocked reports whether kind's production chain is actually ready to
 // be built -- a real playtest gap: the palette used to offer every
@@ -35,6 +39,43 @@ func Unlocked(kind Kind, hasProducer, hasStock func(resource.Type) bool) bool {
 		}
 	}
 	return false
+}
+
+// MissingInputs explains WHY kind is currently locked -- a real follow-up
+// gap from a playtest report: greying out a card wasn't visible enough on
+// its own ("визуально нельзя отличить то можно построить сейчас от того
+// что нельзя"), so a locked card's tooltip needs to say what's actually
+// missing (the user's own example: "отсутствует построенная ферма или
+// пшеница на складе").
+//
+// Returns the missing resource types for whichever of kind's recipes is
+// closest to ready (fewest resources still missing) -- for the Smeltery's
+// two alt-recipes, this avoids combining "no gold ore" and "no iron ore"
+// into one confusing list when only one of the two recipes actually needs
+// to become satisfiable. Returns nil once kind is Unlocked (there is
+// nothing to explain), and nil for a no-input kind (nothing was ever
+// missing). Order is deterministic (sorted by resource.Type) since
+// Recipe.Inputs is a map -- a tooltip listing the same two resources in a
+// different order every frame would be distracting.
+func MissingInputs(kind Kind, hasProducer, hasStock func(resource.Type) bool) []resource.Type {
+	recipes := Types[kind].AllRecipes()
+	var best []resource.Type
+	for _, r := range recipes {
+		var missing []resource.Type
+		for resType := range r.Inputs {
+			if !hasProducer(resType) && !hasStock(resType) {
+				missing = append(missing, resType)
+			}
+		}
+		if len(missing) == 0 {
+			return nil // this recipe alone already makes kind Unlocked
+		}
+		if best == nil || len(missing) < len(best) {
+			best = missing
+		}
+	}
+	slices.Sort(best)
+	return best
 }
 
 // recipeInputsCovered reports whether every input resource in r.Inputs is

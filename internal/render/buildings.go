@@ -103,7 +103,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		case b.Kind == building.Road && b.ConstructionStage != building.ConstructionNone:
 			// Not a real road yet -- see pathfind.roadSet. Drawing the
 			// cobblestone texture here would visually claim otherwise.
-			drawConstructionSite(screen, b, 1, sx, sy, tilePixels)
+			drawConstructionSite(screen, buildings, b, 1, sx, sy, tilePixels)
 		case b.Kind == building.Road:
 			drawOrganicRoad(screen, entranceCorners, b.X, b.Y, sx, sy, tilePixels)
 		case b.Kind == building.StoneDeposit:
@@ -148,7 +148,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		sx, sy := cam.TileToScreen(b.X, b.Y)
 
 		if b.ConstructionStage != building.ConstructionNone {
-			drawConstructionSite(screen, b, bt.Footprint, sx, sy, tilePixels)
+			drawConstructionSite(screen, buildings, b, bt.Footprint, sx, sy, tilePixels)
 			continue
 		}
 
@@ -657,37 +657,89 @@ func drawRoadFade(screen *ebiten.Image, img *ebiten.Image, sx, sy, tilePixels fl
 	screen.DrawImage(img, op)
 }
 
-// drawConstructionSite renders foundation, waiting-for-materials and finishing
-// stages. A building may provide three dedicated art layers; incomplete visual
-// families safely retain the shared site frames plus that building's silhouette.
-func drawConstructionSite(screen *ebiten.Image, b *building.Building, footprint int, sx, sy, tilePixels float64) {
+// constructionMinOpacity is how translucent a building's own finished sprite
+// starts out at the very first foundation tick -- per the user's explicit
+// request ("ассет имеет заливку (прозрачность) условно 30%... плавно
+// поднимаем до 100%"), replacing the previous approach of dedicated
+// foundation/waiting/finishing art per building (a shared generic sheet plus
+// a tinted silhouette stepped across 3 discrete stages) with one continuous
+// fade of the real sprite -- no separate construction art needed at all.
+const constructionMinOpacity = 0.3
+
+// constructionOpacityByte turns a 0..1 construction progress fraction into
+// the 0..255 alpha byte drawConstructionSite tints a building's own Body
+// sprite with -- constructionMinOpacity (≈77/255) at progress 0, fully
+// opaque (255) at progress 1, linear in between. progress is clamped, so a
+// caller need not pre-clamp building.Building.ConstructionProgress()'s own
+// result (which is already 0..1, but defensively so here too).
+func constructionOpacityByte(progress float64) uint8 {
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 1 {
+		progress = 1
+	}
+	return uint8((constructionMinOpacity + (1-constructionMinOpacity)*progress) * 255)
+}
+
+// drawConstructionSite renders a building under construction. A kind with a
+// real standing Body sprite (see assets.BuildingVisualFor) fades that exact
+// sprite in from constructionMinOpacity to fully opaque as
+// b.ConstructionProgress() advances -- the building visibly materializes in
+// place, rather than showing a generic site sheet or a tinted silhouette.
+// Road (and anything else with no Body at all, e.g. StoneWall/Gate) keeps
+// the previous shared foundation/scaffolding site art instead: those don't
+// have a comparable "finished sprite" to fade toward.
+func drawConstructionSite(screen *ebiten.Image, buildings []*building.Building, b *building.Building, footprint int, sx, sy, tilePixels float64) {
 	size := float32(footprint) * float32(tilePixels)
 	vector.FillRect(screen, float32(sx), float32(sy), size, size, constructionGroundColor, false)
 	if b.ConstructionStage == building.ConstructionWaitingMaterials {
 		vector.FillRect(screen, float32(sx), float32(sy), size, size, constructionWaitColor, false)
 	}
 
-	// The visual manifest supplies independent layers for every building and
-	// construction state. Until a bespoke PNG exists the manifest falls back
-	// to the approved shared site sheet while retaining the selected building's
-	// faint silhouette, so the map never shows the wrong type of construction.
-	if visual, ok := assets.BuildingVisualFor(b.Kind); ok && b.ConstructionStage <= building.ConstructionFinishing {
-		art := visual.Construction[b.ConstructionStage]
-		drawVisualLayerAtScale(screen, art.Site, sx, sy, float64(footprint), tilePixels)
-		drawVisualLayerAtScale(screen, art.Preview, sx, sy, float64(footprint), tilePixels)
-	} else {
-		siteArt := assets.ConstructionFoundation
-		if b.ConstructionStage == building.ConstructionFinishing {
-			siteArt = assets.ConstructionScaffolding
-		}
-		drawFootprintAtScale(screen, siteArt, sx, sy, float64(footprint), tilePixels)
+	progress := b.ConstructionProgress()
+	tint := color.RGBA{R: 255, G: 255, B: 255, A: constructionOpacityByte(progress)}
+	if visual, ok := assets.BuildingVisualFor(b.Kind); ok && visual.Body.Image != nil {
+		// Every kind with a real Body (every building, and Road -- see
+		// roadVisual) fades that exact finished sprite in, per the user's
+		// explicit request: no separate per-stage art at all.
+		fading := visual.Body
+		fading.Tint = tint
+		drawVisualLayerAtScale(screen, fading, sx, sy, float64(footprint), tilePixels)
+	} else if building.IsWallKind(b.Kind) {
+		// A wall/gate has no single static Body (drawWalls resolves its
+		// look from live neighbour segments instead) -- preview the same
+		// way, from EVERY wall-kind building regardless of its own
+		// construction stage, so a still-being-drawn run of wall previews
+		// its actual intended shape rather than always showing a lone cap.
+		drawFootprintTintedAtScale(screen, wallPreviewArt(buildings, b), sx, sy, float64(footprint), tilePixels, tint)
 	}
 
 	drawConstructionSiteEffect(screen, b.ConstructionStage, sx, sy, float64(footprint), tilePixels)
-	progress := float32(b.ConstructionProgress())
 	barY := float32(sy) + size - float32(3*tilePixels/TileSize)
 	barHeight := float32(3 * tilePixels / TileSize)
-	vector.FillRect(screen, float32(sx), barY, size*progress, barHeight, constructionBarColor, false)
+	vector.FillRect(screen, float32(sx), barY, size*float32(progress), barHeight, constructionBarColor, false)
+}
+
+// wallPreviewArt resolves the art a wall/gate under construction would use
+// once finished -- the same lookup drawWalls itself does for a completed
+// segment, except keyed off every wall-kind position regardless of
+// construction stage (not just FinishedWallSegments) so a run of wall
+// being drawn all at once previews its real intended shape.
+func wallPreviewArt(buildings []*building.Building, b *building.Building) *ebiten.Image {
+	if b.Kind != building.StoneWall {
+		if b.GateAxis == building.WallVertical {
+			return assets.GateVerticalClosed
+		}
+		return assets.GateHorizontalClosed
+	}
+	segments := make(map[building.Point]*building.Building, len(buildings))
+	for _, other := range buildings {
+		if other != nil && building.IsWallKind(other.Kind) {
+			segments[building.Point{X: other.X, Y: other.Y}] = other
+		}
+	}
+	return assets.StoneWallFrame(building.WallShapeFromSegments(segments, b.X, b.Y))
 }
 
 // drawStoneDeposit draws a ground-level boulder cluster rather than a standing

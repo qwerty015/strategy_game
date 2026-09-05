@@ -1,6 +1,7 @@
 package building
 
 import (
+	"slices"
 	"testing"
 
 	"strategy_game/internal/resource"
@@ -86,6 +87,42 @@ func TestUnlocked_SmelteryEitherOreRecipeUnlocksIt(t *testing.T) {
 	}
 	if !Unlocked(Smeltery, minerHutBuilt, noneStocked) {
 		t.Fatal("Smeltery still locked with a Miner Hut built and nothing in stock")
+	}
+}
+
+func TestMissingInputs_NilWhenUnlockedOrNoRecipe(t *testing.T) {
+	if got := MissingInputs(Farm, noneProduced, noneStocked); got != nil {
+		t.Fatalf("Farm (no inputs at all) MissingInputs = %v, want nil", got)
+	}
+	wheatInStock := func(r resource.Type) bool { return r == resource.Wheat }
+	if got := MissingInputs(PigFarm, noneProduced, wheatInStock); got != nil {
+		t.Fatalf("Pig Farm already unlocked via stock, MissingInputs = %v, want nil", got)
+	}
+}
+
+func TestMissingInputs_NamesTheActualMissingResource(t *testing.T) {
+	got := MissingInputs(PigFarm, noneProduced, noneStocked)
+	want := []resource.Type{resource.Wheat}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Pig Farm MissingInputs = %v, want %v", got, want)
+	}
+}
+
+func TestMissingInputs_SmelteryPicksTheCloserAltRecipe(t *testing.T) {
+	// Coal alone leaves both recipes needing exactly one more thing each
+	// (GoldOre or IronOre) -- either is a valid "closest" answer, but it
+	// must be exactly one resource, not both ores combined.
+	coalOnly := func(r resource.Type) bool { return r == resource.Coal }
+	got := MissingInputs(Smeltery, noneProduced, coalOnly)
+	if len(got) != 1 || (got[0] != resource.GoldOre && got[0] != resource.IronOre) {
+		t.Fatalf("Smeltery MissingInputs with Coal already in stock = %v, want exactly one ore type", got)
+	}
+
+	// Nothing at all -- both recipes are equally (un)ready, but the result
+	// must still be exactly one recipe's worth, not four resources merged.
+	got = MissingInputs(Smeltery, noneProduced, noneStocked)
+	if len(got) != 2 {
+		t.Fatalf("Smeltery MissingInputs with nothing at all = %v, want exactly 2 (one recipe's worth)", got)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -1015,6 +1016,29 @@ func (g *Game) buildingUnlocked(kind building.Kind, produced map[resource.Type]b
 	)
 }
 
+// buildingLockReason renders why kind is locked (building.MissingInputs,
+// turned into localized resource names) -- a direct follow-up to a
+// playtest report that a merely greyed-out card wasn't visibly different
+// enough on its own ("визуально нельзя отличить то можно построить сейчас
+// от того что нельзя"): the card's hover tooltip now also names what's
+// actually missing, the user's own example being "отсутствует построенная
+// ферма или пшеница на складе" for the Pig Farm. Empty once kind is
+// unlocked.
+func (g *Game) buildingLockReason(kind building.Kind, produced map[resource.Type]bool) string {
+	missing := building.MissingInputs(kind,
+		func(t resource.Type) bool { return produced[t] },
+		func(t resource.Type) bool { return g.stock.Amount(t) > 0 },
+	)
+	if len(missing) == 0 {
+		return ""
+	}
+	names := make([]string, len(missing))
+	for i, t := range missing {
+		names[i] = i18n.T().ResourceName[t]
+	}
+	return fmt.Sprintf(i18n.T().BuildLockedReason, strings.Join(names, ", "))
+}
+
 // paletteUnlocked computes buildingUnlocked for every palette entry at
 // once, sharing one producedResourceTypes() scan across all of them --
 // used both by the Build tab's Draw call and by its click handler (see
@@ -1027,6 +1051,20 @@ func (g *Game) paletteUnlocked() map[building.Kind]bool {
 		unlocked[kind] = g.buildingUnlocked(kind, produced)
 	}
 	return unlocked
+}
+
+// paletteLockReasons is paletteUnlocked's sibling for the tooltip text --
+// one buildingLockReason() per currently-locked palette entry, sharing the
+// same producedResourceTypes() scan.
+func (g *Game) paletteLockReasons() map[building.Kind]string {
+	produced := g.producedResourceTypes()
+	reasons := make(map[building.Kind]string, len(g.palette.Kinds))
+	for _, kind := range g.palette.Kinds {
+		if reason := g.buildingLockReason(kind, produced); reason != "" {
+			reasons[kind] = reason
+		}
+	}
+	return reasons
 }
 
 // completedTownBuildingCount reports finished player structures for the town
@@ -5617,7 +5655,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 	ui.BeginResourceTooltips()
-	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts(), g.leftScrollBuild, g.leftScrollHire, g.paletteUnlocked())
+	ui.DrawBuildPanel(screen, g.layout, g.palette, g.leftTab, g.demolitionMode, g.hireOptions(), g.finishedBuildingCounts(), g.leftScrollBuild, g.leftScrollHire, g.paletteUnlocked(), g.paletteLockReasons())
 	trimServesPrompt := ""
 	if g.dialog == ui.DialogConfirmTrimServes {
 		trimServesPrompt = fmt.Sprintf(i18n.T().TrimServesConfirmPrompt, len(g.logi.Serfs), g.recommendedServeCount())
@@ -5655,6 +5693,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHire, armoryState, g.formationLines, g.developmentScore())
 	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
 	ui.DrawResourceTooltip(screen, g.layout)
+	ui.DrawBuildLockTooltip(screen, g.layout)
 
 	if g.statusMsg != "" {
 		ui.DrawText(screen, g.statusMsg, float64(g.layout.LeftWidth+12), 10)

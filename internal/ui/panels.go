@@ -38,7 +38,54 @@ var (
 	// a hire option with too little gold, or (see DrawBuildPanel) a building
 	// whose production chain isn't ready yet (building.Unlocked).
 	unavailableCardColor = color.RGBA{R: 69, G: 50, B: 48, A: 245}
+	// lockedCardWashColor darkens a locked build card's icon and text too,
+	// not just its background -- see DrawBuildPanel's doc comment on why
+	// unavailableCardColor alone read as barely different from an ordinary
+	// card at a glance.
+	lockedCardWashColor = color.RGBA{R: 10, G: 8, B: 8, A: 150}
 )
+
+// buildLockTooltip mirrors resourceTooltip's pattern (see resource_icons.go):
+// collected while DrawBuildPanel renders, drawn once on top of everything
+// else at the end of the frame via DrawBuildLockTooltip.
+var buildLockTooltip struct {
+	active bool
+	text   string
+	x, y   int
+}
+
+// DrawBuildLockTooltip renders the reason a locked build card can't be
+// placed yet under the cursor -- see DrawBuildPanel's hover detection.
+func DrawBuildLockTooltip(screen *ebiten.Image, layout Layout) {
+	if !buildLockTooltip.active || buildLockTooltip.text == "" {
+		return
+	}
+	label := buildLockTooltip.text
+	width := 20 + len([]rune(label))*7
+	if width < 92 {
+		width = 92
+	}
+	const height = 22
+	x, y := buildLockTooltip.x+14, buildLockTooltip.y+14
+	if x+width > layout.Width-4 {
+		x = layout.Width - width - 4
+	}
+	if y+height > layout.Height-4 {
+		y = buildLockTooltip.y - height - 8
+	}
+	if x < 4 {
+		x = 4
+	}
+	if y < 4 {
+		y = 4
+	}
+	fillIconRect(screen, x, y, width, height, panelColor)
+	fillIconRect(screen, x, y, width, 1, panelEdgeColor)
+	fillIconRect(screen, x, y+height-1, width, 1, panelEdgeColor)
+	fillIconRect(screen, x, y, 1, height, panelEdgeColor)
+	fillIconRect(screen, x+width-1, y, 1, height, panelEdgeColor)
+	DrawInspectorText(screen, label, float64(x+8), float64(y+4))
+}
 
 func drawPanel(screen *ebiten.Image, r imageRect, title string) {
 	vector.FillRect(screen, float32(r.x), float32(r.y), float32(r.w), float32(r.h), panelColor, false)
@@ -53,11 +100,12 @@ type imageRect struct{ x, y, w, h int }
 // DrawBuildPanel renders the two always-available world actions: construction
 // and NPC hiring. Pause/options, saves and speed live behind Esc, so map input
 // remains focused on the settlement itself.
-func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int, scrollBuild, scrollHire int, unlocked map[building.Kind]bool) {
+func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab, demolitionMode bool, options []HireOption, builtCounts map[building.Kind]int, scrollBuild, scrollHire int, unlocked map[building.Kind]bool, lockReasons map[building.Kind]string) {
 	r := layout.LeftPanel()
 	drawPanel(screen, imageRect{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}, i18n.T().BuildMenuTitle)
 
 	drawMenuTabs(screen, layout, tab)
+	buildLockTooltip.active = false
 	if tab == HireTab {
 		drawHireCards(screen, layout, options, scrollHire)
 		return
@@ -92,6 +140,24 @@ func DrawBuildPanel(screen *ebiten.Image, layout Layout, p *Palette, tab LeftTab
 		labelX := iconX + iconSize + 10
 		DrawMenuText(screen, label, float64(labelX), float64(y+4))
 		drawBuildCost(screen, kind, labelX, y+20)
+
+		// A locked card was previously only distinguished by a subtle
+		// background-fill difference -- a real playtest report ("визуально
+		// нельзя отличить то можно построить сейчас от того что нельзя")
+		// found that too easy to miss. A dark wash over the whole card
+		// (icon and text included, not just the background peeking out
+		// around them) reads unmistakably at a glance; hovering it explains
+		// exactly what's missing via lockReasons, the same tooltip
+		// convention BeginResourceTooltips/DrawResourceTooltip already use.
+		if !unlocked[kind] {
+			vector.FillRect(screen, float32(x), float32(y), float32(w), float32(h), lockedCardWashColor, false)
+			mx, my := ebiten.CursorPosition()
+			if mx >= x && mx < x+w && my >= y && my < y+h {
+				buildLockTooltip.active = true
+				buildLockTooltip.text = lockReasons[kind]
+				buildLockTooltip.x, buildLockTooltip.y = mx, my
+			}
+		}
 	}
 	drawLeftScrollbar(screen, layout, leftBuildCardsStartY, len(p.Kinds), start, visible)
 }

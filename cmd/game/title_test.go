@@ -4,6 +4,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	gamehelp "strategy_game"
@@ -187,10 +188,18 @@ func TestTitleLanguageChoicesCoverBothLanguages(t *testing.T) {
 	}
 }
 
+// TestBuildVersionIsVisibleReleaseMarker checks BuildVersion's FORMAT
+// (ver_<version>_alpha_build_<YYYY.DD.MM>), not an exact hardcoded string --
+// a real gap found twice in a row: this test previously pinned the exact
+// literal, which went stale the moment BuildVersion was bumped for a new
+// build/release-notes pass (once from 0.1 to 0.15, then again just from the
+// date advancing to 2026.05.09), breaking the whole suite over a change
+// that was never actually a bug. The naming convention itself (see
+// release_notes/README.md) is what's worth locking in, not today's value.
 func TestBuildVersionIsVisibleReleaseMarker(t *testing.T) {
-	const want = "ver_0.15_alpha_build_2026.03.09"
-	if BuildVersion != want {
-		t.Fatalf("BuildVersion = %q, want %q", BuildVersion, want)
+	pattern := regexp.MustCompile(`^ver_\d+(\.\d+)?_alpha_build_\d{4}\.\d{2}\.\d{2}$`)
+	if !pattern.MatchString(BuildVersion) {
+		t.Fatalf("BuildVersion = %q, want it to match %s", BuildVersion, pattern)
 	}
 }
 
