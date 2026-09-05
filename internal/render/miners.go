@@ -17,7 +17,7 @@ const minerHeight = 1.08
 // unloading workers are represented by the hut's compact +/- marker instead
 // of being drawn on top of the roof, same as DrawQuarrymen.
 // opponent -- see DrawSerfs's identical parameter doc comment.
-func DrawMiners(screen *ebiten.Image, miners []*miner.Miner, cam *Camera, opponent bool) {
+func DrawMiners(screen *ebiten.Image, miners []*miner.Miner, cam *Camera, owner int) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, m := range miners {
@@ -29,9 +29,7 @@ func DrawMiners(screen *ebiten.Image, miners []*miner.Miner, cam *Camera, oppone
 		}
 
 		sx, sy := cam.TileToScreen(m.X, m.Y)
-		if opponent {
-			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
-		}
+		DrawOpponentUnitMarker(screen, sx, sy, tilePixels, owner)
 		frame := walkingFrame(m.RemainingPath(), m.X+m.Y)
 		bob := unitBob()
 		tint := color.Color(color.White)

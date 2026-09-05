@@ -16,7 +16,7 @@ const builderHeight = 1.08
 // builder has no interior to hide inside while idle (see
 // builder.Builder.VisibleOnMap), so every one of them is always drawn.
 // opponent -- see DrawSerfs's identical parameter doc comment.
-func DrawBuilders(screen *ebiten.Image, builders []*builder.Builder, cam *Camera, opponent bool) {
+func DrawBuilders(screen *ebiten.Image, builders []*builder.Builder, cam *Camera, owner int) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, b := range builders {
@@ -24,9 +24,7 @@ func DrawBuilders(screen *ebiten.Image, builders []*builder.Builder, cam *Camera
 			continue
 		}
 		sx, sy := cam.TileToScreen(b.X, b.Y)
-		if opponent {
-			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
-		}
+		DrawOpponentUnitMarker(screen, sx, sy, tilePixels, owner)
 		frame := walkingFrame(b.RemainingPath(), b.X+b.Y)
 		bob := unitBob()
 		tint := color.Color(color.White)

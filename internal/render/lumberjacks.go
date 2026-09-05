@@ -18,7 +18,7 @@ const lumberjackHeight = 1.08
 // unloading workers are represented by the hut's compact +/- marker instead
 // of being drawn on top of the roof.
 // opponent -- see DrawSerfs's identical parameter doc comment.
-func DrawLumberjacks(screen *ebiten.Image, jacks []*lumberjack.Lumberjack, cam *Camera, opponent bool) {
+func DrawLumberjacks(screen *ebiten.Image, jacks []*lumberjack.Lumberjack, cam *Camera, owner int) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, j := range jacks {
@@ -30,9 +30,7 @@ func DrawLumberjacks(screen *ebiten.Image, jacks []*lumberjack.Lumberjack, cam *
 		}
 
 		sx, sy := cam.TileToScreen(j.X, j.Y)
-		if opponent {
-			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
-		}
+		DrawOpponentUnitMarker(screen, sx, sy, tilePixels, owner)
 		frame := walkingFrame(j.RemainingPath(), j.X+j.Y)
 		bob := unitBob()
 		tint := color.Color(color.White)

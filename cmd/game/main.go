@@ -5612,32 +5612,34 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, g.unstaffedWorkerBuildings(), disconnected)
-	render.DrawSerfs(screen, g.logi.Serfs, g.camera, false)
-	render.DrawVillagers(screen, g.vills.Villagers, g.camera, false)
-	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera, false)
-	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera, false)
-	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera, false)
-	render.DrawBuilders(screen, g.builders.Builders, g.camera, false)
-	render.DrawMiners(screen, g.miners.Miners, g.camera, false)
-	render.DrawSentries(screen, g.sentries.Sentries, g.camera, false)
-	render.DrawSoldiers(screen, g.soldiers.Soldiers, g.camera, false)
-	// A real gap found from an actual duel-mode playtest report: the AI
+	render.DrawSerfs(screen, g.logi.Serfs, g.camera, 0)
+	render.DrawVillagers(screen, g.vills.Villagers, g.camera, 0)
+	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera, 0)
+	render.DrawFishermen(screen, g.fishers.Fishermen, g.camera, 0)
+	render.DrawQuarrymen(screen, g.quarry.Quarrymen, g.camera, 0)
+	render.DrawBuilders(screen, g.builders.Builders, g.camera, 0)
+	render.DrawMiners(screen, g.miners.Miners, g.camera, 0)
+	render.DrawSentries(screen, g.sentries.Sentries, g.camera, 0)
+	render.DrawSoldiers(screen, g.soldiers.Soldiers, g.camera, 0)
+	// A real gap found from an actual duel-mode playtest report: an AI
 	// opponent's own entire population was never drawn at all, only its
 	// buildings (g.buildings is one shared slice, so those already
 	// rendered) -- every serf/villager/soldier of theirs was completely
-	// invisible on screen. opponent=true marks each with
-	// render.DrawOpponentUnitMarker so the player can tell them apart
-	// from their own once they're actually visible.
+	// invisible on screen. Passing f.owner marks each with
+	// render.DrawOpponentUnitMarker, in that bot's own color (see
+	// render.colorForOwner), so the player can tell every faction's
+	// people apart -- their own, and each bot's -- once they're actually
+	// visible.
 	for _, f := range g.ais {
-		render.DrawSerfs(screen, f.logi.Serfs, g.camera, true)
-		render.DrawVillagers(screen, f.vills.Villagers, g.camera, true)
-		render.DrawLumberjacks(screen, f.jacks.Lumberjacks, g.camera, true)
-		render.DrawFishermen(screen, f.fishers.Fishermen, g.camera, true)
-		render.DrawQuarrymen(screen, f.quarry.Quarrymen, g.camera, true)
-		render.DrawBuilders(screen, f.builders.Builders, g.camera, true)
-		render.DrawMiners(screen, f.miners.Miners, g.camera, true)
-		render.DrawSentries(screen, f.sentries.Sentries, g.camera, true)
-		render.DrawSoldiers(screen, f.soldiers.Soldiers, g.camera, true)
+		render.DrawSerfs(screen, f.logi.Serfs, g.camera, f.owner)
+		render.DrawVillagers(screen, f.vills.Villagers, g.camera, f.owner)
+		render.DrawLumberjacks(screen, f.jacks.Lumberjacks, g.camera, f.owner)
+		render.DrawFishermen(screen, f.fishers.Fishermen, g.camera, f.owner)
+		render.DrawQuarrymen(screen, f.quarry.Quarrymen, g.camera, f.owner)
+		render.DrawBuilders(screen, f.builders.Builders, g.camera, f.owner)
+		render.DrawMiners(screen, f.miners.Miners, g.camera, f.owner)
+		render.DrawSentries(screen, f.sentries.Sentries, g.camera, f.owner)
+		render.DrawSoldiers(screen, f.soldiers.Soldiers, g.camera, f.owner)
 	}
 	render.DrawEnemies(screen, g.enemies, g.camera)
 	if g.attackMarkerTarget != nil && g.attackMarkerTarget.Alive() {

@@ -3740,6 +3740,29 @@ KeepsAllIsthmusesClear`, `TestDuelGame_FFAResultRequiresEveryBotDefeated`,
 `TestOpponentCountSelectActionAt`,
 `TestNewGameFlow_DuelModeWithMultipleOpponentsPicksOneDifficultyEach`.
 
+## Разные цвета разным ботам
+
+Пользователь: "реализуй разные цвета разным ботам" — прямое продолжение
+FFA-расширения выше (там визуальное различение ботов было сознательно
+отложено как необязательная доработка). `DrawOpponentUnitMarker`/
+`drawOwnerOutline` (`internal/render/buildings.go`) раньше красили
+ЛЮБОГО чужого юнита/здание одним и тем же `opponentOutlineColor`
+(красный) — для ровно одного противника этого достаточно, для 2-3
+ботов сразу игрок не мог отличить их друг от друга.
+
+Фикс: новый `factionColors []color.RGBA` (индекс 0 — красный, тот же
+самый, что раньше, чтобы матч с одним противником выглядел точно так
+же, как раньше; 1 — синий; 2 — зелёный) + `colorForOwner(owner int)
+color.RGBA`. Все 9 функций отрисовки юнитов (`DrawSerfs`/
+`DrawVillagers`/.../`DrawSoldiers`) поменяли параметр с `opponent bool`
+на `owner int` — раньше вызывающая сторона сама решала, рисовать ли
+маркер (`if opponent { DrawOpponentUnitMarker(...) }`), теперь просто
+передаёт `owner` (0 для игрока, `f.owner` для фракции бота) и
+`DrawOpponentUnitMarker`/`drawOwnerOutline` сами решают не рисовать
+ничего при `owner == 0`. `cmd/game/main.go`'s цикл `for _, f := range
+g.ais` уже перебирал все фракции — только поменял `true`/`false` на
+`f.owner`.
+
 ## Текущий план
 
 Исходный план MVP хранится отдельно от репозитория, в файлах планирования

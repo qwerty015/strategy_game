@@ -16,7 +16,7 @@ const fishermanHeight = 1.10
 // unit on water. Idle/unloading fishermen remain represented by their hut's
 // compact worker marker rather than sitting on top of the roof.
 // opponent -- see DrawSerfs's identical parameter doc comment.
-func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Camera, opponent bool) {
+func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Camera, owner int) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, f := range fishermen {
@@ -27,9 +27,7 @@ func DrawFishermen(screen *ebiten.Image, fishermen []*fishing.Fisherman, cam *Ca
 			continue
 		}
 		sx, sy := cam.TileToScreen(f.X, f.Y)
-		if opponent {
-			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
-		}
+		DrawOpponentUnitMarker(screen, sx, sy, tilePixels, owner)
 		bob := unitBob()
 		tint := color.Color(color.White)
 		if f.Starving {

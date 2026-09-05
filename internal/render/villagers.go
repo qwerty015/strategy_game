@@ -16,7 +16,7 @@ import (
 // farmer's bobbing pose and tiny tool cue are intentionally lightweight
 // pseudo-animation, but make sowing/harvesting readable at game scale.
 // opponent -- see DrawSerfs's identical parameter doc comment.
-func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camera, opponent bool) {
+func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camera, owner int) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, v := range vills {
@@ -48,9 +48,7 @@ func DrawVillagers(screen *ebiten.Image, vills []*villagers.Villager, cam *Camer
 		}
 
 		sx, sy := cam.TileToScreen(v.X, v.Y)
-		if opponent {
-			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
-		}
+		DrawOpponentUnitMarker(screen, sx, sy, tilePixels, owner)
 
 		frame := walkingFrame(v.RemainingPath(), v.X+v.Y)
 		bob := 0.0

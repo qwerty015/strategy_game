@@ -18,7 +18,7 @@ const sentryHeight = 0.90
 // The simulation state remains in package sentry; this file intentionally
 // derives only visual posture and tint from its public read-only methods.
 // opponent -- see DrawSerfs's identical parameter doc comment.
-func DrawSentries(screen *ebiten.Image, sentries []*sentry.Sentry, cam *Camera, opponent bool) {
+func DrawSentries(screen *ebiten.Image, sentries []*sentry.Sentry, cam *Camera, owner int) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(2)
 	for _, guard := range sentries {
@@ -27,9 +27,7 @@ func DrawSentries(screen *ebiten.Image, sentries []*sentry.Sentry, cam *Camera, 
 		}
 
 		sx, sy := cam.TileToScreen(guard.X, guard.Y)
-		if opponent {
-			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
-		}
+		DrawOpponentUnitMarker(screen, sx, sy, tilePixels, owner)
 		path := guard.RemainingPath()
 		frame := walkingFrame(path, guard.X+guard.Y)
 		bob := float64(0)

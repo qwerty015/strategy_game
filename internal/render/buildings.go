@@ -31,17 +31,12 @@ func Tick() {
 }
 
 var (
-	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}   // freshly tilled earth (tints assets.Fertile)
-	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255} // golden, ready to harvest
-	vineyardSoil   = color.RGBA{R: 80, G: 61, B: 38, A: 255}   // darker soil for grape rows
-	unstaffedTint  = color.RGBA{R: 214, G: 63, B: 55, A: 90}   // translucent red over a workerless building
-	// opponentOutlineColor marks a "1×1 против ИИ" opponent's building --
-	// see drawOwnerOutline's doc comment. Solid and saturated rather than
-	// translucent like unstaffedTint: this is a border, not a wash, so it
-	// needs to read clearly against every building's own base colours.
-	opponentOutlineColor = color.RGBA{R: 224, G: 48, B: 48, A: 255}
-	stoneFullColor       = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
-	stoneWornColor       = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
+	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}    // freshly tilled earth (tints assets.Fertile)
+	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255}  // golden, ready to harvest
+	vineyardSoil   = color.RGBA{R: 80, G: 61, B: 38, A: 255}    // darker soil for grape rows
+	unstaffedTint  = color.RGBA{R: 214, G: 63, B: 55, A: 90}    // translucent red over a workerless building
+	stoneFullColor = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
+	stoneWornColor = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
 
 	coalWornColor    = color.RGBA{R: 150, G: 150, B: 150, A: 255} // nearly spent, ashen
 	goldOreWornColor = color.RGBA{R: 210, G: 200, B: 150, A: 255} // nearly spent, pale
@@ -305,7 +300,28 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 	}
 }
 
-// drawOwnerOutline marks a building as belonging to the "1×1 против ИИ"
+// factionColors assigns each non-player Owner (1, 2, 3 -- see cmd/game's
+// quadrantAssignmentOrder, up to 3 bots on the 4-quadrant map) its own
+// distinct color, so a match with more than one bot lets the player tell
+// them apart at a glance instead of only "mine vs everyone else" -- per
+// the user's explicit request once the duel mode grew from exactly two
+// factions to up to four. Index 0 (red) is the original two-faction
+// marker's own color, unchanged, so an ordinary 1-opponent match looks
+// exactly as it always did.
+var factionColors = []color.RGBA{
+	{R: 224, G: 48, B: 48, A: 255},  // owner 1: red
+	{R: 56, G: 120, B: 224, A: 255}, // owner 2: blue
+	{R: 64, G: 176, B: 80, A: 255},  // owner 3: green
+}
+
+// colorForOwner returns owner's marker color -- see factionColors. Wraps
+// around past the known factions rather than panicking on an unexpected
+// Owner, though nothing in cmd/game currently produces one.
+func colorForOwner(owner int) color.RGBA {
+	return factionColors[(owner-1)%len(factionColors)]
+}
+
+// drawOwnerOutline marks a building as belonging to a "duel против ИИ"
 // opponent, not the player -- a real gap found from an actual playtest
 // report: nothing anywhere in this package ever read Building.Owner, so
 // two factions' buildings (and every unit) were completely visually
@@ -315,31 +331,33 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 // player, and every building in an ordinary single-player game -- Owner
 // is always its zero value there) draws with no outline at all, so this
 // changes nothing about how single-player has always looked; only an
-// opponent-owned building gets the marker.
+// opponent-owned building gets the marker, in that opponent's own color.
 func drawOwnerOutline(screen *ebiten.Image, b *building.Building, sx, sy float64, size float32) {
 	if b.Owner == 0 {
 		return
 	}
-	vector.StrokeRect(screen, float32(sx), float32(sy), size, size, 3, opponentOutlineColor, false)
+	vector.StrokeRect(screen, float32(sx), float32(sy), size, size, 3, colorForOwner(b.Owner), false)
 }
 
 // DrawOpponentUnitMarker is drawOwnerOutline's unit-scale equivalent -- a
-// small solid dot above a unit's own sprite, the same opponentOutlineColor
-// as an opponent building's border. See every DrawXxx function in this
-// package's own doc comment on its opponent bool parameter for why this
-// exists: without it, none of a "1×1 против ИИ" opponent's people were
-// visually distinguishable from the player's own (a real gap found from
-// an actual playtest report -- the opponent's whole population was in
-// fact not being rendered AT ALL before this, only its buildings; see
-// each package that owns a controller's Tick loop for confirmation this
-// was a pure oversight in cmd/game's Draw wiring, not a deliberate
-// choice). Exported: every unit type's Draw function lives in its own
-// file in this package, all calling this one shared helper the same way.
-func DrawOpponentUnitMarker(screen *ebiten.Image, sx, sy, tilePixels float64) {
+// small solid dot above a unit's own sprite, in that owner's own color
+// (see colorForOwner). owner 0 (the player) draws nothing, so every
+// DrawXxx call site in this package can pass its owner unconditionally
+// rather than gating the call on an "is this the opponent" bool itself.
+// Exported: every unit type's Draw function lives in its own file in
+// this package, all calling this one shared helper the same way. See
+// each package that owns a controller's Tick loop for why this exists at
+// all: before it, an opponent's whole population wasn't being rendered
+// AT ALL, only its buildings -- a pure oversight in cmd/game's Draw
+// wiring, found from an actual playtest report.
+func DrawOpponentUnitMarker(screen *ebiten.Image, sx, sy, tilePixels float64, owner int) {
+	if owner == 0 {
+		return
+	}
 	cx := float32(sx + tilePixels*0.5)
 	cy := float32(sy - tilePixels*0.18)
 	r := float32(tilePixels * 0.11)
-	vector.FillCircle(screen, cx, cy, r, opponentOutlineColor, false)
+	vector.FillCircle(screen, cx, cy, r, colorForOwner(owner), false)
 	vector.StrokeCircle(screen, cx, cy, r, 1, color.RGBA{R: 40, G: 8, B: 8, A: 255}, false)
 }
 

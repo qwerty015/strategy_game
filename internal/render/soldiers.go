@@ -23,7 +23,7 @@ const soldierHeight = 0.90
 // important for this Draw call of all nine: without a way to tell an
 // opponent's soldier apart from the player's own, combat itself is
 // unreadable, not just a minor cosmetic gap.
-func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera, opponent bool) {
+func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera, owner int) {
 	tilePixels := cam.TilePixels()
 	visible := cam.VisibleTileBounds(1)
 	for _, sd := range soldiers {
@@ -36,9 +36,7 @@ func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera
 		}
 
 		sx, sy := cam.TileToScreen(sd.X, sd.Y)
-		if opponent {
-			DrawOpponentUnitMarker(screen, sx, sy, tilePixels)
-		}
+		DrawOpponentUnitMarker(screen, sx, sy, tilePixels, owner)
 		path := sd.RemainingPath()
 		frame := walkingFrame(path, sd.X+sd.Y)
 		flip := facingLeft(sd.X, path)
