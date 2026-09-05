@@ -39,24 +39,27 @@ const (
 	screenTitle
 	screenLoad
 	screenHelp
-	// screenModeSelect/screenOpponentCountSelect/screenDifficultySelect
-	// are the "Новая игра" flow's steps -- free map (single player,
-	// unchanged) vs "N против ИИ" (needs an opponent count, then one
-	// difficulty pick per opponent). See enterModeSelect.
+	// screenModeSelect/screenDifficultySelect are the "Новая игра" flow's
+	// steps -- free map (single player, unchanged) vs "4х4" (always
+	// maxDuelOpponents bots, one difficulty pick per opponent). See
+	// enterModeSelect. There used to be a third step here letting the
+	// player choose 1, 2 or 3 opponents; per the user's explicit "оставь
+	// только режим 'Свободный' и '4х4', остальное убери", that choice is
+	// gone -- "4х4" always means the full 4-quadrant map with every
+	// quadrant occupied.
 	screenModeSelect
-	screenOpponentCountSelect
 	screenDifficultySelect
 )
 
-// maxDuelOpponents caps how many AI factions a duel match can have --
-// one fewer than the map's own quadrantCount (one quadrant is always the
-// player's), which per the user's own framing ("3 бота и юзер, 2 бота и
-// юзер") comes out to up to 3 bots on the 4-quadrant map.
+// maxDuelOpponents is how many AI factions the one remaining duel shape
+// ("4х4") always has -- one fewer than the map's own quadrantCount (one
+// quadrant is always the player's), which comes out to 3 bots on the
+// 4-quadrant map.
 const maxDuelOpponents = int(quadrantCount) - 1
 
 // gameMode is the "Новая игра" flow's first choice -- the ordinary
-// single-player free map (unchanged), or "1×1 против ИИ" (needs a
-// difficulty pick next, see screenDifficultySelect).
+// single-player free map (unchanged), or "4х4" (always maxDuelOpponents
+// bots, one difficulty pick per opponent -- see screenDifficultySelect).
 type gameMode uint8
 
 const (
@@ -79,12 +82,10 @@ type titleCopy struct {
 	back, previous, next string
 	loadTitle, noSaves   string
 
-	modeSelectTitle, freeMap, freeMapDesc   string
-	duelMode, duelModeDesc                  string
-	opponentCountTitle                      string
-	opponentOne, opponentTwo, opponentThree string
-	difficultyTitleFmt                      string // formatted with the opponent's 1-based index
-	easy, normal, hard                      string
+	modeSelectTitle, freeMap, freeMapDesc string
+	duelMode, duelModeDesc                string
+	difficultyTitleFmt                    string // formatted with the opponent's 1-based index
+	easy, normal, hard                    string
 }
 
 func activeTitleCopy() titleCopy {
@@ -95,10 +96,8 @@ func activeTitleCopy() titleCopy {
 			back: "Back", previous: "Previous", next: "Next",
 			loadTitle: "Load a save", noSaves: "No saved games yet",
 			modeSelectTitle: "Choose a mode",
-			freeMap:         "Free map", freeMapDesc: "Just you, build at your own pace",
-			duelMode: "Duel vs AI", duelModeDesc: "One or more rival settlements across the water -- destroy them all to win",
-			opponentCountTitle: "How many opponents?",
-			opponentOne:        "1 opponent", opponentTwo: "2 opponents", opponentThree: "3 opponents",
+			freeMap:         "Free", freeMapDesc: "Just you, build at your own pace",
+			duelMode: "4x4", duelModeDesc: "You plus 3 AI rivals on a 4-quadrant map -- everyone against everyone",
 			difficultyTitleFmt: "Opponent %d -- choose a difficulty",
 			easy:               "Easy", normal: "Normal", hard: "Hard",
 		}
@@ -109,10 +108,8 @@ func activeTitleCopy() titleCopy {
 		back: "Назад", previous: "Назад", next: "Далее",
 		loadTitle: "Загрузить сохранение", noSaves: "Сохранений пока нет",
 		modeSelectTitle: "Выберите режим",
-		freeMap:         "Свободная карта", freeMapDesc: "Только вы, стройте в своём темпе",
-		duelMode: "Дуэль с ИИ", duelModeDesc: "Одно или несколько вражеских поселений за проливом — победа, когда все уничтожены",
-		opponentCountTitle: "Сколько противников?",
-		opponentOne:        "1 противник", opponentTwo: "2 противника", opponentThree: "3 противника",
+		freeMap:         "Свободный", freeMapDesc: "Только вы, стройте в своём темпе",
+		duelMode: "4х4", duelModeDesc: "Вы и 3 ИИ-соперника на карте с 4 четвертями — все против всех",
 		difficultyTitleFmt: "Противник %d — выберите сложность",
 		easy:               "Лёгкий", normal: "Средний", hard: "Сложный",
 	}
@@ -271,27 +268,20 @@ func (g *Game) updateFrontScreen() error {
 		case mode == gameModeFreeMap:
 			g.startFreeMapGame()
 		case mode == gameModeDuel:
-			g.duelDifficulties = nil
-			g.screen = screenOpponentCountSelect
-		}
-	case screenOpponentCountSelect:
-		if image.Pt(mx, my).In(titleBackRect(frontWidth, frontHeight)) {
-			g.screen = screenModeSelect
-			return nil
-		}
-		if count, ok := opponentCountSelectActionAt(mx, my, frontWidth, frontHeight); ok {
-			g.duelOpponentCount = count
+			// "4х4" is the only duel shape now -- always the map's full
+			// maxDuelOpponents bots (see gameModeDuel's own doc comment),
+			// no separate opponent-count step to pick a smaller match.
+			g.duelOpponentCount = maxDuelOpponents
 			g.duelDifficulties = nil
 			g.screen = screenDifficultySelect
 		}
 	case screenDifficultySelect:
 		if image.Pt(mx, my).In(titleBackRect(frontWidth, frontHeight)) {
 			// Back from the first opponent's difficulty pick returns to
-			// the opponent-count screen; back from a later one just
-			// re-asks the previous opponent instead of losing the whole
-			// flow.
+			// mode-select; back from a later one just re-asks the
+			// previous opponent instead of losing the whole flow.
 			if len(g.duelDifficulties) == 0 {
-				g.screen = screenOpponentCountSelect
+				g.screen = screenModeSelect
 			} else {
 				g.duelDifficulties = g.duelDifficulties[:len(g.duelDifficulties)-1]
 			}
@@ -625,8 +615,6 @@ func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 		g.drawHelpScreen(screen)
 	case screenModeSelect:
 		g.drawModeSelectScreen(screen)
-	case screenOpponentCountSelect:
-		g.drawOpponentCountSelectScreen(screen)
 	case screenDifficultySelect:
 		g.drawDifficultySelectScreen(screen)
 	default:
@@ -665,22 +653,6 @@ func (g *Game) drawModeSelectScreen(screen *ebiten.Image) {
 	ui.DrawTitleText(screen, copy.modeSelectTitle, float64(rects[0].Min.X), float64(rects[0].Min.Y-56), 2.2)
 	drawModeCard(screen, rects[0], copy.freeMap, copy.freeMapDesc)
 	drawModeCard(screen, rects[1], copy.duelMode, copy.duelModeDesc)
-	drawTitleButton(screen, titleBackRect(width, height), copy.back, false)
-}
-
-// drawOpponentCountSelectScreen reuses difficultyButtonRects' exact 3-card
-// layout (1/2/3 is the same shape as easy/normal/hard) for "how many
-// bots" -- per the user's own examples ("3 бота и юзер, 2 бота и юзер").
-func (g *Game) drawOpponentCountSelectScreen(screen *ebiten.Image) {
-	copy := activeTitleCopy()
-	bounds := screen.Bounds()
-	width, height := bounds.Dx(), bounds.Dy()
-	rects := difficultyButtonRects(width, height)
-	ui.DrawTitleText(screen, copy.opponentCountTitle, float64(rects[0].Min.X), float64(rects[0].Min.Y-56), 2.2)
-	labels := [3]string{copy.opponentOne, copy.opponentTwo, copy.opponentThree}
-	for index, rect := range rects {
-		drawTitleButton(screen, rect, labels[index], false)
-	}
 	drawTitleButton(screen, titleBackRect(width, height), copy.back, false)
 }
 
@@ -960,19 +932,6 @@ func difficultyButtonRects(width, height int) []image.Rectangle {
 		image.Rect(x0+cardW+gap, y, x0+cardW+gap+cardW, y+cardH),
 		image.Rect(x0+2*(cardW+gap), y, x0+2*(cardW+gap)+cardW, y+cardH),
 	}
-}
-
-// opponentCountSelectActionAt resolves a click on the "how many
-// opponents" screen -- reuses difficultyButtonRects' exact geometry
-// (see drawOpponentCountSelectScreen), returning 1/2/3.
-func opponentCountSelectActionAt(x, y, width, height int) (int, bool) {
-	point := image.Pt(x, y)
-	for index, rect := range difficultyButtonRects(width, height) {
-		if point.In(rect) {
-			return index + 1, true
-		}
-	}
-	return 0, false
 }
 
 func difficultySelectActionAt(x, y, width, height int) (aiDifficulty, bool) {

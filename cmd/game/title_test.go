@@ -230,22 +230,6 @@ func TestDifficultySelectActionAt(t *testing.T) {
 	}
 }
 
-// TestOpponentCountSelectActionAt mirrors TestDifficultySelectActionAt --
-// same 3-card geometry (difficultyButtonRects), different meaning (1/2/3
-// opponents instead of a difficulty level).
-func TestOpponentCountSelectActionAt(t *testing.T) {
-	rects := difficultyButtonRects(1280, 720)
-	for index, rect := range rects {
-		count, ok := opponentCountSelectActionAt(rect.Min.X+1, rect.Min.Y+1, 1280, 720)
-		if !ok || count != index+1 {
-			t.Fatalf("card %d: count=%d ok=%v, want %d", index, count, ok, index+1)
-		}
-	}
-	if _, ok := opponentCountSelectActionAt(0, 0, 1280, 720); ok {
-		t.Fatal("empty point unexpectedly has an opponent count")
-	}
-}
-
 // TestNewGameFlow_FreeMapStaysSinglePlayer locks in that picking "Свободная
 // карта" from the mode-select screen behaves exactly like the old direct
 // "Новая игра" button always did: an ordinary single-player game, g.ais empty.
@@ -285,19 +269,20 @@ func TestNewGameFlow_DuelModeStartsASecondFaction(t *testing.T) {
 }
 
 // TestNewGameFlow_DuelModeWithMultipleOpponentsPicksOneDifficultyEach
-// covers the "N против ИИ" extension of TestNewGameFlow_DuelModeStartsASecondFaction
-// -- per the user's explicit "подумай над выбором уровня сложности для
-// каждого противника", each opponent gets its own pick, not one shared
-// difficulty for the whole match. Drives the actual accumulation state
-// (g.duelDifficulties) the real screenDifficultySelect flow builds up
-// one visit at a time, rather than simulating live cursor clicks (same
-// convention as TestNewGameFlow_DuelModeStartsASecondFaction, which
-// already sets g.screen directly rather than clicking through it).
+// covers "4х4" (always maxDuelOpponents == 3 bots, per the user's
+// explicit "оставь только режим 'Свободный' и '4х4'") end to end: per the
+// user's separate, earlier "подумай над выбором уровня сложности для
+// каждого противника", each of the 3 bots gets its own difficulty pick,
+// not one shared difficulty for the whole match. Drives the actual
+// accumulation state (g.duelDifficulties) the real screenDifficultySelect
+// flow builds up one visit at a time, rather than simulating live cursor
+// clicks (same convention as TestNewGameFlow_DuelModeStartsASecondFaction,
+// which already sets g.screen directly rather than clicking through it).
 func TestNewGameFlow_DuelModeWithMultipleOpponentsPicksOneDifficultyEach(t *testing.T) {
 	g := NewGame()
 	g.screen = screenTitle
 	g.enterModeSelect()
-	g.duelOpponentCount = 3
+	g.duelOpponentCount = maxDuelOpponents
 	g.duelDifficulties = nil
 	g.screen = screenDifficultySelect
 

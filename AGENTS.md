@@ -3763,6 +3763,32 @@ color.RGBA`. Все 9 функций отрисовки юнитов (`DrawSerfs
 g.ais` уже перебирал все фракции — только поменял `true`/`false` на
 `f.owner`.
 
+## Упрощение выбора режима: только "Свободный" и "4х4"
+
+Пользователь: "оставь только режим 'Свободный' и '4х4', остальное
+убери" — экран выбора числа противников (1/2/3 бота), добавленный в
+ходе FFA-расширения выше, убран целиком. "4х4" теперь означает ровно
+одно: игрок плюс `maxDuelOpponents` (= 3) бота на полной 4-четвертной
+карте — выбора числа противников больше нет, только выбор сложности
+для каждого из трёх ботов по очереди (без изменений).
+
+Убрано из `cmd/game/title.go`: `screenOpponentCountSelect` (значение
+enum'а `appScreen`), `drawOpponentCountSelectScreen`,
+`opponentCountSelectActionAt`, `titleCopy`'s
+`opponentCountTitle`/`opponentOne`/`opponentTwo`/`opponentThree`. Клик
+по "4х4" на `screenModeSelect` теперь сразу выставляет
+`g.duelOpponentCount = maxDuelOpponents` и переходит на
+`screenDifficultySelect`, минуя убранный промежуточный экран; кнопка
+"назад" с `screenDifficultySelect` (когда ещё не выбрано ни одной
+сложности) теперь тоже ведёт прямо на `screenModeSelect`. Подписи
+переименованы: `freeMap` → "Свободный" (было "Свободная карта"),
+`duelMode` → "4х4" (было "Дуэль с ИИ"), `duelModeDesc` описывает
+3 ИИ-соперников на 4-четвертной карте, все против всех.
+
+`cmd/game/title_test.go`: `TestOpponentCountSelectActionAt` удалён (тестируемая
+функция исчезла); `TestNewGameFlow_DuelModeWithMultipleOpponentsPicksOneDifficultyEach`
+поправлен на `g.duelOpponentCount = maxDuelOpponents` вместо литерала `3`.
+
 ## Текущий план
 
 Исходный план MVP хранится отдельно от репозитория, в файлах планирования

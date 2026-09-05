@@ -395,13 +395,15 @@ type Game struct {
 	preModeSelectScreen appScreen
 	preModeSelectPaused bool
 
-	// duelOpponentCount/duelDifficulties are the "N против ИИ" setup
-	// flow's own transient state -- per the user's explicit "подумай над
-	// выбором уровня сложности для каждого противника", each opponent
-	// gets its own difficulty pick, one screenDifficultySelect visit at a
-	// time (see screenOpponentCountSelect/startDuelGame). duelDifficulties
-	// accumulates one entry per bot already picked; its length is also
-	// "which opponent's difficulty screen is this" (0-indexed).
+	// duelOpponentCount/duelDifficulties are the "4х4" duel setup flow's
+	// own transient state -- duelOpponentCount is always maxDuelOpponents
+	// now (no more player-chosen opponent count), but per the user's
+	// explicit "подумай над выбором уровня сложности для каждого
+	// противника", each of those opponents still gets its own difficulty
+	// pick, one screenDifficultySelect visit at a time (see
+	// startDuelGame). duelDifficulties accumulates one entry per bot
+	// already picked; its length is also "which opponent's difficulty
+	// screen is this" (0-indexed).
 	duelOpponentCount int
 	duelDifficulties  []aiDifficulty
 
