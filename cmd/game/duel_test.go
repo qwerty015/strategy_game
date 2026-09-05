@@ -9,6 +9,7 @@ import (
 	"strategy_game/internal/resource"
 	"strategy_game/internal/sentry"
 	"strategy_game/internal/ui"
+	"strategy_game/internal/world"
 )
 
 // TestNewDuelGame_MapIsSymmetricAndIsthmusIsClear locks in the "1×1
@@ -38,6 +39,50 @@ func TestNewDuelGame_MapIsSymmetricAndIsthmusIsClear(t *testing.T) {
 	}
 	if playerWarehouse.X >= g.grid.Width/2 || aiWarehouse.X < g.grid.Width/2 {
 		t.Fatalf("warehouses are not on opposite shores: player X=%d, AI X=%d, map width=%d", playerWarehouse.X, aiWarehouse.X, g.grid.Width)
+	}
+
+	// The isthmus itself: derive its Y-range straight from the generated
+	// grid (whichever rows are dry within the water strip's own X band),
+	// then confirm no natural resource landed anywhere in it and that it's
+	// actually walkable land the whole way across. A real bug found from
+	// an actual playtest report ("деревья... перекрывали проход по
+	// перешейку"): this test's own name already promised "IsthmusIsClear"
+	// but never once checked it -- growCenterWaterStrip computed the
+	// isthmus bounds and the call site discarded them (`_, _ =`), so
+	// seedTrees/seedThickets/seedOreDeposits/... were always free to place
+	// right on top of the one dry crossing.
+	stripCenterX := duelMapWidth / 2
+	left := stripCenterX - duelWaterStripWidth/2
+	right := duelMapWidth - left
+	isthmusMinY, isthmusMaxY := -1, -1
+	for y := 0; y < g.grid.Height; y++ {
+		if g.grid.At(left, y).Terrain == world.Water {
+			continue // a real water row of the strip -- not the crossing
+		}
+		if isthmusMinY < 0 {
+			isthmusMinY = y
+		}
+		isthmusMaxY = y + 1
+		for x := left; x < right; x++ {
+			if g.grid.At(x, y).Terrain == world.Water {
+				t.Fatalf("isthmus row y=%d is not dry all the way across at x=%d", y, x)
+			}
+		}
+	}
+	if isthmusMinY < 0 || isthmusMaxY-isthmusMinY != duelIsthmusWidth {
+		t.Fatalf("found isthmus Y-range [%d,%d), want exactly %d rows (duelIsthmusWidth)", isthmusMinY, isthmusMaxY, duelIsthmusWidth)
+	}
+	for _, b := range g.buildings {
+		// Both X (the strip's own band) AND Y (the dry crossing's rows,
+		// not the strip's plain water rows) matter here -- a Fish
+		// legitimately living in the strip's water, just outside the dry
+		// crossing, must NOT trip this check the way a first draft of
+		// this test once did (X alone isn't enough: Fish only ever spawns
+		// on Water, which every non-isthmus row of this same band already
+		// is by construction).
+		if isNaturalResourceKind(b.Kind) && b.X >= left && b.X < right && b.Y >= isthmusMinY && b.Y < isthmusMaxY {
+			t.Fatalf("kind %v sits at (%d,%d), inside the isthmus's dry crossing -- it must stay clear", b.Kind, b.X, b.Y)
+		}
 	}
 }
 

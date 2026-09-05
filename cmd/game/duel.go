@@ -50,7 +50,15 @@ const (
 // band around the vertical center line, uniform except for the isthmus
 // gap -- deliberately simple and exactly reproducible, since both
 // territories must end up geometrically identical in shape.
-func growCenterWaterStrip(g *world.Grid, seed uint32) (isthmusMinY, isthmusMaxY int) {
+//
+// The returned rectangle is the isthmus's own tile bounds (the water-strip
+// X range × the dry Y range) -- newDuelGame passes it to
+// pruneNaturalResourcesFromIsthmus so nothing seeded afterward can end up
+// blocking the one dry crossing. Discarding this return value used to be
+// exactly the bug: the doc comment above already promised a resource-free
+// isthmus, but nothing actually enforced it until a real playtest report
+// ("деревья... перекрывали проход по перешейку").
+func growCenterWaterStrip(g *world.Grid, seed uint32) (isthmus image.Rectangle) {
 	centerX := g.Width / 2
 	left := centerX - duelWaterStripWidth/2
 	// right is derived as g.Width-left, not centerX+duelWaterStripWidth/2,
@@ -77,8 +85,8 @@ func growCenterWaterStrip(g *world.Grid, seed uint32) (isthmusMinY, isthmusMaxY 
 	if span < 1 {
 		span = 1
 	}
-	isthmusMinY = margin + int(seed%uint32(span))
-	isthmusMaxY = isthmusMinY + duelIsthmusWidth
+	isthmusMinY := margin + int(seed%uint32(span))
+	isthmusMaxY := isthmusMinY + duelIsthmusWidth
 
 	for y := 0; y < g.Height; y++ {
 		if y >= isthmusMinY && y < isthmusMaxY {
@@ -88,7 +96,7 @@ func growCenterWaterStrip(g *world.Grid, seed uint32) (isthmusMinY, isthmusMaxY 
 			g.Set(x, y, world.Tile{Terrain: world.Water})
 		}
 	}
-	return isthmusMinY, isthmusMaxY
+	return image.Rect(left, isthmusMinY, right, isthmusMaxY)
 }
 
 // mirrorX reflects x across the map's vertical center line -- the one
@@ -149,7 +157,7 @@ func findDuelWarehouseSpot(grid *world.Grid, targetX, targetY int) (gridPoint, b
 func newDuelGame(difficulty aiDifficulty) *Game {
 	mapSeed := newMapSeed()
 	grid := world.NewGrid(duelMapWidth, duelMapHeight)
-	_, _ = growCenterWaterStrip(grid, mapSeed^0x9e3779b9)
+	isthmus := growCenterWaterStrip(grid, mapSeed^0x9e3779b9)
 
 	playerPoint, ok := findDuelWarehouseSpot(grid, duelMapWidth/4, duelMapHeight/2)
 	if !ok {
@@ -180,6 +188,7 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse)
 	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse)
+	buildings = pruneNaturalResourcesFromIsthmus(buildings, isthmus)
 	buildings = mirrorNaturalResourcesForFairness(grid, buildings, playerPoint, aiPoint)
 
 	stock := resource.NewStockpile(stockpileCapacity)
@@ -224,6 +233,30 @@ func newDuelGame(difficulty aiDifficulty) *Game {
 	game.refreshPopulation()
 	game.refreshSlotCache()
 	return game
+}
+
+// pruneNaturalResourcesFromIsthmus removes any natural resource node
+// (isNaturalResourceKind -- Tree/Fish/StoneDeposit/CoalDeposit/
+// GoldOreDeposit/IronOreDeposit) that landed inside isthmus, the duel
+// map's one dry land crossing between the two territories (see
+// growCenterWaterStrip's doc comment). Every seed function only ever
+// places on dry, walkable terrain, and the only dry tiles within the
+// water strip's X range ARE the isthmus's Y rows -- so anything that
+// lands with an X inside isthmus is, by construction, also inside its Y
+// range, making a plain rectangle containment check exact, not an
+// approximation. Called right after the last seed*/before
+// mirrorNaturalResourcesForFairness: a resource pruned here never gets a
+// mirrored counterpart created for it either, so this can't introduce any
+// left/right imbalance of its own.
+func pruneNaturalResourcesFromIsthmus(buildings []*building.Building, isthmus image.Rectangle) []*building.Building {
+	kept := buildings[:0]
+	for _, b := range buildings {
+		if isNaturalResourceKind(b.Kind) && (image.Point{X: b.X, Y: b.Y}).In(isthmus) {
+			continue
+		}
+		kept = append(kept, b)
+	}
+	return kept
 }
 
 // mirrorNaturalResourcesForFairness replaces every natural resource node
