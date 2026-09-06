@@ -1274,6 +1274,41 @@ func TestController_ArmorySurplusGoesToWarehouseWhenBarracksIsFull(t *testing.T)
 	}
 }
 
+// TestController_SupplySkipsAnUnreachableShortageForAReachableOne is a real
+// bug found from an actual playtest report ("ресурсы лежат на складе,
+// казарма пустая, ничего не доставляется"): findSupplyJob used to rank
+// every shortage by priority/shortfall and hand the CALLER only the single
+// best-ranked one, with no fallback if that one turned out unreachable.
+// A WatchTower cut off from the road network (a real, valid outcome once
+// the player walls off part of their base -- not a bug in itself) still
+// "won" the ranking every single tick since its shortage never shrinks,
+// so a perfectly reachable Barracks sitting right next to the warehouse
+// never got a single serf, forever. findSupplyJob must now skip an
+// unreachable candidate and try the next one, the same way
+// findTavernSupplyJob already does for picking a source producer.
+func TestController_SupplySkipsAnUnreachableShortageForAReachableOne(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	barracks := &building.Building{Kind: building.Barracks, X: 4, Y: 0}
+	// No road anywhere near it -- genuinely unreachable, not merely distant.
+	tower := &building.Building{Kind: building.WatchTower, X: 50, Y: 50}
+	buildings := append([]*building.Building{warehouse, barracks, tower}, straightRoad(1, 4, 0)...)
+
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Gold, 10)
+	stock.Add(resource.StoneBlock, 10)
+
+	controller := NewController(warehouse, 1)
+	for range 200 {
+		tick(controller, nil, buildings, stock)
+		if barracks.InputBuffer[resource.Gold] > 0 {
+			break
+		}
+	}
+	if got := barracks.InputBuffer[resource.Gold]; got == 0 {
+		t.Fatalf("barracks Gold input = %d after 200 ticks, want > 0 -- an unreachable WatchTower shortage must not block a reachable Barracks forever", got)
+	}
+}
+
 // TestController_SuppliesArmoryBeforeCollectingUnrelatedOutput reproduces a
 // mature town: even when a Farm has goods ready to collect forever, a queued
 // Bow whose Plank already sits in a connected Warehouse must receive a serf

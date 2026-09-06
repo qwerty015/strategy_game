@@ -755,15 +755,9 @@ func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Bui
 	// surplus. On a mature map there is almost always some output to collect;
 	// putting collection first could therefore starve an Armory (or any other
 	// consumer) forever despite the required resource already being in stock.
-	if b, t, n, ok := findSupplyJob(buildings, stock, ledger, c.priority); ok {
-		// Here it's the pickup side (which warehouse) that varies, so pick
-		// whichever registered warehouse is actually nearest the serf
-		// right now AND can still reach b -- not just the one nearest the
-		// serf.
-		if warehouse, path, ok := nearestReachableWarehouseTo(buildings, c.warehouses(), from, b); ok {
-			c.startLeg(s, warehouse, b, t, n, path, ledger)
-			return
-		}
+	if warehouse, dropoff, t, n, path, ok := findSupplyJob(buildings, c.warehouses(), stock, ledger, c.priority, from); ok {
+		c.startLeg(s, warehouse, dropoff, t, n, path, ledger)
+		return
 	}
 	if b, t, n, path, ok := findCollectJob(buildings, c.Warehouse, ledger, from, c.priority); ok {
 		// The pickup (b) is already confirmed reachable from the serf;
@@ -974,30 +968,45 @@ func findCollectJob(buildings []*building.Building, warehouse *building.Building
 }
 
 // findSupplyJob looks for a building falling short on an input that the
-// Warehouse could actually cover right now. It deliberately doesn't pick a
-// specific warehouse or check reachability itself -- assign tries every
-// registered warehouse as the pickup point, since which one is actually
-// reachable depends on the serf's position, not on which building is short
-// on input. Resource types are visited in a fixed sorted order for the
-// same reason as the other job searches. Among several buildings short on
-// input, priority (see Controller.SetPriority) picks which one gets
-// resupplied first -- this is the one that resolves "свиноферма/мельница"
-// style contention over a shared input like Wheat.
+// Warehouse could actually cover right now, and an actually reachable
+// warehouse to fetch it from. Resource types are visited in a fixed sorted
+// order for the same reason as the other job searches. Among several
+// buildings short on input, priority (see Controller.SetPriority) picks
+// which one gets resupplied first -- this is the one that resolves
+// "свиноферма/мельница" style contention over a shared input like Wheat;
+// ties on priority go to the biggest shortfall, same as findTavernSupplyJob.
 //
 // A shortage is only accepted if stock actually has some of that resource
 // available (per the shared ledger): a building short on a resource
 // nobody has any of yet must not block trying the next shortage, whether
 // that's a different resource at the same building or a different
 // building entirely.
-func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, priority map[building.Kind]int) (b *building.Building, t resource.Type, amount int, ok bool) {
-	bestPriority := 0
-	bestShort := 0
+//
+// Every ranked candidate is tried, in order, until one actually has a
+// reachable warehouse (see nearestReachableWarehouseTo) -- a real bug
+// found from an actual playtest report ("resources sit in the warehouse
+// forever, nothing gets delivered to my Barracks"): this used to just
+// pick the single best-ranked candidate and hand it to the caller with no
+// fallback. A WatchTower whose only road connection had been walled off
+// (a real, valid outcome once the player builds walls/gates around their
+// base -- unlike a bug, that closed gate is meant to block traffic) still
+// outranked the Barracks's shortfall every single tick, so the loop never
+// even tried the Barracks -- forever, since the WatchTower's shortage
+// never went away. The same "try the next-best candidate when the winner
+// turns out unreachable" pattern findTavernSupplyJob already uses for
+// picking a source producer, applied here to picking the shortage itself.
+func findSupplyJob(buildings []*building.Building, warehouses []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, priority map[building.Kind]int, from pathfind.Point) (warehouse, dropoff *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
+	type shortageCandidate struct {
+		b        *building.Building
+		t        resource.Type
+		amount   int
+		priority int
+		short    int
+	}
+	var candidates []shortageCandidate
 	for _, cand := range buildings {
 		if cand.Kind == building.Warehouse || cand.Kind == building.Road || cand.Kind == building.Tree {
 			continue
-		}
-		if b != nil && priority[cand.Kind] < bestPriority {
-			continue // a strictly higher-priority candidate already won
 		}
 		for _, rt := range resource.AllTypes() {
 			need := building.Types[cand.Kind].InputRequirement(rt)
@@ -1012,18 +1021,24 @@ func findSupplyJob(buildings []*building.Building, stock *resource.Stockpile, le
 			if amt <= 0 {
 				continue // nothing in stock for this shortage -- try the next one
 			}
-			// Among candidates tied on priority, the biggest shortfall
-			// wins -- see findTavernSupplyJob's doc comment for the real
-			// bug this fixes (same bias, same fix, applied here too).
-			if b != nil && priority[cand.Kind] == bestPriority && short <= bestShort {
-				continue
-			}
-			b, t, amount, ok = cand, rt, amt, true
-			bestPriority, bestShort = priority[cand.Kind], short
-			break
+			candidates = append(candidates, shortageCandidate{cand, rt, amt, priority[cand.Kind], short})
+			break // one shortage per building considered per pass, same as before
 		}
 	}
-	return
+	slices.SortFunc(candidates, func(a, b shortageCandidate) int {
+		if a.priority != b.priority {
+			return b.priority - a.priority
+		}
+		return b.short - a.short
+	})
+	for _, c := range candidates {
+		wh, p, reachable := nearestReachableWarehouseTo(buildings, warehouses, from, c.b)
+		if !reachable {
+			continue // this shortage's only warehouse route is blocked right now -- try the next one
+		}
+		return wh, c.b, c.t, c.amount, p, true
+	}
+	return nil, nil, 0, 0, nil, false
 }
 
 // constructionMaterials is the fixed pair a construction site ever wants,
