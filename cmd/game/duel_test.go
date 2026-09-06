@@ -496,6 +496,52 @@ func wipeFactionForTest(g *Game, owner int) {
 	stockSet(resource.NewStockpile(stockpileCapacity))
 }
 
+// TestDevelopmentLeaderboard_RanksEveryFactionByScoreDescending is the
+// feature the user explicitly requested ("добавь в правое меню в режиме
+// игры с противником топ игроков по уровню развития"): every faction
+// (the player, Owner 0, included) must appear, ranked by the same
+// developmentScore formula, highest first.
+func TestDevelopmentLeaderboard_RanksEveryFactionByScoreDescending(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy, AIEasy})
+	// A pile of extra gold is the cheapest way to hand the player a
+	// decisive score lead without touching population/building counts.
+	g.stock.Add(resource.Gold, 100000)
+
+	board := g.developmentLeaderboard()
+	if len(board) != 3 {
+		t.Fatalf("len(board) = %d, want 3 (player + 2 bots)", len(board))
+	}
+	if board[0].Owner != 0 {
+		t.Fatalf("board[0].Owner = %d, want 0 (the player, given the huge gold lead)", board[0].Owner)
+	}
+	for i := 1; i < len(board); i++ {
+		if board[i].Score > board[i-1].Score {
+			t.Fatalf("board not sorted descending: entry %d (score %d) beats entry %d (score %d)", i, board[i].Score, i-1, board[i-1].Score)
+		}
+	}
+	seen := map[int]bool{}
+	for _, entry := range board {
+		seen[entry.Owner] = true
+	}
+	for _, owner := range []int{0, 1, 2} {
+		if !seen[owner] {
+			t.Errorf("owner %d missing from the leaderboard", owner)
+		}
+	}
+}
+
+// TestDevelopmentLeaderboard_SingleEntryOutsideDuelMode confirms the free
+// map (no opponents at all) never shows a "leaderboard" of just the
+// player alone -- drawTownSummary only renders the section for
+// len(leaderboard) > 1.
+func TestDevelopmentLeaderboard_SingleEntryOutsideDuelMode(t *testing.T) {
+	g := newGameWithSize(20, 20)
+	board := g.developmentLeaderboard()
+	if len(board) != 1 || board[0].Owner != 0 {
+		t.Fatalf("board = %+v, want exactly one entry for the player alone", board)
+	}
+}
+
 // TestDuelGame_FFAResultRequiresEveryBotDefeated is the "все против
 // всех" generalization of TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch:
 // with more than one opponent, defeating only SOME of them must not end

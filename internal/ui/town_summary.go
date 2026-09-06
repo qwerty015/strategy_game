@@ -30,13 +30,27 @@ const (
 	townSummaryPlayTime
 )
 
+// LeaderboardEntry is one row of the "N против ИИ" development
+// leaderboard -- see cmd/game's developmentLeaderboard, already sorted by
+// Score descending. Owner follows building.Building.Owner's convention
+// (0 = player), used to look up that faction's display name (see
+// i18n.Catalog.FactionColorNominative) and, on the map/minimap, its color.
+type LeaderboardEntry struct {
+	Owner int
+	Score int
+}
+
 // drawTownSummary fills the otherwise empty inspector with persistent town
 // information. The stockpile is shared by every operational warehouse, so its
 // values are exactly the total resources the player can spend or deliver.
 // score is a derived development number (see cmd/game's developmentScore) --
 // not itself simulation state, just a display-only combination of the
-// counters already shown here plus the warehouse's gold.
-func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resource.Stockpile, pop *economy.Population, buildings, playedFrames, score int) {
+// counters already shown here plus the warehouse's gold. leaderboard is
+// nil/single-entry outside "N против ИИ" (nothing to rank against) -- per
+// the user's explicit request ("добавь в правое меню в режиме игры с
+// противником топ игроков по уровню развития"), the section only appears
+// when there's an actual opponent to compare against.
+func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resource.Stockpile, pop *economy.Population, buildings, playedFrames, score int, leaderboard []LeaderboardEntry) {
 	x := panelX + 18
 	t := i18n.T()
 	DrawInspectorText(screen, t.TownSummaryLabel, float64(x), 62)
@@ -68,7 +82,29 @@ func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resour
 		DrawInspectorText(screen, stat.label, float64(x+townSummaryIconSize+7), float64(y))
 	}
 
-	dividerY := 208 + 2*20 // two extra rows (kills/score) below the original six
+	// statsEndY replaces what used to be a hardcoded "208 + 2*20" (itself
+	// a manual adjustment made the last time two rows were added to
+	// stats) with the same +6px gap, computed from len(stats) directly so
+	// it can't drift out of sync with the list above again.
+	statsEndY := 82 + len(stats)*20 + 6
+
+	// The leaderboard section only exists in "N против ИИ" -- a
+	// single-entry (or nil) slice means no real opponent to rank against
+	// (see developmentLeaderboard), so it's skipped entirely rather than
+	// showing a "leaderboard" of just the player alone.
+	sectionY := statsEndY
+	if len(leaderboard) > 1 {
+		fillIconRect(screen, x, sectionY, panelWidth-36, 2, panelEdgeColor)
+		DrawInspectorText(screen, t.DevelopmentLeaderboardLabel, float64(x), float64(sectionY+12))
+		for i, entry := range leaderboard {
+			y := sectionY + 32 + i*18
+			name := t.FactionColorNominative[entry.Owner]
+			DrawInspectorText(screen, fmt.Sprintf("%d. %s -- %d", i+1, name, entry.Score), float64(x), float64(y))
+		}
+		sectionY += 32 + len(leaderboard)*18 + 6
+	}
+
+	dividerY := sectionY
 	fillIconRect(screen, x, dividerY, panelWidth-36, 2, panelEdgeColor)
 	DrawInspectorText(screen, t.ResourcesInWarehousesLabel, float64(x), float64(dividerY+12))
 

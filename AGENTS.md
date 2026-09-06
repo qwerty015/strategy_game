@@ -4278,6 +4278,43 @@ build`/`go vet`/`gofmt`, весь `go test ./...` включая `cmd/game`/
 `internal/render`/`internal/ui` — монитор снова доступен, `internal/save`
 через prebuilt-binary) прогнан и зелёный.
 
+## Топ игроков по уровню развития в правом меню
+
+Пользователь: "добавь в правое меню в режиме игры с противником топ
+игроков по уровню развития, под 'Город' и над 'Ресурсы на складах'".
+
+- `cmd/game`: `completedTownBuildingCount`/`developmentScore` разбиты на
+  тонкие обёртки + обобщённые `completedBuildingCountFor(owner)`/
+  `developmentScoreFrom(buildings, pop, stock)` — та же формула
+  (`здания×10 + население×5 + убийства×20 + золото`), просто без
+  жёсткой привязки к игроку. Новая `developmentLeaderboard() []ui.
+  LeaderboardEntry` — считает счёт для игрока и каждого `g.ais`, сортирует
+  по убыванию. Вне "N против ИИ" (`g.ais` пуст) — список из ОДНОЙ записи
+  (только игрок).
+- `internal/ui`: `LeaderboardEntry{Owner, Score}` + `drawTownSummary`
+  рисует секцию МЕЖДУ статистикой города и разделителем "Ресурсы на
+  складах", только если `len(leaderboard) > 1` (иначе в одиночной игре
+  показывать нечего). Старый захардкоженный `dividerY := 208 + 2*20`
+  заменён на вычисляемый из `len(stats)` — иначе он тихо разъехался бы
+  на следующем добавлении строки в статистику, ровно как уже происходило
+  один раз раньше (комментарий "two extra rows... below the original
+  six").
+- `internal/i18n`: новая `DevelopmentLeaderboardLabel` ("Топ по
+  развитию"); имена строк переиспользуют уже существующие
+  `FactionColorNominative` (из фичи уведомлений о разгроме фракции выше)
+  — owner=0 показывается как "Вы".
+
+### Тесты
+
+`cmd/game/duel_test.go`:
+`TestDevelopmentLeaderboard_RanksEveryFactionByScoreDescending` (игрок с
+большим отрывом по золоту оказывается первым, все 3 фракции присутствуют,
+порядок по убыванию), `TestDevelopmentLeaderboard_SingleEntryOutsideDuelMode`
+(свободная карта — ровно один игрок, ничего чинить/показывать не нужно).
+Полный набор (`go build`/`go vet`/`gofmt`, весь `go test ./...` включая
+`cmd/game`/`internal/render`/`internal/ui`, `internal/save` через
+prebuilt-binary) прогнан и зелёный.
+
 ## Текущий план
 
 Исходный план MVP хранится отдельно от репозитория, в файлах планирования

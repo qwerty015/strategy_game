@@ -1147,8 +1147,15 @@ func (g *Game) paletteLockReasons() map[building.Kind]string {
 // summary and developmentScore, so an AI building used to inflate the
 // player's own building count and score.
 func (g *Game) completedTownBuildingCount() int {
+	return g.completedBuildingCountFor(0)
+}
+
+// completedBuildingCountFor is completedTownBuildingCount generalized to
+// any faction -- see developmentLeaderboard, the one other caller (an AI
+// faction's own building count for its development score).
+func (g *Game) completedBuildingCountFor(owner int) int {
 	count := 0
-	for _, b := range g.ownedBuildings(0) {
+	for _, b := range g.ownedBuildings(owner) {
 		if b.ConstructionStage != building.ConstructionNone {
 			continue
 		}
@@ -2525,14 +2532,40 @@ func (g *Game) refreshPopulation() {
 // than one more citizen or one more gold, since either is a bigger
 // investment of the player's time.
 func (g *Game) developmentScore() int {
-	if g.pop == nil {
+	return developmentScoreFrom(g.completedTownBuildingCount(), g.pop, g.stock)
+}
+
+// developmentScoreFrom is developmentScore's formula, generalized to any
+// faction's own building count/population/stockpile -- see
+// developmentLeaderboard, which uses it for every AI faction the same
+// way developmentScore uses it for the player.
+func developmentScoreFrom(completedBuildings int, pop *economy.Population, stock *resource.Stockpile) int {
+	if pop == nil {
 		return 0
 	}
 	gold := 0
-	if g.stock != nil {
-		gold = g.stock.Amount(resource.Gold)
+	if stock != nil {
+		gold = stock.Amount(resource.Gold)
 	}
-	return g.completedTownBuildingCount()*10 + g.pop.Count*5 + g.pop.Kills*20 + gold
+	return completedBuildings*10 + pop.Count*5 + pop.Kills*20 + gold
+}
+
+// developmentLeaderboard ranks every faction (the player, Owner 0,
+// included) by developmentScoreFrom, descending -- per the user's
+// explicit request ("добавь в правое меню в режиме игры с противником
+// топ игроков по уровню развития"). A single-entry slice (just the
+// player) outside "N против ИИ" -- see drawTownSummary's own doc comment
+// on why that means the section doesn't render at all: nothing to rank
+// against.
+func (g *Game) developmentLeaderboard() []ui.LeaderboardEntry {
+	entries := make([]ui.LeaderboardEntry, 0, 1+len(g.ais))
+	entries = append(entries, ui.LeaderboardEntry{Owner: 0, Score: g.developmentScore()})
+	for _, f := range g.ais {
+		score := developmentScoreFrom(g.completedBuildingCountFor(f.owner), f.pop, f.stock)
+		entries = append(entries, ui.LeaderboardEntry{Owner: f.owner, Score: score})
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Score > entries[j].Score })
+	return entries
 }
 
 // buildingSelectionAt resolves only a building, including a Road. It is used
@@ -5914,7 +5947,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			}
 		}
 	}
-	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHire, armoryState, g.formationLines, g.developmentScore())
+	ui.DrawInspectorPanel(screen, g.layout, g.selection, connected, g.stock, g.pop, g.completedTownBuildingCount(), g.playedFrames, occupants, showPriority, priorityLevel, g.dialog, trimServesPrompt, canHire, armoryState, g.formationLines, g.developmentScore(), g.developmentLeaderboard())
 	ui.DrawMinimapPanel(screen, g.layout, g.grid, g.buildings, g.camera)
 	ui.DrawResourceTooltip(screen, g.layout)
 	ui.DrawBuildLockTooltip(screen, g.layout)
