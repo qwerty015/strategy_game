@@ -623,6 +623,21 @@ func (g *Game) aiHireSoldiers(f *faction) {
 // a bot in one corner of a 4-quadrant map should march on its actual
 // neighbour, not blindly cross the whole map to reach a farther rival
 // while ignoring the one next door.
+//
+// A real bug found from an actual playtest report ("красный уничтожил не
+// все постройки других ботов"): this used to target ONLY
+// findWarehouseOwnedBy(opponent) -- once an opponent's Warehouse was
+// destroyed, that opponent dropped out of consideration entirely, even
+// with other real buildings (a FisherHut, an Armory, ...) still standing
+// well away from where the Warehouse used to be. factionDefeated needs
+// EVERY non-Road/Wall/Gate building gone, not just the Warehouse, so
+// those stragglers -- never targeted again -- could survive forever,
+// leaving that opponent permanently short of factionDefeated and the
+// match unwinnable by elimination. Falls back to
+// nearestRealBuildingOwnedBy (any of the opponent's own buildings, same
+// exclusions factionDefeated itself uses) once the Warehouse is gone, so
+// a fight keeps chasing down the last stragglers instead of stopping the
+// moment the "home base" falls.
 func (b *aiBrain) aiConsiderAttack(g *Game, f *faction) {
 	idle := 0
 	for _, s := range f.soldiers.Soldiers {
@@ -642,7 +657,10 @@ func (b *aiBrain) aiConsiderAttack(g *Game, f *faction) {
 	for _, opponent := range g.opposingOwners(f.owner) {
 		candidate := findWarehouseOwnedBy(g.buildings, opponent)
 		if candidate == nil {
-			continue
+			candidate = g.nearestRealBuildingOwnedBy(opponent, own.X, own.Y)
+		}
+		if candidate == nil {
+			continue // this opponent has nothing left worth attacking at all
 		}
 		dist := squaredDistance(own.X, own.Y, candidate.X, candidate.Y)
 		if target == nil || dist < bestDist {
@@ -657,6 +675,34 @@ func (b *aiBrain) aiConsiderAttack(g *Game, f *faction) {
 			s.MoveTo(g.grid, g.buildings, target.X, target.Y)
 		}
 	}
+}
+
+// nearestRealBuildingOwnedBy finds owner's own closest building to
+// (x, y) -- the same Road/StoneWall/Gate/natural-resource exclusion
+// factionDefeated itself uses, so this only ever returns a building whose
+// destruction actually moves that faction closer to being defeated (a
+// leftover Road tile, for instance, wouldn't -- pruneDestroyedBuildings
+// never removes it anyway, see its own doc comment). Returns nil once
+// nothing like that is left, meaning this owner is functionally already
+// defeated (aiConsiderAttack's caller already checked findWarehouseOwnedBy
+// came up empty too).
+func (g *Game) nearestRealBuildingOwnedBy(owner, x, y int) *building.Building {
+	var nearest *building.Building
+	bestDist := -1
+	for _, b := range g.buildings {
+		if b.Owner != owner || isNaturalResourceKind(b.Kind) {
+			continue
+		}
+		switch b.Kind {
+		case building.Road, building.StoneWall, building.Gate:
+			continue
+		}
+		dist := squaredDistance(x, y, b.X, b.Y)
+		if nearest == nil || dist < bestDist {
+			nearest, bestDist = b, dist
+		}
+	}
+	return nearest
 }
 
 // squaredDistance is a plain Euclidean-squared distance -- enough to
