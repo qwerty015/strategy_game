@@ -10,6 +10,65 @@ import (
 	"strategy_game/internal/world"
 )
 
+// TestController_IsBlockedByAForeignWall is the regression test for a real
+// playtest bug found from an actual save ("дровосек синего через стену
+// спокойно попадает на мой квадрат и рубит дерево"): before Tick gained
+// its separate obstacles parameter, a lumberjack's route was computed
+// against its own faction's buildings alone, so a RIVAL faction's wall
+// was never even present in the obstacle map -- not "passable", simply
+// invisible to the pathfinder. buildings (the job/candidate list) here
+// deliberately omits the wall entirely -- a natural resource like a Tree
+// is always a valid candidate regardless of who "owns" the map region --
+// while obstacles (the whole map) includes it, mirroring how cmd/game
+// actually calls this in "N против ИИ" mode.
+func TestController_IsBlockedByAForeignWall(t *testing.T) {
+	grid := world.NewGrid(5, 3)
+	hut := &building.Building{Kind: building.LumberjackHut, X: 0, Y: 1}
+	tree := building.NewTree(4, 1)
+	tree.GrowthTicks = tree.GrowthTargetTicks
+	buildings := []*building.Building{hut, tree}
+
+	// A complete wall across the whole map height, owned by a different
+	// faction -- no gate, no gap, nothing to route around.
+	wall := []*building.Building{
+		{Kind: building.StoneWall, X: 2, Y: 0, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 1, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 2, Owner: 1, ConstructionStage: building.ConstructionNone},
+	}
+	obstacles := append(append([]*building.Building{}, buildings...), wall...)
+
+	controller := NewController()
+	jack := controller.Spawn(hut)
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, obstacles, ledger)
+	}
+	if jack.state != StateIdle {
+		t.Fatalf("state with the target tree behind a foreign wall = %v, want StateIdle (must never cross it)", jack.state)
+	}
+
+	// Same geometry, no wall this time -- confirms the block above was
+	// really the wall, not a setup mistake (e.g. the tree being
+	// unreachable for some other reason).
+	var cut bool
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
+			if event.Tree == tree {
+				cut = true
+			}
+		}
+		if cut {
+			break
+		}
+	}
+	if !cut {
+		t.Fatal("lumberjack never cut the tree with no wall in its way -- confirms the previous block was really the wall")
+	}
+}
+
 // TestController_CancelRouteToResetsLumberjackWithoutDanglingPointer
 // covers "при удалении харчевни уже идущие к ней лесорубы не получают
 // отмену маршрута": deleting a Tavern a lumberjack is mid-walk to eat at
@@ -59,7 +118,7 @@ func TestLumberjack_EatsAtNearestReachableTavern(t *testing.T) {
 	for range HungerInterval + 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if j.hungerTick == 0 {
 			ate = true
 			break
@@ -109,7 +168,7 @@ func TestLumberjack_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
 		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if len(controller.Lumberjacks) == 0 {
 			t.Fatalf("lumberjack died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
 		}
@@ -131,7 +190,7 @@ func TestLumberjack_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if j.cargo == 0 {
 			delivered = true
 			break
@@ -157,7 +216,7 @@ func TestController_RestoreKeepsSavedMeal(t *testing.T) {
 	buildings := []*building.Building{hut, tavern}
 
 	controller := NewController()
-	jack := controller.Restore(hut, 0, 1, HungerInterval, false, StateToTavern, nil, 0, 0, grid, buildings, resource.Wine)
+	jack := controller.Restore(hut, 0, 1, HungerInterval, false, StateToTavern, nil, 0, 0, grid, buildings, buildings, resource.Wine)
 	if jack.Meal() != resource.Wine {
 		t.Fatalf("restored meal = %v, want wine", jack.Meal())
 	}
@@ -165,7 +224,7 @@ func TestController_RestoreKeepsSavedMeal(t *testing.T) {
 	for range 20 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if jack.HungerTicks() == 0 {
 			break
 		}
@@ -194,7 +253,7 @@ func TestLumberjackCutsNearestTreeAndStoresLogAtHut(t *testing.T) {
 	for tick := 0; tick < 100; tick++ {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		for _, event := range controller.Tick(grid, buildings, ledger) {
+		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
 			if event.Kind != TreeCut || event.Tree != tree {
 				t.Fatalf("unexpected tree-cut event: %#v", event)
 			}
@@ -239,7 +298,7 @@ func TestLumberjack_SkipsTreesBeyondMaxWorkRadius(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 	if jack.state != StateIdle {
 		t.Fatalf("state with only an out-of-radius tree available = %v, want StateIdle (must never target it)", jack.state)
@@ -253,7 +312,7 @@ func TestLumberjack_SkipsTreesBeyondMaxWorkRadius(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		for _, event := range controller.Tick(grid, buildings, ledger) {
+		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
 			if event.Tree == nearTree {
 				cut = true
 			}
@@ -284,7 +343,7 @@ func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
 	for range 50 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 
 	if got := len(controller.Lumberjacks); got != 1 {

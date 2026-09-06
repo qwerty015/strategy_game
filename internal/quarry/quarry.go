@@ -160,7 +160,7 @@ func (c *Controller) HasHome(home *building.Building) bool {
 // the selected meal and the current work state. Routes are rebuilt from the
 // saved tile because transient path slices are intentionally not part of the
 // JSON format.
-func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, starving bool, state State, target *building.Building, workTicks, cargo int, grid *world.Grid, buildings []*building.Building, savedMeal ...resource.Type) *Quarryman {
+func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, starving bool, state State, target *building.Building, workTicks, cargo int, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, savedMeal ...resource.Type) *Quarryman {
 	q := NewQuarryman(home)
 	q.X, q.Y = x, y
 	if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
@@ -179,7 +179,7 @@ func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, sta
 
 	switch state {
 	case StateToDeposit:
-		if target != nil && target.Kind == building.StoneDeposit && q.routeTo(grid, buildings, pathfind.Point{X: target.X, Y: target.Y}) {
+		if target != nil && target.Kind == building.StoneDeposit && q.routeTo(grid, obstacles, pathfind.Point{X: target.X, Y: target.Y}) {
 			q.target = target
 			q.state = StateToDeposit
 		}
@@ -193,7 +193,7 @@ func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, sta
 			if state == StateUnloading && atAccessPoint(q, home) {
 				q.state = StateUnloading
 			} else {
-				q.routeHome(grid, buildings)
+				q.routeHome(grid, obstacles)
 			}
 		}
 	case StateToTavern:
@@ -201,7 +201,7 @@ func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, sta
 		if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
 			wanted = append(wanted, savedMeal[0])
 		}
-		if tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: x, Y: y}, nil, &c.meals, wanted...); ok {
+		if tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, obstacles, pathfind.Point{X: x, Y: y}, nil, &c.meals, wanted...); ok {
 			q.setPath(path)
 			q.tavern = tavern
 			if len(savedMeal) == 0 || !resource.IsFood(savedMeal[0]) {
@@ -210,7 +210,7 @@ func (c *Controller) Restore(home *building.Building, x, y, hungerTicks int, sta
 			q.state = StateToTavern
 		}
 	case StateToHomeAfterMeal:
-		if q.routeHome(grid, buildings) {
+		if q.routeHome(grid, obstacles) {
 			q.state = StateToHomeAfterMeal
 		}
 	}
@@ -338,7 +338,12 @@ func (c *Controller) MaxWaitingHunger() int {
 // Tick advances every quarryman and returns completed events. Call once per
 // simulation tick, after every controller sharing ledger has had a chance to
 // Reserve its own pre-existing in-flight units.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) []Event {
+// buildings stays this faction's own (job/home/tavern candidates); obstacles
+// is the WHOLE map's buildings, used only for the physical pathfinding
+// route -- see lumberjack.Controller.Tick's identical obstacles parameter
+// and its own doc comment for the real playtest bug this fixes (a rival
+// faction's wall was never even in the obstacle map to begin with).
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, ledger *reservations.Ledger) []Event {
 	var events []Event
 	remaining := c.Quarrymen[:0]
 	for _, q := range c.Quarrymen {
@@ -359,17 +364,17 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 		switch q.state {
 		case StateIdle:
 			if q.cargo > 0 {
-				q.routeHome(grid, buildings)
+				q.routeHome(grid, obstacles)
 				continue
 			}
-			if q.hungerTick >= HungerInterval && c.tryStartMeal(q, grid, buildings, ledger) {
+			if q.hungerTick >= HungerInterval && c.tryStartMeal(q, grid, buildings, obstacles, ledger) {
 				continue
 			}
 			if q.searchCooldown > 0 {
 				q.searchCooldown--
 				continue
 			}
-			c.startDepositJob(q, grid, buildings)
+			c.startDepositJob(q, grid, buildings, obstacles)
 			if q.state == StateIdle {
 				q.searchCooldown = depositSearchRetryCooldown
 			}
@@ -405,7 +410,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			}
 		case StateToHome:
 			if len(q.path) == 0 {
-				q.routeHome(grid, buildings)
+				q.routeHome(grid, obstacles)
 				continue
 			}
 			if q.advancePath() {
@@ -431,12 +436,12 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			// untouched by tryStartMeal and survives resetToIdle, so after
 			// eating, StateIdle's own "cargo > 0 -> routeHome" branch
 			// naturally resumes trying to unload, with nothing lost.
-			if q.hungerTick >= HungerInterval && c.tryStartMeal(q, grid, buildings, ledger) {
+			if q.hungerTick >= HungerInterval && c.tryStartMeal(q, grid, buildings, obstacles, ledger) {
 				continue
 			}
 		case StateToTavern:
 			if len(q.path) == 0 {
-				if q.tavern == nil || !q.routeToBuilding(grid, buildings, q.tavern, StateToTavern) {
+				if q.tavern == nil || !q.routeToBuilding(grid, obstacles, q.tavern, StateToTavern) {
 					q.resetToIdle()
 				}
 				continue
@@ -457,7 +462,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			q.tileTicks = 0
 		case StateToHomeAfterMeal:
 			if len(q.path) == 0 {
-				if q.routeHome(grid, buildings) {
+				if q.routeHome(grid, obstacles) {
 					q.state = StateToHomeAfterMeal
 				}
 				continue
@@ -482,7 +487,7 @@ func depositUsable(buildings []*building.Building, target *building.Building) bo
 }
 
 // nearestTavernWithFood mirrors lumberjack's helper of the same name.
-func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
+func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
 	var available []resource.Type
 	for _, b := range buildings {
@@ -506,7 +511,7 @@ func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, fro
 			continue
 		}
 		p := b.AccessPoint()
-		route, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: p.X, Y: p.Y})
+		route, reachable := pathfind.FindLandPath(grid, obstacles, from, pathfind.Point{X: p.X, Y: p.Y})
 		if !reachable {
 			continue
 		}
@@ -525,8 +530,8 @@ func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, fro
 	return tavern, selected, path, true
 }
 
-func (c *Controller) tryStartMeal(q *Quarryman, grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) bool {
-	tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: q.X, Y: q.Y}, ledger, &c.meals)
+func (c *Controller) tryStartMeal(q *Quarryman, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, ledger *reservations.Ledger) bool {
+	tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, obstacles, pathfind.Point{X: q.X, Y: q.Y}, ledger, &c.meals)
 	if !ok {
 		q.Starving = true
 		return false
@@ -553,7 +558,7 @@ func (c *Controller) tryStartMeal(q *Quarryman, grid *world.Grid, buildings []*b
 // the chosen deposit just as good in practice while bounding the cost.
 const depositCandidateSearchLimit = 12
 
-func (c *Controller) startDepositJob(q *Quarryman, grid *world.Grid, buildings []*building.Building) {
+func (c *Controller) startDepositJob(q *Quarryman, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building) {
 	start := pathfind.Point{X: q.X, Y: q.Y}
 	type scoredDeposit struct {
 		b    *building.Building
@@ -580,7 +585,7 @@ func (c *Controller) startDepositJob(q *Quarryman, grid *world.Grid, buildings [
 	var bestDeposit *building.Building
 	var bestPath []pathfind.Point
 	for _, sc := range candidates {
-		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: sc.b.X, Y: sc.b.Y})
+		path, ok := pathfind.FindLandPath(grid, obstacles, start, pathfind.Point{X: sc.b.X, Y: sc.b.Y})
 		if !ok || len(path) > MaxWorkRadius || len(path) >= bestLength {
 			continue
 		}
@@ -594,8 +599,12 @@ func (c *Controller) startDepositJob(q *Quarryman, grid *world.Grid, buildings [
 	q.state = StateToDeposit
 }
 
-func (q *Quarryman) routeTo(grid *world.Grid, buildings []*building.Building, goal pathfind.Point) bool {
-	path, ok := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: q.X, Y: q.Y}, goal)
+// routeTo/routeToBuilding/routeHome only ever pathfind -- their single
+// building-list parameter is always the full cross-faction obstacle list,
+// never the faction-filtered candidate list. See lumberjack's identical
+// trio.
+func (q *Quarryman) routeTo(grid *world.Grid, obstacles []*building.Building, goal pathfind.Point) bool {
+	path, ok := pathfind.FindLandPath(grid, obstacles, pathfind.Point{X: q.X, Y: q.Y}, goal)
 	if !ok {
 		return false
 	}
@@ -603,24 +612,24 @@ func (q *Quarryman) routeTo(grid *world.Grid, buildings []*building.Building, go
 	return true
 }
 
-func (q *Quarryman) routeToBuilding(grid *world.Grid, buildings []*building.Building, target *building.Building, state State) bool {
+func (q *Quarryman) routeToBuilding(grid *world.Grid, obstacles []*building.Building, target *building.Building, state State) bool {
 	if target == nil {
 		return false
 	}
 	p := target.AccessPoint()
-	if !q.routeTo(grid, buildings, pathfind.Point{X: p.X, Y: p.Y}) {
+	if !q.routeTo(grid, obstacles, pathfind.Point{X: p.X, Y: p.Y}) {
 		return false
 	}
 	q.state = state
 	return true
 }
 
-func (q *Quarryman) routeHome(grid *world.Grid, buildings []*building.Building) bool {
+func (q *Quarryman) routeHome(grid *world.Grid, obstacles []*building.Building) bool {
 	if q.Home == nil {
 		return false
 	}
 	p := q.Home.AccessPoint()
-	if !q.routeTo(grid, buildings, pathfind.Point{X: p.X, Y: p.Y}) {
+	if !q.routeTo(grid, obstacles, pathfind.Point{X: p.X, Y: p.Y}) {
 		return false
 	}
 	q.state = StateToHome

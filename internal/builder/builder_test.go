@@ -10,6 +10,47 @@ import (
 	"strategy_game/internal/world"
 )
 
+// TestController_IsBlockedByAForeignWall mirrors lumberjack/quarry/miner's
+// identical regression test: obstacles (the whole map) must actually stop
+// a builder at a rival faction's wall, while buildings (the job candidate
+// list) correctly omits it.
+func TestController_IsBlockedByAForeignWall(t *testing.T) {
+	grid := world.NewGrid(5, 3)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 1}
+	site := building.NewConstructionSite(building.Mill, 4, 1)
+	buildings := []*building.Building{warehouse, site}
+
+	wall := []*building.Building{
+		{Kind: building.StoneWall, X: 2, Y: 0, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 1, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 2, Owner: 1, ConstructionStage: building.ConstructionNone},
+	}
+	obstacles := append(append([]*building.Building{}, buildings...), wall...)
+
+	controller := NewController()
+	b := controller.Hire(warehouse)
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, obstacles, ledger)
+	}
+	if b.state != StateIdle {
+		t.Fatalf("state with the target site behind a foreign wall = %v, want StateIdle (must never cross it)", b.state)
+	}
+
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
+		if b.state != StateIdle {
+			break
+		}
+	}
+	if b.state == StateIdle {
+		t.Fatal("builder never picked up the site with no wall in its way -- confirms the previous block was really the wall")
+	}
+}
+
 // TestBuilder_EatsAtNearestReachableTavern mirrors quarry/lumberjack's test
 // of the same shape: a hungry, idle builder (no construction site to work
 // on) must prioritize walking to the nearest reachable, stocked Tavern over
@@ -32,7 +73,7 @@ func TestBuilder_EatsAtNearestReachableTavern(t *testing.T) {
 	for range HungerInterval + 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if b.hungerTick == 0 {
 			ate = true
 			break
@@ -64,7 +105,7 @@ func TestController_DismissalRemovesIdleBuilder(t *testing.T) {
 	if !controller.RequestDismissal(b) || !b.Dismissing() {
 		t.Fatal("RequestDismissal did not mark the live builder")
 	}
-	events := controller.Tick(grid, []*building.Building{warehouse}, reservations.New())
+	events := controller.Tick(grid, []*building.Building{warehouse}, []*building.Building{warehouse}, reservations.New())
 	if got := len(controller.Builders); got != 0 {
 		t.Fatalf("builders after dismissing an idle one = %d, want 0", got)
 	}
@@ -96,7 +137,7 @@ func TestController_DismissalWaitsForCurrentSite(t *testing.T) {
 
 	controller := NewController()
 	b := controller.Hire(warehouse)
-	controller.Tick(grid, buildings, reservations.New()) // assigns the site
+	controller.Tick(grid, buildings, buildings, reservations.New()) // assigns the site
 	if b.state == StateIdle {
 		t.Fatal("builder did not pick up the construction site before dismissal")
 	}
@@ -105,7 +146,7 @@ func TestController_DismissalWaitsForCurrentSite(t *testing.T) {
 	}
 
 	for range building.Types[building.Farm].ConstructionFoundationTicks + building.Types[building.Farm].ConstructionBuildTicks + 20 {
-		controller.Tick(grid, buildings, reservations.New())
+		controller.Tick(grid, buildings, buildings, reservations.New())
 		if len(controller.Builders) == 0 {
 			break
 		}
@@ -147,7 +188,7 @@ func TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving(t *testing.T) {
 		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if len(controller.Builders) == 0 {
 			t.Fatalf("builder died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
 		}
@@ -167,7 +208,7 @@ func TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving(t *testing.T) {
 		tavern.AddInput(resource.Bread, 1)
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if b.State() == StateWaitingMaterials {
 			settled = true
 			break
@@ -187,7 +228,7 @@ func TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving(t *testing.T) {
 	for range building.Types[building.Mill].ConstructionBuildTicks + 5 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		for _, event := range controller.Tick(grid, buildings, ledger) {
+		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
 			e := event
 			completed = &e
 		}
@@ -225,7 +266,7 @@ func TestBuilderCompletesConstructionInTwoPhases(t *testing.T) {
 	for range building.Types[building.Mill].ConstructionFoundationTicks + 50 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if b.State() == StateWaitingMaterials {
 			break
 		}
@@ -246,7 +287,7 @@ func TestBuilderCompletesConstructionInTwoPhases(t *testing.T) {
 	for range building.Types[building.Mill].ConstructionBuildTicks + 5 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		for _, event := range controller.Tick(grid, buildings, ledger) {
+		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
 			e := event
 			completed = &e
 		}
@@ -286,7 +327,7 @@ func TestBuilderSkipsWaitingWhenMaterialsAlreadyDelivered(t *testing.T) {
 	for range building.Types[building.Road].ConstructionFoundationTicks + building.Types[building.Road].ConstructionBuildTicks + 30 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if len(controller.Builders) == 0 {
 			break
 		}
@@ -324,7 +365,7 @@ func TestOnlyOneBuilderClaimsASite(t *testing.T) {
 	for range 10 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 
 	claimants := 0
@@ -374,7 +415,7 @@ func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
 	for range 50 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 
 	if got := len(controller.Builders); got != 1 {
@@ -400,7 +441,7 @@ func TestBuilder_RepairsADamagedFinishedBuilding(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if damaged.HP == building.MaxHP {
 			break
 		}
@@ -432,7 +473,7 @@ func TestBuilder_PrefersFreshConstructionOverRepair(t *testing.T) {
 
 	ledger := reservations.New()
 	controller.Reserve(ledger)
-	controller.Tick(grid, buildings, ledger)
+	controller.Tick(grid, buildings, buildings, ledger)
 
 	if b.state != StateToSite || b.target != site {
 		t.Fatalf("builder target = %v (state %v), want the fresh construction site first", b.target, b.state)

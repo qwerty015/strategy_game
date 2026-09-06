@@ -10,6 +10,50 @@ import (
 	"strategy_game/internal/world"
 )
 
+// TestController_IsBlockedByAForeignWall mirrors lumberjack's identical
+// regression test: obstacles (the whole map) must actually stop a
+// quarryman at a rival faction's wall, while buildings (the job candidate
+// list) correctly omits it -- a stone deposit is a valid candidate
+// regardless of who "owns" the map region it sits in.
+func TestController_IsBlockedByAForeignWall(t *testing.T) {
+	grid := world.NewGrid(5, 3)
+	hut := &building.Building{Kind: building.QuarryHut, X: 0, Y: 1}
+	deposit := building.NewStoneDeposit(4, 1)
+	buildings := []*building.Building{hut, deposit}
+
+	wall := []*building.Building{
+		{Kind: building.StoneWall, X: 2, Y: 0, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 1, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 2, Owner: 1, ConstructionStage: building.ConstructionNone},
+	}
+	obstacles := append(append([]*building.Building{}, buildings...), wall...)
+
+	controller := NewController()
+	worker := controller.Spawn(hut)
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, obstacles, ledger)
+	}
+	if worker.state != StateIdle {
+		t.Fatalf("state with the target deposit behind a foreign wall = %v, want StateIdle (must never cross it)", worker.state)
+	}
+
+	var mined bool
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
+		if hut.OutputBuffer[resource.StoneBlock] > 0 {
+			mined = true
+			break
+		}
+	}
+	if !mined {
+		t.Fatal("quarryman never mined the deposit with no wall in its way -- confirms the previous block was really the wall")
+	}
+}
+
 // TestController_CancelRouteToResetsQuarrymanWithoutDanglingPointer mirrors
 // lumberjack's test of the same name: deleting a Tavern a quarryman is
 // mid-walk to eat at must not leave j.tavern pointing at a building no
@@ -56,7 +100,7 @@ func TestQuarryman_EatsAtNearestReachableTavern(t *testing.T) {
 	for range HungerInterval + 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if q.hungerTick == 0 {
 			ate = true
 			break
@@ -105,7 +149,7 @@ func TestQuarryman_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
 		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if len(controller.Quarrymen) == 0 {
 			t.Fatalf("quarryman died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
 		}
@@ -127,7 +171,7 @@ func TestQuarryman_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if q.cargo == 0 {
 			delivered = true
 			break
@@ -152,7 +196,7 @@ func TestController_RestoreKeepsSavedMeal(t *testing.T) {
 	buildings := []*building.Building{hut, tavern}
 
 	controller := NewController()
-	worker := controller.Restore(hut, 0, 1, HungerInterval, false, StateToTavern, nil, 0, 0, grid, buildings, resource.Wine)
+	worker := controller.Restore(hut, 0, 1, HungerInterval, false, StateToTavern, nil, 0, 0, grid, buildings, buildings, resource.Wine)
 	if worker.Meal() != resource.Wine {
 		t.Fatalf("restored meal = %v, want wine", worker.Meal())
 	}
@@ -160,7 +204,7 @@ func TestController_RestoreKeepsSavedMeal(t *testing.T) {
 	for range 20 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if worker.HungerTicks() == 0 {
 			break
 		}
@@ -193,7 +237,7 @@ func TestQuarrymanMinesNearestDepositAndStoresBlocksAtHut(t *testing.T) {
 	for tick := 0; tick < 100; tick++ {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		for _, event := range controller.Tick(grid, buildings, ledger) {
+		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
 			t.Fatalf("unexpected event with a nearly-full deposit: %#v", event)
 		}
 		if hut.OutputBuffer[resource.StoneBlock] == 2 {
@@ -233,7 +277,7 @@ func TestQuarryman_SkipsDepositsBeyondMaxWorkRadius(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 	if q.state != StateIdle {
 		t.Fatalf("state with only an out-of-radius deposit available = %v, want StateIdle (must never target it)", q.state)
@@ -246,7 +290,7 @@ func TestQuarryman_SkipsDepositsBeyondMaxWorkRadius(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if nearDeposit.Reserve < building.StoneDepositReserve {
 			mined = true
 			break
@@ -273,7 +317,7 @@ func TestQuarrymanExhaustingADepositFiresEvent(t *testing.T) {
 	for tick := 0; tick < 100 && !exhausted; tick++ {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		for _, event := range controller.Tick(grid, buildings, ledger) {
+		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
 			if event.Kind != DepositExhausted || event.Deposit != deposit {
 				t.Fatalf("unexpected event: %#v", event)
 			}
@@ -302,7 +346,7 @@ func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
 	for range 50 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 
 	if got := len(controller.Quarrymen); got != 1 {
@@ -327,7 +371,7 @@ func TestTwoQuarrymenCanShareOneDeposit(t *testing.T) {
 	for range 20 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 
 	if len(controller.Quarrymen) != 2 {

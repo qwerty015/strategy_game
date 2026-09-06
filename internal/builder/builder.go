@@ -157,7 +157,7 @@ func (c *Controller) Hire(warehouse *building.Building) *Builder {
 // selected meal and the current work state. Routes are rebuilt from the
 // saved tile because transient path slices are intentionally not part of
 // the JSON format.
-func (c *Controller) Restore(warehouse *building.Building, x, y, hungerTicks int, starving bool, state State, target *building.Building, workTicks int, grid *world.Grid, buildings []*building.Building, savedMeal ...resource.Type) *Builder {
+func (c *Controller) Restore(warehouse *building.Building, x, y, hungerTicks int, starving bool, state State, target *building.Building, workTicks int, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, savedMeal ...resource.Type) *Builder {
 	b := NewBuilder(warehouse)
 	b.X, b.Y = x, y
 	if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
@@ -176,7 +176,7 @@ func (c *Controller) Restore(warehouse *building.Building, x, y, hungerTicks int
 		// already-finished building being walked to for repair -- see
 		// startRepairJob/repairUsable.
 		validTarget := target != nil && (target.ConstructionStage != building.ConstructionNone || repairUsable(buildings, target))
-		if validTarget && b.routeTo(grid, buildings, pathfind.Point{X: target.X, Y: target.Y}) {
+		if validTarget && b.routeTo(grid, obstacles, pathfind.Point{X: target.X, Y: target.Y}) {
 			b.target = target
 			b.state = StateToSite
 		}
@@ -195,7 +195,7 @@ func (c *Controller) Restore(warehouse *building.Building, x, y, hungerTicks int
 		if len(savedMeal) > 0 && resource.IsFood(savedMeal[0]) {
 			wanted = append(wanted, savedMeal[0])
 		}
-		if tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: x, Y: y}, nil, &c.meals, wanted...); ok {
+		if tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, obstacles, pathfind.Point{X: x, Y: y}, nil, &c.meals, wanted...); ok {
 			b.setPath(path)
 			b.tavern = tavern
 			if len(savedMeal) == 0 || !resource.IsFood(savedMeal[0]) {
@@ -326,7 +326,11 @@ func (c *Controller) MaxWaitingHunger() int {
 // Tick advances every builder and returns completed events. Call once per
 // simulation tick, after every controller sharing ledger has had a chance
 // to Reserve its own pre-existing in-flight units.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) []Event {
+// buildings stays this faction's own (job/site candidates); obstacles is
+// the WHOLE map's buildings, used only for the physical pathfinding route
+// -- see lumberjack.Controller.Tick's identical obstacles parameter and
+// its own doc comment for the real playtest bug this fixes.
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, ledger *reservations.Ledger) []Event {
 	var events []Event
 	remaining := c.Builders[:0]
 	for _, b := range c.Builders {
@@ -350,14 +354,14 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 
 		switch b.state {
 		case StateIdle:
-			if b.hungerTick >= HungerInterval && c.tryStartMeal(b, grid, buildings, ledger) {
+			if b.hungerTick >= HungerInterval && c.tryStartMeal(b, grid, buildings, obstacles, ledger) {
 				continue
 			}
-			c.startSiteJob(b, grid, buildings)
+			c.startSiteJob(b, grid, buildings, obstacles)
 			if b.state == StateIdle {
 				// A fresh building always takes priority over patching an
 				// old one -- only tried once startSiteJob found nothing.
-				c.startRepairJob(b, grid, buildings)
+				c.startRepairJob(b, grid, buildings, obstacles)
 			}
 		case StateToSite:
 			if !siteUsable(buildings, b.target) && !repairUsable(buildings, b.target) {
@@ -427,7 +431,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			// StateToTavern arrival handler below resumes StateWaitingMaterials
 			// at this same site afterward instead of losing the already
 			// finished foundation phase through a fresh startSiteJob.
-			if b.hungerTick >= HungerInterval && c.tryStartMeal(b, grid, buildings, ledger) {
+			if b.hungerTick >= HungerInterval && c.tryStartMeal(b, grid, buildings, obstacles, ledger) {
 				continue
 			}
 		case StateFinishing:
@@ -452,7 +456,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, ledg
 			events = append(events, Event{Kind: ConstructionComplete, Building: site})
 		case StateToTavern:
 			if len(b.path) == 0 {
-				if b.tavern == nil || !b.routeToBuilding(grid, buildings, b.tavern, StateToTavern) {
+				if b.tavern == nil || !b.routeToBuilding(grid, obstacles, b.tavern, StateToTavern) {
 					b.resetToIdle()
 				}
 				continue
@@ -514,7 +518,7 @@ func repairUsable(buildings []*building.Building, target *building.Building) boo
 }
 
 // nearestTavernWithFood mirrors lumberjack's helper of the same name.
-func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
+func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, from pathfind.Point, ledger *reservations.Ledger, selector *meal.Selector, wanted ...resource.Type) (tavern *building.Building, selected resource.Type, path []pathfind.Point, ok bool) {
 	bestLen := -1
 	var available []resource.Type
 	for _, b := range buildings {
@@ -538,7 +542,7 @@ func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, fro
 			continue
 		}
 		p := b.AccessPoint()
-		route, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: p.X, Y: p.Y})
+		route, reachable := pathfind.FindLandPath(grid, obstacles, from, pathfind.Point{X: p.X, Y: p.Y})
 		if !reachable {
 			continue
 		}
@@ -557,8 +561,8 @@ func nearestTavernWithFood(grid *world.Grid, buildings []*building.Building, fro
 	return tavern, selected, path, true
 }
 
-func (c *Controller) tryStartMeal(b *Builder, grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger) bool {
-	tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, pathfind.Point{X: b.X, Y: b.Y}, ledger, &c.meals)
+func (c *Controller) tryStartMeal(b *Builder, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, ledger *reservations.Ledger) bool {
+	tavern, meal, path, ok := nearestTavernWithFood(grid, buildings, obstacles, pathfind.Point{X: b.X, Y: b.Y}, ledger, &c.meals)
 	if !ok {
 		b.Starving = true
 		return false
@@ -590,7 +594,7 @@ func (c *Controller) tryStartMeal(b *Builder, grid *world.Grid, buildings []*bui
 // distance -- and StateWaitingMaterials can no longer starve a builder in
 // place once there (see its own hunger check), so the site's distance
 // itself is the only remaining risk, not how long the wait there runs.
-func (c *Controller) startSiteJob(b *Builder, grid *world.Grid, buildings []*building.Building) {
+func (c *Controller) startSiteJob(b *Builder, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building) {
 	start := pathfind.Point{X: b.X, Y: b.Y}
 	bestLength := int(^uint(0) >> 1)
 	var bestSite *building.Building
@@ -599,7 +603,7 @@ func (c *Controller) startSiteJob(b *Builder, grid *world.Grid, buildings []*bui
 		if candidate == nil || candidate.ConstructionStage == building.ConstructionNone || c.siteReserved(candidate, b) {
 			continue
 		}
-		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
+		path, ok := pathfind.FindLandPath(grid, obstacles, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
 		if !ok || len(path) >= bestLength {
 			continue
 		}
@@ -628,7 +632,7 @@ func (c *Controller) siteReserved(site *building.Building, except *Builder) bool
 // builder is currently walking to or working on" either way). Only
 // tried once startSiteJob found no fresh construction -- see its call
 // site in Tick.
-func (c *Controller) startRepairJob(b *Builder, grid *world.Grid, buildings []*building.Building) {
+func (c *Controller) startRepairJob(b *Builder, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building) {
 	start := pathfind.Point{X: b.X, Y: b.Y}
 	bestLength := int(^uint(0) >> 1)
 	var bestSite *building.Building
@@ -637,7 +641,7 @@ func (c *Controller) startRepairJob(b *Builder, grid *world.Grid, buildings []*b
 		if candidate == nil || !repairUsable(buildings, candidate) || c.siteReserved(candidate, b) {
 			continue
 		}
-		path, ok := pathfind.FindLandPath(grid, buildings, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
+		path, ok := pathfind.FindLandPath(grid, obstacles, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
 		if !ok || len(path) >= bestLength {
 			continue
 		}
@@ -651,8 +655,11 @@ func (c *Controller) startRepairJob(b *Builder, grid *world.Grid, buildings []*b
 	b.state = StateToSite
 }
 
-func (b *Builder) routeTo(grid *world.Grid, buildings []*building.Building, goal pathfind.Point) bool {
-	path, ok := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: b.X, Y: b.Y}, goal)
+// routeTo/routeToBuilding only ever pathfind -- their single building-list
+// parameter is always the full cross-faction obstacle list, never the
+// faction-filtered candidate list. See lumberjack's identical pair.
+func (b *Builder) routeTo(grid *world.Grid, obstacles []*building.Building, goal pathfind.Point) bool {
+	path, ok := pathfind.FindLandPath(grid, obstacles, pathfind.Point{X: b.X, Y: b.Y}, goal)
 	if !ok {
 		return false
 	}
@@ -660,12 +667,12 @@ func (b *Builder) routeTo(grid *world.Grid, buildings []*building.Building, goal
 	return true
 }
 
-func (b *Builder) routeToBuilding(grid *world.Grid, buildings []*building.Building, target *building.Building, state State) bool {
+func (b *Builder) routeToBuilding(grid *world.Grid, obstacles []*building.Building, target *building.Building, state State) bool {
 	if target == nil {
 		return false
 	}
 	p := target.AccessPoint()
-	if !b.routeTo(grid, buildings, pathfind.Point{X: p.X, Y: p.Y}) {
+	if !b.routeTo(grid, obstacles, pathfind.Point{X: p.X, Y: p.Y}) {
 		return false
 	}
 	b.state = state

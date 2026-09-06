@@ -671,11 +671,11 @@ func (g *Game) tickOnce() {
 				serfResult = g.logi.Tick(g.grid, playerBuildings, g.buildings, g.stock, ledger, g.soldiers.Soldiers)
 			}},
 			{g.vills.MaxWaitingHunger(), func() { villagerDeaths = g.vills.Tick(playerBuildings, ledger) }},
-			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, playerBuildings, ledger) }},
+			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
 			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, playerBuildings, ledger) }},
-			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, playerBuildings, ledger) }},
-			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, playerBuildings, ledger) }},
-			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, playerBuildings, ledger) }},
+			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
+			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
+			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
 			{g.sentries.MaxWaitingHunger(), func() {
 				sentryDeaths = g.sentries.Tick(playerBuildings, g.enemies, g.opposingIntruderTargetsFor(g.sentries), ledger)
 			}},
@@ -4332,7 +4332,7 @@ func restoreUnitStateInto(
 		if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.Tree {
 			target = buildings[state.TargetIndex]
 		}
-		jacks.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, lumberjack.State(state.State), target, state.WorkTicks, state.CargoAmount, grid, buildings, state.Meal)
+		jacks.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, lumberjack.State(state.State), target, state.WorkTicks, state.CargoAmount, grid, buildings, buildings, state.Meal)
 	case save.UnitFisherman:
 		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.FisherHut {
 			return
@@ -4350,7 +4350,7 @@ func restoreUnitStateInto(
 		if state.TargetIndex >= 0 && state.TargetIndex < len(buildings) && buildings[state.TargetIndex].Kind == building.StoneDeposit {
 			target = buildings[state.TargetIndex]
 		}
-		quarryC.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, quarry.State(state.State), target, state.WorkTicks, state.CargoAmount, grid, buildings, state.Meal)
+		quarryC.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, quarry.State(state.State), target, state.WorkTicks, state.CargoAmount, grid, buildings, buildings, state.Meal)
 	case save.UnitBuilder:
 		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.Warehouse {
 			return
@@ -4366,7 +4366,7 @@ func restoreUnitStateInto(
 				target = candidate
 			}
 		}
-		builders.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, builder.State(state.State), target, state.WorkTicks, grid, buildings, state.Meal)
+		builders.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, builder.State(state.State), target, state.WorkTicks, grid, buildings, buildings, state.Meal)
 	case save.UnitSentry:
 		if state.HomeIndex < 0 || state.HomeIndex >= len(buildings) || buildings[state.HomeIndex].Kind != building.WatchTower {
 			return
@@ -4383,7 +4383,7 @@ func restoreUnitStateInto(
 				target = buildings[state.TargetIndex]
 			}
 		}
-		miners.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, miner.State(state.State), target, state.WorkTicks, state.CargoAmount, state.Cargo, state.QuotaIndex, state.QuotaProgress, grid, buildings, state.Meal)
+		miners.Restore(buildings[state.HomeIndex], state.X, state.Y, state.HungerTicks, state.Starving, miner.State(state.State), target, state.WorkTicks, state.CargoAmount, state.Cargo, state.QuotaIndex, state.QuotaProgress, grid, buildings, buildings, state.Meal)
 	case save.UnitArcher, save.UnitSwordsman:
 		profession := soldier.Archer
 		if state.Kind == save.UnitSwordsman {

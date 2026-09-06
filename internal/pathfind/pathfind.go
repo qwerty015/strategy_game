@@ -44,12 +44,18 @@ func FindPathFromPoint(buildings []*building.Building, from Point, to *building.
 // workplace and reach a tree occupying its goal tile. Unlike FindPath, this
 // route does not require a road anywhere in the path.
 //
-// Every caller except soldier movement pathfinds across a buildings list
-// already scoped to its own faction plus shared-neutral objects (see
-// building.GatePassable's doc comment), so a plain building.GatePassable
-// check is always evaluating that same faction's own gate here -- see
-// FindLandPathForFaction for the one caller whose obstacle list can
-// legitimately contain another faction's buildings, gates included.
+// Most callers pass two different lists to the two pathfinding-related
+// parameters here and in FindLandPathForFaction: buildings/candidates
+// stays scoped to one faction (which tree/deposit/site is mine to work),
+// while the actual obstacle list passed as this function's own buildings
+// parameter is the WHOLE map -- every faction's buildings, so a rival's
+// wall genuinely blocks the route instead of being invisible to it (see
+// logistics/lumberjack/quarry/miner/builder's own Controller.Tick doc
+// comments, each with the specific playtest bug this fixes). A plain
+// building.GatePassable check inside that obstacle map still only ever
+// evaluates gates at face value (owner-blind) -- see FindLandPathForFaction
+// for the one caller (soldier movement) that additionally needs a foreign
+// Gate to block like a solid wall regardless of its Open/Auto state.
 func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Point) ([]Point, bool) {
 	return findLandPath(grid, buildingOccupancy(buildings), buildings, from, to)
 }

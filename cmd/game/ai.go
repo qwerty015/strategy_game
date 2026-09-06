@@ -421,11 +421,11 @@ func (g *Game) tickAIFaction(f *faction, grid *world.Grid) {
 	// soldiers.Tick's own g.buildings argument just below.
 	serfResult := f.logi.Tick(grid, buildings, g.buildings, f.stock, ledger, f.soldiers.Soldiers)
 	villagerDeaths := f.vills.Tick(buildings, ledger)
-	jackEvents := f.jacks.Tick(grid, buildings, ledger)
+	jackEvents := f.jacks.Tick(grid, buildings, g.buildings, ledger)
 	fishEvents := f.fishers.Tick(grid, buildings, ledger)
-	quarryEvents := f.quarry.Tick(grid, buildings, ledger)
-	builderEvents := f.builders.Tick(grid, buildings, ledger)
-	minerEvents := f.miners.Tick(grid, buildings, ledger)
+	quarryEvents := f.quarry.Tick(grid, buildings, g.buildings, ledger)
+	builderEvents := f.builders.Tick(grid, buildings, g.buildings, ledger)
+	minerEvents := f.miners.Tick(grid, buildings, g.buildings, ledger)
 	sentryDeaths := f.sentries.Tick(buildings, nil, g.opposingIntruderTargetsFor(f.sentries), ledger)
 	// g.buildings (the WHOLE map), not the per-faction buildings above, for
 	// the obstacle-avoidance param specifically -- see soldier.Controller.

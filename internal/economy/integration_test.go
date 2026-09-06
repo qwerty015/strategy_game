@@ -220,7 +220,7 @@ func TestFullChain_LumberjackHutToCarpentryWorkshopToWarehouse(t *testing.T) {
 		jacks.Reserve(ledger)
 		logi.Tick(nil, buildings, buildings, stock, ledger, nil)
 		vills.Tick(buildings, ledger)
-		for _, event := range jacks.Tick(grid, buildings, ledger) {
+		for _, event := range jacks.Tick(grid, buildings, buildings, ledger) {
 			if event.Kind == lumberjack.TreeCut {
 				for i, b := range buildings {
 					if b == event.Tree {

@@ -10,6 +10,49 @@ import (
 	"strategy_game/internal/world"
 )
 
+// TestController_IsBlockedByAForeignWall mirrors lumberjack/quarry's
+// identical regression test: obstacles (the whole map) must actually stop
+// a miner at a rival faction's wall, while buildings (the job candidate
+// list) correctly omits it.
+func TestController_IsBlockedByAForeignWall(t *testing.T) {
+	grid := world.NewGrid(5, 3)
+	hut := &building.Building{Kind: building.MinerHut, X: 0, Y: 1}
+	deposit := building.NewOreDeposit(building.CoalDeposit, 4, 1)
+	buildings := []*building.Building{hut, deposit}
+
+	wall := []*building.Building{
+		{Kind: building.StoneWall, X: 2, Y: 0, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 1, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 2, Owner: 1, ConstructionStage: building.ConstructionNone},
+	}
+	obstacles := append(append([]*building.Building{}, buildings...), wall...)
+
+	controller := NewController()
+	m := controller.Spawn(hut)
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, obstacles, ledger)
+	}
+	if m.state != StateIdle {
+		t.Fatalf("state with the target deposit behind a foreign wall = %v, want StateIdle (must never cross it)", m.state)
+	}
+
+	var mined bool
+	for range 200 {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
+		if hut.OutputBuffer[resource.Coal] > 0 {
+			mined = true
+			break
+		}
+	}
+	if !mined {
+		t.Fatal("miner never mined the deposit with no wall in its way -- confirms the previous block was really the wall")
+	}
+}
+
 // TestMiner_EatsAtNearestReachableTavern mirrors quarry/lumberjack's test
 // of the same shape: a hungry, idle miner (no deposit to work) must
 // prioritize walking to the nearest reachable, stocked Tavern over staying
@@ -35,7 +78,7 @@ func TestMiner_EatsAtNearestReachableTavern(t *testing.T) {
 	for range HungerInterval + 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if m.HungerTicks() == 0 {
 			ate = true
 			break
@@ -86,7 +129,7 @@ func TestMiner_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
 		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if len(controller.Miners) == 0 {
 			t.Fatalf("miner died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
 		}
@@ -108,7 +151,7 @@ func TestMiner_EatsWhileStuckUnloadingInsteadOfStarving(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if m.cargo == 0 {
 			delivered = true
 			break
@@ -146,7 +189,7 @@ func TestMinerFollowsQuotaNotJustNearestDeposit(t *testing.T) {
 	for tick := 0; tick < 2000; tick++ {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		for _, rt := range []resource.Type{resource.GoldOre, resource.IronOre, resource.Coal} {
 			if n := hut.OutputBuffer[rt]; n > 0 {
 				delivered[rt] += n
@@ -189,7 +232,7 @@ func TestMinerQuotaRatioMatchesDefault(t *testing.T) {
 	for tick := 0; tick < 20000; tick++ {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		for _, rt := range []resource.Type{resource.GoldOre, resource.IronOre, resource.Coal} {
 			if n := hut.OutputBuffer[rt]; n > 0 {
 				delivered[rt] += n
@@ -230,7 +273,7 @@ func TestMinerSkipsExhaustedResourceInQuota(t *testing.T) {
 	for tick := 0; tick < 500 && !got; tick++ {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if hut.OutputBuffer[resource.IronOre] > 0 {
 			got = true
 		}
@@ -261,7 +304,7 @@ func TestMiner_SkipsDepositsBeyondMaxWorkRadius(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 	if m.state != StateIdle {
 		t.Fatalf("state with only an out-of-radius deposit available = %v, want StateIdle (must never target it)", m.state)
@@ -274,7 +317,7 @@ func TestMiner_SkipsDepositsBeyondMaxWorkRadius(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 		if nearDeposit.Reserve < building.OreDepositReserve {
 			mined = true
 			break
@@ -322,7 +365,7 @@ func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
 	for range 50 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, ledger)
 	}
 
 	if got := len(controller.Miners); got != 1 {
