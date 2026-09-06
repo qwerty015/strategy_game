@@ -3906,11 +3906,41 @@ func (g *Game) loadGame(path string) error {
 		for _, fs := range factions {
 			aiWarehouse := findWarehouseOwnedBy(buildings, fs.Owner)
 			if aiWarehouse == nil {
-				// The AI had already lost its only warehouse the instant
-				// the save happened, mid-tick before pruning/
-				// checkDuelResult caught up -- this faction simply isn't
-				// reconstructed, the same "no longer in the match" state
-				// an ordinary single-player save already means for it.
+				// A real playtest bug found from actual saves ("слот 4:
+				// мои 6 лучников на базе красного... он не защищается",
+				// "слот 5: у противника остановилось развитие, новые
+				// юниты не создаются"): a faction whose only Warehouse
+				// was already destroyed used to be dropped entirely on
+				// reload -- no brain, no soldiers, no sentries -- even
+				// when other real buildings of theirs (see
+				// nearestRealBuildingOwnedBy, the same "straggler" case
+				// aiConsiderAttack already knows to keep hunting) were
+				// still standing. Worse, every one of its saved soldier/
+				// sentry units was silently discarded too (see
+				// restoreUnits' owner->faction lookup, which requires a
+				// live faction to dispatch into) -- so a straggler that
+				// still had real defenders when the save happened came
+				// back from a reload with none. If truly nothing real is
+				// left, factionDefeated already agrees this faction is
+				// done, and it's still correctly skipped below exactly
+				// as before.
+				anchor := g.nearestRealBuildingOwnedBy(fs.Owner, 0, 0)
+				if anchor == nil {
+					continue
+				}
+				// A dummy Warehouse-shaped anchor, deliberately never
+				// added to g.buildings -- invisible/unselectable, and
+				// doesn't count toward factionDefeated -- just enough to
+				// satisfy logistics.Controller's hard non-nil Warehouse
+				// requirement safely. ForceRemoveWarehouse right after
+				// construction keeps it from ever being offered as an
+				// actual delivery destination (see that method's own doc
+				// comment): this faction has no real economy left, only
+				// its restored soldiers/sentries can still function.
+				stub := &building.Building{Kind: building.Warehouse, Owner: fs.Owner, X: anchor.X, Y: anchor.Y, HP: building.MaxHP, ConstructionStage: building.ConstructionNone}
+				f := restoreFaction(fs.Owner, stub, aiDifficulty(fs.Difficulty), fs.Stockpile, fs.Population, fs.BrainCooldown, fs.BrainBuildIndex, fs.BrainBuildAttempts)
+				f.logi.ForceRemoveWarehouse(stub)
+				g.ais = append(g.ais, f)
 				continue
 			}
 			g.ais = append(g.ais, restoreFaction(fs.Owner, aiWarehouse, aiDifficulty(fs.Difficulty), fs.Stockpile, fs.Population, fs.BrainCooldown, fs.BrainBuildIndex, fs.BrainBuildAttempts))

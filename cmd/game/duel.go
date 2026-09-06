@@ -58,15 +58,15 @@ const (
 	duelCoalDepositTiles    = 3
 	duelStoneDepositTiles   = 2
 
-	// duelTreeTilesPerQuadrant is 4 percent of ONE quadrant's own area --
+	// duelTreeTilesPerQuadrant is 8 percent of ONE quadrant's own area --
 	// first set to 0.5% per the user's own initial request, raised to 2%
-	// once that read as too sparse in an actual playtest, then doubled
-	// again to 4% per a later playtest report ("увелич в 2 раза спавн
-	// деревьев, их не хватает"). See seedTreesWithCount's doc comment for
-	// why the plain single-player seedTrees (one percent of THIS grid's
-	// own area) massively overshot on a duel map, whose grid is the whole
-	// 4-quadrant map, not one quadrant.
-	duelTreeTilesPerQuadrant = duelMapWidth * duelMapHeight * 4 / (4 * 100)
+	// once that read as too sparse in an actual playtest, doubled to 4%
+	// per a later playtest report ("увелич в 2 раза спавн деревьев, их
+	// не хватает"), then doubled again to 8%. See seedTreesWithCount's
+	// doc comment for why the plain single-player seedTrees (one percent
+	// of THIS grid's own area) massively overshot on a duel map, whose
+	// grid is the whole 4-quadrant map, not one quadrant.
+	duelTreeTilesPerQuadrant = duelMapWidth * duelMapHeight * 8 / (4 * 100)
 
 	// maxDepositDistanceFromWarehouse caps how far a mineral cluster's
 	// canonical region may land from the player's own warehouse, per the

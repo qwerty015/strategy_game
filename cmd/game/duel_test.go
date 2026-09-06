@@ -12,6 +12,7 @@ import (
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/sentry"
+	"strategy_game/internal/soldier"
 	"strategy_game/internal/ui"
 	"strategy_game/internal/world"
 )
@@ -845,6 +846,77 @@ func TestDuelGame_LoadFailsRatherThanAdoptAnEnemyWarehouse(t *testing.T) {
 	err := loaded.loadGame(path)
 	if !errors.Is(err, errNoWarehouseInSave) {
 		t.Fatalf("loadGame error = %v, want errNoWarehouseInSave", err)
+	}
+}
+
+// TestDuelGame_ReloadKeepsDefendingAStragglerFactionWithNoWarehouse is
+// the regression test for a real playtest bug found from actual saves
+// ("слот 4: мои 6 лучников на базе красного, я уничтожил несколько его
+// построек, но он не защищается"; "слот 5: у противника остановилось
+// развитие, новые юниты не создаются"): a faction whose only Warehouse
+// was already destroyed used to be dropped entirely on reload -- no
+// brain, no soldiers, no sentries -- even with other real buildings and
+// saved combat units of its own still standing. This confirms the fix:
+// the straggler faction is still reconstructed (anchored at one of its
+// surviving real buildings), its saved soldier is restored and keeps
+// functioning (auto-engage still runs), and nothing panics across many
+// more ticks.
+func TestDuelGame_ReloadKeepsDefendingAStragglerFactionWithNoWarehouse(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIHard})
+	f := g.ais[0]
+
+	// A straggler building of the AI's, placed near its own (soon to be
+	// destroyed) warehouse -- same retry-offset approach as
+	// TestAIConsiderAttack_KeepsHuntingAfterTheWarehouseFalls, since the
+	// exact tiles right beside a freshly generated warehouse can be
+	// uneven ground, water, or already occupied.
+	wh := f.logi.Warehouse
+	var straggler *building.Building
+	for _, d := range [][2]int{{2, 0}, {-2, 0}, {0, 2}, {0, -2}, {3, 1}, {-3, -1}, {1, 3}, {-1, -3}} {
+		x, y := wh.X+d[0], wh.Y+d[1]
+		if building.CanPlace(g.grid, g.buildings, building.Armory, x, y) {
+			straggler = &building.Building{Kind: building.Armory, X: x, Y: y, Owner: f.owner, ConstructionStage: building.ConstructionNone, HP: building.MaxHP}
+			break
+		}
+	}
+	if straggler == nil {
+		t.Fatal("test setup: no nearby offset was placeable for the straggler building")
+	}
+	g.buildings = append(g.buildings, straggler)
+	f.soldiers.Spawn(soldier.Swordsman, straggler.X, straggler.Y)
+
+	wh.HP = 0
+	g.pruneDestroyedBuildings()
+	if findWarehouseOwnedBy(g.buildings, f.owner) != nil {
+		t.Fatal("test setup: the AI's warehouse should be gone")
+	}
+
+	path := t.TempDir() + "/straggler_save.json"
+	if err := g.saveGame(path, "straggler test"); err != nil {
+		t.Fatalf("saveGame failed: %v", err)
+	}
+
+	loaded := newDuelGame([]aiDifficulty{AIHard})
+	if err := loaded.loadGame(path); err != nil {
+		t.Fatalf("loadGame failed: %v", err)
+	}
+	if len(loaded.ais) != 1 {
+		t.Fatalf("g.ais after reloading a warehouse-less straggler = %d, want 1 (still reconstructed)", len(loaded.ais))
+	}
+	if got := len(loaded.ais[0].soldiers.Soldiers); got != 1 {
+		t.Fatalf("straggler's restored soldiers = %d, want 1 (must not be silently discarded)", got)
+	}
+
+	// Nothing should panic, and the restored soldier should still be
+	// able to defend itself via ordinary auto-engage: a player soldier
+	// placed right on top of it should take a real hit within a handful
+	// of ticks.
+	target := loaded.soldiers.Spawn(soldier.Swordsman, straggler.X+1, straggler.Y)
+	for i := 0; i < 50; i++ {
+		loaded.tickOnce()
+	}
+	if target.HP == combat.MaxHP {
+		t.Fatal("the reconstructed straggler's soldier never fought back -- auto-engage isn't functioning")
 	}
 }
 
