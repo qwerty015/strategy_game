@@ -432,6 +432,43 @@ func TestAttackFactionSoldierOrder_ChasesAndDestroysADistantRival(t *testing.T) 
 	}
 }
 
+// TestController_Tick_RemovesASoldierKilledByAnotherController is the
+// regression test for a real, serious playtest bug found from an actual
+// siege ("куда они все смотрели?" -- the player's own archers/WatchTower
+// genuinely reduced an invading soldier's HP to 0, confirmed via
+// combat.ApplyDamage, but that "zombie" soldier then kept marching and
+// destroyed the warehouse anyway): Controller.Tick never checked whether
+// the soldier it was about to move/fight with was still alive -- only a
+// starved soldier ever got dropped from the roster. A rival hit always
+// lands on some OTHER controller's Tick call earlier in the same overall
+// simulation tick, so by the time THIS soldier's own controller ticks,
+// its HP already reflects the hit; this confirms it's now removed (and
+// stops moving toward its own standing order) the very next tick.
+func TestController_Tick_RemovesASoldierKilledByAnotherController(t *testing.T) {
+	grid := world.NewGrid(20, 20)
+	c := NewController()
+	s := c.Spawn(Swordsman, 0, 0)
+	target := &building.Building{Kind: building.Warehouse, X: 15, Y: 0, HP: building.MaxHP}
+	s.AttackFactionOrder(target)
+
+	// Simulate the lethal hit that just landed on s from some other
+	// attacker (a rival soldier, or a WatchTower) -- exactly what
+	// combat.ApplyDamage driving HP to 0 looks like from s's own
+	// perspective, mid-battle.
+	s.HP = 0
+
+	result := c.Tick(grid, nil, nil, nil, nil, nil)
+	if result.Deaths != 1 {
+		t.Fatalf("TickResult.Deaths = %d, want 1", result.Deaths)
+	}
+	if len(c.Soldiers) != 0 {
+		t.Fatalf("roster after ticking a soldier already at 0 HP = %d, want 0 (must be removed, not left to keep fighting)", len(c.Soldiers))
+	}
+	if s.X != 0 {
+		t.Fatal("a soldier already at 0 HP moved toward its standing order -- it must be inert, not a functioning zombie")
+	}
+}
+
 // TestAttackFactionIntruderOrder_KillsADistantIntruder is the same
 // coverage for the third and last opposing-target kind: any other rival
 // unit with no HP concept of its own (see combat.IntruderTarget).

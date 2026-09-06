@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"log"
 	"math"
 	"sort"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"strategy_game/internal/advisor"
 	"strategy_game/internal/audio"
@@ -2268,7 +2270,11 @@ func (g *Game) hireEquippedSoldier(barracks *building.Building, profession soldi
 	if !barracks.TakeInput(resource.Gold, unitHireCost) || !barracks.TakeInput(weapon, 1) || !barracks.TakeInput(resource.LeatherArmor, 1) {
 		return
 	}
-	g.soldiers.Spawn(profession, x, y)
+	// .Owner = 0 is already Go's zero value here, so this is a no-op for
+	// the player -- kept explicit anyway so nobody has to rediscover
+	// aiHireSoldiers' Owner bug fix (cmd/game/ai_brain.go) by staring at
+	// an inconsistency between this call site and that one.
+	g.soldiers.Spawn(profession, x, y).Owner = 0
 }
 
 // freeGroundTileNear searches outward in growing square rings from (cx, cy)
@@ -4442,7 +4448,11 @@ func restoreUnitStateInto(
 		if state.Kind == save.UnitSwordsman {
 			profession = soldier.Swordsman
 		}
-		soldiers.Restore(profession, state.X, state.Y, state.HungerTicks, state.HP)
+		// .Owner = state.Owner: see aiHireSoldiers' doc comment (cmd/game/
+		// ai_brain.go) for the real playtest bug this closes -- Restore
+		// never set it, leaving every restored soldier's Owner at 0
+		// regardless of which faction it actually belongs to.
+		soldiers.Restore(profession, state.X, state.Y, state.HungerTicks, state.HP).Owner = state.Owner
 	}
 }
 
@@ -5124,6 +5134,7 @@ func (g *Game) pruneDeadEnemies() {
 func (g *Game) pruneDestroyedBuildings() {
 	alive := g.buildings[:0]
 	changed := false
+	var lostLastWarehouseOwners []int
 	for _, b := range g.buildings {
 		switch b.Kind {
 		case building.Road, building.StoneWall, building.Gate:
@@ -5159,6 +5170,9 @@ func (g *Game) pruneDestroyedBuildings() {
 					if stock := g.stockFor(b.Owner); stock != nil {
 						logi.CancelAllJobs(stock)
 					}
+					if len(logi.Warehouses) == 0 {
+						lostLastWarehouseOwners = append(lostLastWarehouseOwners, b.Owner)
+					}
 				}
 			}
 			continue
@@ -5166,6 +5180,27 @@ func (g *Game) pruneDestroyedBuildings() {
 		alive = append(alive, b)
 	}
 	g.buildings = alive
+	// Re-anchor a faction that just lost its LAST warehouse onto one of
+	// its own surviving real buildings, if any -- a real playtest bug
+	// found from an actual save ("создаю слугу и он сразу умирает", a
+	// whole squad having just wiped out the warehouse and everyone
+	// standing at it): Hire() always spawns a new unit at
+	// c.Warehouse.X/Y, and CancelAllJobs above just re-anchored every
+	// mid-haul serf there too -- left pointing at the destroyed
+	// warehouse's own tile, every new hire walked straight back into
+	// whatever had just destroyed that warehouse, dying almost
+	// instantly. Done only now that g.buildings is fully updated, so the
+	// anchor search (nearestRealBuildingOwnedBy) never picks a building
+	// that dies later in this very same pass.
+	for _, owner := range lostLastWarehouseOwners {
+		logi := g.logiFor(owner)
+		if logi == nil || logi.Warehouse == nil {
+			continue
+		}
+		if anchor := g.nearestRealBuildingOwnedBy(owner, logi.Warehouse.X, logi.Warehouse.Y); anchor != nil {
+			logi.Warehouse = anchor
+		}
+	}
 	if changed {
 		g.invalidateConnectionCache()
 		g.clearMissingUnitSelection()
@@ -5874,6 +5909,40 @@ func restoreTreeRegrowth(states []save.TreeRegrowthState) []treeRegrowth {
 	return regrowth
 }
 
+// drawSoldierStackCounts overlays a small count badge over any tile where
+// more than one living soldier of this group is standing, per the user's
+// explicit request following a real siege ("если несколько боевых
+// юнитов находятся в одной клетке, отображай над ними счетчик... чтобы
+// визуально было понятно что мне противостоит"): several soldiers
+// sharing one tile render exactly on top of each other via
+// render.DrawSoldiers, with nothing on screen to tell there's more than
+// one -- a whole enemy squad stacked on a single tile looked like a
+// single soldier. Dead soldiers (HP <= 0) never count -- see
+// soldier.Controller.Tick's own fix for the real bug that let a soldier
+// already at 0 HP keep marching as a "zombie" in the first place.
+func (g *Game) drawSoldierStackCounts(screen *ebiten.Image, soldiers []*soldier.Soldier) {
+	type tile struct{ x, y int }
+	counts := make(map[tile]int)
+	for _, s := range soldiers {
+		if s == nil || !s.Alive() {
+			continue
+		}
+		counts[tile{s.X, s.Y}]++
+	}
+	tilePixels := g.camera.TilePixels()
+	for pos, n := range counts {
+		if n <= 1 {
+			continue
+		}
+		sx, sy := g.camera.TileToScreen(pos.x, pos.y)
+		label := fmt.Sprintf("%d", n)
+		badgeW, badgeH := tilePixels*0.36, tilePixels*0.28
+		bx, by := sx+tilePixels-badgeW*0.7, sy-badgeH*0.3
+		vector.FillRect(screen, float32(bx), float32(by), float32(badgeW), float32(badgeH), color.RGBA{R: 30, G: 20, B: 20, A: 220}, false)
+		ui.DrawText(screen, label, bx+badgeW*0.22, by+badgeH*0.12)
+	}
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
 	if g.screen != screenPlay {
 		g.drawFrontScreen(screen)
@@ -5956,6 +6025,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		render.DrawMiners(screen, f.miners.Miners, g.camera, f.owner)
 		render.DrawSentries(screen, f.sentries.Sentries, g.camera, f.owner)
 		render.DrawSoldiers(screen, f.soldiers.Soldiers, g.camera, f.owner)
+	}
+	g.drawSoldierStackCounts(screen, g.soldiers.Soldiers)
+	for _, f := range g.ais {
+		g.drawSoldierStackCounts(screen, f.soldiers.Soldiers)
 	}
 	render.DrawEnemies(screen, g.enemies, g.camera)
 	if g.attackMarkerTarget != nil && g.attackMarkerTarget.Alive() {

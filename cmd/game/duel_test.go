@@ -912,6 +912,64 @@ func TestDuelGame_LoadFailsRatherThanAdoptAnEnemyWarehouse(t *testing.T) {
 // surviving real buildings), its saved soldier is restored and keeps
 // functioning (auto-engage still runs), and nothing panics across many
 // more ticks.
+// TestAIHireSoldiers_SetsOwnerOnEverySpawnedSoldier is the regression
+// test for a severe playtest bug found from an actual siege ("как прошёл
+// противник? ... я ещё и выключил автооткрывание"): soldier.Controller.
+// Spawn never set the new Soldier's Owner field, leaving it at Go's zero
+// value (0, the player's own owner) for every AI-hired soldier too.
+// Soldier.Owner is exactly what pathfind.FindLandPathForFaction uses to
+// decide which faction's gates a soldier may cross -- every AI soldier
+// silently misidentifying itself as the player let it walk straight
+// through the player's own closed-to-everyone-else gates as if it were
+// the player's own unit.
+func TestAIHireSoldiers_SetsOwnerOnEverySpawnedSoldier(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIHard})
+	f := g.ais[0]
+	barracks := &building.Building{Kind: building.Barracks, Owner: f.owner, X: f.logi.Warehouse.X + 2, Y: f.logi.Warehouse.Y, ConstructionStage: building.ConstructionNone}
+	barracks.AddInput(resource.Gold, 10)
+	barracks.AddInput(resource.Sword, 10)
+	barracks.AddInput(resource.Bow, 10)
+	barracks.AddInput(resource.LeatherArmor, 10)
+	g.buildings = append(g.buildings, barracks)
+
+	g.aiHireSoldiers(f)
+
+	if len(f.soldiers.Soldiers) == 0 {
+		t.Fatal("test setup: aiHireSoldiers did not hire anything")
+	}
+	for _, s := range f.soldiers.Soldiers {
+		if s.Owner != f.owner {
+			t.Fatalf("hired soldier Owner = %d, want %d (this faction's own)", s.Owner, f.owner)
+		}
+	}
+}
+
+// TestSoldier_RestoredWithCorrectOwnerAfterSaveLoad is the same fix's
+// save/load half: restoreUnitStateInto's own soldiers.Restore call had
+// the identical gap.
+func TestSoldier_RestoredWithCorrectOwnerAfterSaveLoad(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIHard})
+	f := g.ais[0]
+	f.soldiers.Spawn(soldier.Swordsman, f.logi.Warehouse.X, f.logi.Warehouse.Y).Owner = f.owner
+
+	path := t.TempDir() + "/soldier_owner_save.json"
+	if err := g.saveGame(path, "owner test"); err != nil {
+		t.Fatalf("saveGame: %v", err)
+	}
+	loaded := newDuelGame([]aiDifficulty{AIHard})
+	if err := loaded.loadGame(path); err != nil {
+		t.Fatalf("loadGame: %v", err)
+	}
+	if len(loaded.ais) == 0 || len(loaded.ais[0].soldiers.Soldiers) == 0 {
+		t.Fatal("test setup: no soldiers restored")
+	}
+	for _, s := range loaded.ais[0].soldiers.Soldiers {
+		if s.Owner != f.owner {
+			t.Fatalf("restored soldier Owner = %d, want %d (this faction's own)", s.Owner, f.owner)
+		}
+	}
+}
+
 func TestDuelGame_ReloadKeepsDefendingAStragglerFactionWithNoWarehouse(t *testing.T) {
 	g := newDuelGame([]aiDifficulty{AIHard})
 	f := g.ais[0]

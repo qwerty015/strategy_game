@@ -577,6 +577,23 @@ func (g *Game) aiQueueArmoryProduction(f *faction) {
 // the AI's own faction fields. Capped at a few hires per decision tick
 // rather than draining the whole buffer at once, so a sudden equipment
 // surplus doesn't dump an entire army on top of the Barracks in one go.
+//
+// .Owner = f.owner on each Spawn call is a real, severe playtest bug fix
+// found from an actual siege ("как прошёл противник... я ещё и выключил
+// автооткрывание"): soldier.Controller.Spawn/Restore never set the new
+// Soldier's Owner field at all, leaving it at Go's zero value (0) for
+// EVERY soldier ever created, AI-owned ones included. Soldier.Owner is
+// what pathfind.FindLandPathForFaction uses to decide which faction's
+// gates a soldier may cross (building.GatePassableTo) -- with every AI
+// soldier silently misidentifying itself as Owner 0 (the player), it
+// walked through the player's own Auto/Open gates as if it were the
+// player's own unit, while (the inverse of the same bug) being wrongly
+// blocked by its own faction's gates. Explicitly setting it here at the
+// two spots (this file) and in soldier.Restore's call site (cmd/game's
+// restoreUnitStateInto) closes every place a soldier is actually
+// created, without changing soldier.Controller's own exported API (or
+// the many existing tests that call Spawn/Restore directly for the
+// single-player/free-map case, where Owner 0 is already correct).
 func (g *Game) aiHireSoldiers(f *faction) {
 	const maxHiresPerKindPerTick = 3
 	for _, b := range g.ownedBuildings(f.owner) {
@@ -594,7 +611,7 @@ func (g *Game) aiHireSoldiers(f *faction) {
 			b.TakeInput(resource.Gold, unitHireCost)
 			b.TakeInput(resource.Sword, 1)
 			b.TakeInput(resource.LeatherArmor, 1)
-			f.soldiers.Spawn(soldier.Swordsman, x, y)
+			f.soldiers.Spawn(soldier.Swordsman, x, y).Owner = f.owner
 		}
 		for i := 0; i < maxHiresPerKindPerTick; i++ {
 			if b.InputBuffer[resource.Gold] < unitHireCost || b.InputBuffer[resource.Bow] < 1 || b.InputBuffer[resource.LeatherArmor] < 1 {
@@ -607,7 +624,7 @@ func (g *Game) aiHireSoldiers(f *faction) {
 			b.TakeInput(resource.Gold, unitHireCost)
 			b.TakeInput(resource.Bow, 1)
 			b.TakeInput(resource.LeatherArmor, 1)
-			f.soldiers.Spawn(soldier.Archer, x, y)
+			f.soldiers.Spawn(soldier.Archer, x, y).Owner = f.owner
 		}
 	}
 }
@@ -687,9 +704,19 @@ func (b *aiBrain) aiConsiderAttack(g *Game, f *faction) {
 // defeated (aiConsiderAttack's caller already checked findWarehouseOwnedBy
 // came up empty too).
 func (g *Game) nearestRealBuildingOwnedBy(owner, x, y int) *building.Building {
+	return nearestRealBuildingIn(g.buildings, owner, x, y)
+}
+
+// nearestRealBuildingIn is nearestRealBuildingOwnedBy's underlying scan,
+// taking an explicit buildings slice -- needed by loadGame, which must
+// run this same search on its own local, not-yet-assigned-to-g.buildings
+// slice while deciding whether the player's own warehouse-less save can
+// still be reconstructed as a straggler (see errNoWarehouseInSave's own
+// call site).
+func nearestRealBuildingIn(buildings []*building.Building, owner, x, y int) *building.Building {
 	var nearest *building.Building
 	bestDist := -1
-	for _, b := range g.buildings {
+	for _, b := range buildings {
 		if b.Owner != owner || isNaturalResourceKind(b.Kind) {
 			continue
 		}

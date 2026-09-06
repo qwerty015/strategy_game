@@ -509,6 +509,25 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 	var result TickResult
 	remaining := c.Soldiers[:0]
 	for _, s := range c.Soldiers {
+		// A real bug found from an actual playtest report ("куда они все
+		// смотрели?", traced to a soldier the player's own archers/
+		// WatchTower had genuinely reduced to 0 HP -- confirmed via
+		// combat.ApplyDamage -- that then kept marching on and destroyed
+		// the player's warehouse anyway): nothing here ever checked
+		// whether the soldier THIS loop is about to move/fight with is
+		// still alive. A rival hit (factionTarget.hit(), a WatchTower's
+		// stone via the intruder-wrapping in cmd/game's
+		// intruderTargetsFrom) always lands on some OTHER controller's
+		// Tick call, earlier in the same overall simulation tick -- so by
+		// the time this soldier's own Tick runs, s.HP already reflects
+		// the hit, and checking it right here, before any movement or
+		// combat resolution, catches a "zombie" the very first chance
+		// this controller gets, exactly like the hunger.Dead check just
+		// below already does for a starved soldier.
+		if !s.Alive() {
+			result.Deaths++
+			continue
+		}
 		if s.attackVisualTicks > 0 {
 			s.attackVisualTicks--
 			if s.attackVisualTicks == 0 && s.pendingKillTarget != nil {
