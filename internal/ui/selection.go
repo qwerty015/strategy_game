@@ -42,6 +42,18 @@ const (
 	// клеток"). A right-click then orders the whole group at once (move or
 	// attack) -- see commandSoldierGroupTo/commandSoldierGroupAttack.
 	SelectionSoldierGroup
+
+	// SelectionOpposingBuilding/SelectionOpposingUnit are read-only,
+	// per the user's explicit request ("разреши клик на юнитов
+	// противника, и отображай в правом окне информацию о нем, но без
+	// управления им"): every action control in this package (gate/
+	// Barracks/Armory controls, the remove button, soldier-group
+	// commands) is gated behind one of the OTHER, player-owned Kind
+	// values above, so introducing these as distinct Kinds means none of
+	// that existing gating needs to change at all -- an opposing
+	// selection simply never matches any of it, by construction.
+	SelectionOpposingBuilding
+	SelectionOpposingUnit
 )
 
 // Selection is the UI-facing selection state. Only one object can be
@@ -69,6 +81,19 @@ type Selection struct {
 	// collapses SoldierGroup back down to just this one, per the user's
 	// explicit request for a way to split a merged group apart again.
 	SoldierGroupAnchor *soldier.Soldier
+
+	// OpposingUnitOwner/OpposingUnitKind/OpposingUnitHP/OpposingUnitMaxHP
+	// describe a SelectionOpposingUnit -- see that Kind's own doc
+	// comment. Deliberately a plain description (no live pointer into
+	// whichever package's own unit struct) rather than one more typed
+	// field per opposing profession: this selection can never issue a
+	// command, so it only ever needs enough to render a short summary.
+	// OpposingUnitMaxHP <= 0 means "no HP concept" (any civilian worker,
+	// which dies in one hit -- see combat.IntruderTarget -- rather than
+	// having a percentage to show).
+	OpposingUnitOwner                 int
+	OpposingUnitKind                  string
+	OpposingUnitHP, OpposingUnitMaxHP int
 }
 
 // Clear removes the current selection.

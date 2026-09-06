@@ -20,6 +20,7 @@ import (
 	"strategy_game/internal/audio"
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
+	"strategy_game/internal/combat"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/enemy"
 	"strategy_game/internal/fishing"
@@ -2742,10 +2743,127 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 			return ui.Selection{Kind: ui.SelectionEnemy, Enemy: e}
 		}
 	}
+	// Opposing (any Owner != 0) buildings and units, read-only -- per the
+	// user's explicit request ("разреши клик на юнитов противника, и
+	// отображай в правом окне информацию о нем, но без управления им").
+	// Tried only after every player-owned check above has already missed,
+	// so a click never prefers an opponent's object over the player's own
+	// when both happen to sit on the same tile (buildings can't overlap,
+	// but a unit could in principle share a tile with an opposing one).
+	if sel, ok := g.opposingSelectionAt(tx, ty); ok {
+		return sel
+	}
 	if roadHit != nil {
 		return ui.Selection{Kind: ui.SelectionBuilding, Building: roadHit}
 	}
 	return ui.Selection{}
+}
+
+// opposingSelectionAt looks for any AI faction's building or unit
+// standing at (tx, ty) -- see selectionAt's own doc comment on why this
+// is read-only (SelectionOpposingBuilding/SelectionOpposingUnit never
+// match any of this package's action-gating checks, so nothing here can
+// accidentally let the player command an opponent's object).
+func (g *Game) opposingSelectionAt(tx, ty int) (ui.Selection, bool) {
+	for i := len(g.buildings) - 1; i >= 0; i-- {
+		b := g.buildings[i]
+		if b.Owner == 0 || b.HP <= 0 {
+			continue
+		}
+		footprint := building.Types[b.Kind].Footprint
+		if tx >= b.X && tx < b.X+footprint && ty >= b.Y && ty < b.Y+footprint {
+			return ui.Selection{Kind: ui.SelectionOpposingBuilding, Building: b}, true
+		}
+	}
+	for _, f := range g.ais {
+		for i := len(f.soldiers.Soldiers) - 1; i >= 0; i-- {
+			sd := f.soldiers.Soldiers[i]
+			if sd.X == tx && sd.Y == ty && sd.Alive() {
+				name := i18n.T().UnitArcher
+				if sd.Profession == soldier.Swordsman {
+					name = i18n.T().UnitSwordsman
+				}
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: name, OpposingUnitHP: sd.HP, OpposingUnitMaxHP: combat.MaxHP}, true
+			}
+		}
+		for i := len(f.sentries.Sentries) - 1; i >= 0; i-- {
+			s := f.sentries.Sentries[i]
+			if s.X == tx && s.Y == ty {
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: i18n.T().UnitSentry}, true
+			}
+		}
+		for i := len(f.logi.Serfs) - 1; i >= 0; i-- {
+			s := f.logi.Serfs[i]
+			if s.X == tx && s.Y == ty {
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: i18n.T().UnitSerf}, true
+			}
+		}
+		for i := len(f.vills.Villagers) - 1; i >= 0; i-- {
+			v := f.vills.Villagers[i]
+			if v.X == tx && v.Y == ty && v.VisibleOnMap() {
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: villagerProfessionName(v.Profession)}, true
+			}
+		}
+		for i := len(f.jacks.Lumberjacks) - 1; i >= 0; i-- {
+			j := f.jacks.Lumberjacks[i]
+			if j.X == tx && j.Y == ty && j.VisibleOnMap() {
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: i18n.T().UnitLumberjack}, true
+			}
+		}
+		for i := len(f.fishers.Fishermen) - 1; i >= 0; i-- {
+			fh := f.fishers.Fishermen[i]
+			if fh.X == tx && fh.Y == ty && fh.VisibleOnMap() {
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: i18n.T().UnitFisherman}, true
+			}
+		}
+		for i := len(f.quarry.Quarrymen) - 1; i >= 0; i-- {
+			q := f.quarry.Quarrymen[i]
+			if q.X == tx && q.Y == ty && q.VisibleOnMap() {
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: i18n.T().UnitQuarryman}, true
+			}
+		}
+		for i := len(f.builders.Builders) - 1; i >= 0; i-- {
+			bl := f.builders.Builders[i]
+			if bl.X == tx && bl.Y == ty {
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: i18n.T().UnitBuilder}, true
+			}
+		}
+		for i := len(f.miners.Miners) - 1; i >= 0; i-- {
+			m := f.miners.Miners[i]
+			if m.X == tx && m.Y == ty && m.VisibleOnMap() {
+				return ui.Selection{Kind: ui.SelectionOpposingUnit, OpposingUnitOwner: f.owner, OpposingUnitKind: i18n.T().UnitMiner}, true
+			}
+		}
+	}
+	return ui.Selection{}, false
+}
+
+// villagerProfessionName maps a villagers.Profession to its localized
+// display name -- cmd/game's own small mirror of internal/ui's
+// unexported hireKindForProfession/hireName pair, needed here because
+// opposingSelectionAt has no HireKind of its own to go through.
+func villagerProfessionName(p villagers.Profession) string {
+	t := i18n.T()
+	switch p {
+	case villagers.Farmer:
+		return t.UnitFarmer
+	case villagers.Baker:
+		return t.UnitBaker
+	case villagers.Winemaker:
+		return t.UnitWinemaker
+	case villagers.Swineherd:
+		return t.UnitSwineherd
+	case villagers.Butcher:
+		return t.UnitButcher
+	case villagers.Carpenter:
+		return t.UnitCarpenter
+	case villagers.Smelter:
+		return t.UnitSmelter
+	case villagers.Weaponsmith:
+		return t.UnitWeaponsmith
+	default:
+		return t.UnitFarmer
+	}
 }
 
 // unitsAt counts every unit (serf, villager, lumberjack, fisherman)

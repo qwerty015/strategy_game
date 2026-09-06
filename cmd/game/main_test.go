@@ -8,6 +8,7 @@ import (
 	"strategy_game/internal/advisor"
 	"strategy_game/internal/builder"
 	"strategy_game/internal/building"
+	"strategy_game/internal/combat"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/enemy"
 	"strategy_game/internal/fishing"
@@ -628,6 +629,77 @@ func TestSelectionAt_WarehouseWinsOverSerf(t *testing.T) {
 	got := game.selectionAt(int(sx)+1, int(sy)+1)
 	if got.Kind != ui.SelectionBuilding || got.Building != warehouse {
 		t.Fatalf("selection = %+v, want the Warehouse under the serf", got)
+	}
+}
+
+// TestSelectionAt_FindsAnOpposingBuildingReadOnly and
+// TestSelectionAt_FindsAnOpposingSoldierReadOnly are the regression
+// tests for the user's explicit request ("разреши клик на юнитов
+// противника, и отображай в правом окне информацию о нем, но без
+// управления им"): clicking an opposing faction's building or unit now
+// resolves to a SelectionOpposingBuilding/SelectionOpposingUnit -- both
+// deliberately distinct Kind values that no existing action control
+// (gate/Barracks/Armory buttons, the remove button, soldier-group
+// commands) ever matches, so nothing here can accidentally let the
+// player command an opponent's object.
+func TestSelectionAt_FindsAnOpposingBuildingReadOnly(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, Owner: 1, X: 5, Y: 5, HP: building.MaxHP}
+	f := newFaction(1, warehouse, AIEasy)
+	game := &Game{
+		buildings: []*building.Building{warehouse},
+		ais:       []*faction{f},
+		vills:     villagers.NewController(),
+		logi:      logistics.NewController(&building.Building{Kind: building.Warehouse}, 0),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
+		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
+		camera:    render.NewCamera(),
+	}
+
+	sx, sy := game.camera.TileToScreen(warehouse.X, warehouse.Y)
+	got := game.selectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionOpposingBuilding || got.Building != warehouse {
+		t.Fatalf("selection = %+v, want SelectionOpposingBuilding for the opponent's warehouse", got)
+	}
+}
+
+func TestSelectionAt_FindsAnOpposingSoldierReadOnly(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, Owner: 1, X: 0, Y: 0, HP: building.MaxHP}
+	f := newFaction(1, warehouse, AIEasy)
+	rival := f.soldiers.Spawn(soldier.Archer, 5, 5)
+	rival.Owner = f.owner
+	game := &Game{
+		buildings: []*building.Building{warehouse},
+		ais:       []*faction{f},
+		vills:     villagers.NewController(),
+		logi:      logistics.NewController(&building.Building{Kind: building.Warehouse}, 0),
+		jacks:     lumberjack.NewController(),
+		fishers:   fishing.NewController(),
+		quarry:    quarry.NewController(),
+		builders:  builder.NewController(),
+		miners:    miner.NewController(),
+		sentries:  sentry.NewController(),
+		soldiers:  soldier.NewController(),
+		camera:    render.NewCamera(),
+	}
+
+	sx, sy := game.camera.TileToScreen(rival.X, rival.Y)
+	got := game.selectionAt(int(sx)+1, int(sy)+1)
+	if got.Kind != ui.SelectionOpposingUnit {
+		t.Fatalf("selection.Kind = %v, want SelectionOpposingUnit", got.Kind)
+	}
+	if got.OpposingUnitOwner != f.owner {
+		t.Fatalf("OpposingUnitOwner = %d, want %d", got.OpposingUnitOwner, f.owner)
+	}
+	if got.OpposingUnitKind != i18n.T().UnitArcher {
+		t.Fatalf("OpposingUnitKind = %q, want %q", got.OpposingUnitKind, i18n.T().UnitArcher)
+	}
+	if got.OpposingUnitHP != rival.HP || got.OpposingUnitMaxHP != combat.MaxHP {
+		t.Fatalf("OpposingUnitHP/MaxHP = %d/%d, want %d/%d", got.OpposingUnitHP, got.OpposingUnitMaxHP, rival.HP, combat.MaxHP)
 	}
 }
 

@@ -388,6 +388,10 @@ func drawSelectionIcon(screen *ebiten.Image, selection Selection, x, y, size int
 		drawHireIcon(screen, HireBuilder, x, y, size)
 	case SelectionMiner:
 		drawHireIcon(screen, HireMiner, x, y, size)
+	case SelectionOpposingBuilding:
+		if selection.Building != nil {
+			drawBuildingIcon(screen, selection.Building.Kind, x, y, size)
+		}
 	}
 }
 
@@ -487,6 +491,10 @@ func DrawInspectorPanel(screen *ebiten.Image, layout Layout, selection Selection
 		drawEnemyInspector(screen, r.Min.X+18, inspectorBodyY, selection.Enemy)
 	case SelectionSoldierGroup:
 		drawSoldierGroupInspector(screen, r.Min.X+18, inspectorBodyY, selection.SoldierGroup)
+	case SelectionOpposingBuilding:
+		drawOpposingBuildingInspector(screen, r.Min.X+18, inspectorBodyY, selection.Building)
+	case SelectionOpposingUnit:
+		drawOpposingUnitInspector(screen, r.Min.X+18, inspectorBodyY, selection)
 	}
 	if selection.Kind == SelectionBuilding && selection.Building != nil &&
 		selection.Building.Kind == building.Gate && selection.Building.ConstructionStage == building.ConstructionNone {
@@ -1224,6 +1232,54 @@ func drawBuilderInspector(screen *ebiten.Image, x, y int, bld *builder.Builder) 
 	DrawInspectorText(screen, fmt.Sprintf("%s: %s", t.RouteLabel, target), float64(x), float64(y))
 	y += 20
 	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HungerLabel, bld.SatietyPercent()), float64(x), float64(y))
+}
+
+// drawOpposingBuildingInspector/drawOpposingUnitInspector are read-only
+// summaries for an opposing faction's building/unit -- per the user's
+// explicit request ("разреши клик на юнитов противника, и отображай в
+// правом окне информацию о нем, но без управления им"): kind, owning
+// faction, and HP/construction progress if there's any to show, nothing
+// else -- no stockpile, no contents, no action controls (those all
+// belong to the player-owned SelectionBuilding/SelectionSoldierGroup/...
+// cases above, which this deliberately does not touch).
+func drawOpposingBuildingInspector(screen *ebiten.Image, x, y int, b *building.Building) {
+	if b == nil {
+		return
+	}
+	t := i18n.T()
+	DrawInspectorText(screen, t.BuildingName[b.Kind], float64(x), float64(y))
+	y += 24
+	DrawInspectorText(screen, factionOwnerLabel(b.Owner), float64(x), float64(y))
+	y += 20
+	if b.ConstructionStage != building.ConstructionNone {
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.ConstructionProgressLabel, int(b.ConstructionProgress()*100)), float64(x), float64(y))
+		return
+	}
+	DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HPLabel, b.HP), float64(x), float64(y))
+}
+
+func drawOpposingUnitInspector(screen *ebiten.Image, x, y int, selection Selection) {
+	t := i18n.T()
+	DrawInspectorText(screen, selection.OpposingUnitKind, float64(x), float64(y))
+	y += 24
+	DrawInspectorText(screen, factionOwnerLabel(selection.OpposingUnitOwner), float64(x), float64(y))
+	if selection.OpposingUnitMaxHP > 0 {
+		y += 20
+		DrawInspectorText(screen, fmt.Sprintf("%s: %d%%", t.HPLabel, selection.OpposingUnitHP), float64(x), float64(y))
+	}
+}
+
+// factionOwnerLabel names owner using the same per-faction display name
+// the development leaderboard already uses -- "Вы" for the player,
+// falling back to a plain number for a faction FactionColorNominative
+// doesn't know about (outside "N против ИИ", or an owner value nothing
+// else recognizes either).
+func factionOwnerLabel(owner int) string {
+	t := i18n.T()
+	if name, ok := t.FactionColorNominative[owner]; ok {
+		return name
+	}
+	return fmt.Sprintf("%d", owner)
 }
 
 // drawEnemyInspector is deliberately minimal: the debug test-attacker
