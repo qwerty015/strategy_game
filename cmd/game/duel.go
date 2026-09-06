@@ -290,11 +290,34 @@ func newDuelGame(difficulties []aiDifficulty) *Game {
 	buildings = seedTrees(grid, buildings)
 	buildings = seedThickets(grid, buildings, mapSeed^0x27d4eb2f)
 	buildings = seedFish(grid, buildings)
-	buildings = growFixedDepositRegion(grid, buildings, building.StoneDeposit, duelStoneDepositTiles, defaultStoneSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses)
-	buildings = growFixedDepositRegion(grid, buildings, building.CoalDeposit, duelCoalDepositTiles, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses)
-	buildings = growFixedDepositRegion(grid, buildings, building.GoldOreDeposit, duelGoldOreDepositTiles, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses)
-	buildings = growFixedDepositRegion(grid, buildings, building.IronOreDeposit, duelIronOreDepositTiles, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses)
 	buildings = pruneNaturalResourcesFromIsthmus(buildings, isthmuses)
+	// Trees/Thickets/Fish are mirrored into their own final, stable
+	// four-quadrant layout BEFORE any mineral is seeded -- a real bug
+	// found testing this exact ordering (see
+	// TestNewDuelGame_MineralDepositCountsAreFixedNotPercentage):
+	// growFixedDepositRegion's mirror-clearance check (see
+	// regionMirrorTargetsClear) can only see what's actually in
+	// buildings at the time it runs. Trees are seeded per-quadrant
+	// independently, not mirrored, so seeding minerals BEFORE this step
+	// meant every tree's own still-pending mirror copy (about to be
+	// inserted into a quadrant where no tree existed yet) was invisible
+	// to that check -- a mineral tile could look perfectly clear, then
+	// get silently wiped anyway once mirrorNaturalResourcesForFairness's
+	// own atomic all-4 check ran into one of those just-inserted tree
+	// copies. Doing this fold+mirror pass here first, then seeding
+	// minerals against its now-fixed output, removes that moving target
+	// entirely.
+	buildings = mirrorNaturalResourcesForFairness(grid, buildings, points)
+
+	buildings = growFixedDepositRegion(grid, buildings, building.StoneDeposit, duelStoneDepositTiles, defaultStoneSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses, points)
+	buildings = growFixedDepositRegion(grid, buildings, building.CoalDeposit, duelCoalDepositTiles, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses, points)
+	buildings = growFixedDepositRegion(grid, buildings, building.GoldOreDeposit, duelGoldOreDepositTiles, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses, points)
+	buildings = growFixedDepositRegion(grid, buildings, building.IronOreDeposit, duelIronOreDepositTiles, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses, points)
+	buildings = pruneNaturalResourcesFromIsthmus(buildings, isthmuses)
+	// Idempotent for the already-symmetric trees/thickets/fish (folding a
+	// symmetric set back to canonical and re-mirroring it just recreates
+	// the same positions); this pass is what actually mirrors the
+	// minerals just seeded above.
 	buildings = mirrorNaturalResourcesForFairness(grid, buildings, points)
 
 	stock := resource.NewStockpile(stockpileCapacity)
@@ -370,16 +393,43 @@ const maxFixedDepositAttempts = 25
 
 // growFixedDepositRegion places exactly target deposit tiles of kind
 // (building.StoneDeposit or one of the ore kinds), retrying with a
-// different seed until the whole region survives isthmus pruning intact.
+// different seed until the whole region both survives isthmus pruning AND
+// has every mirrorX/mirrorY/mirrorXY counterpart free (see
+// regionSurvivesMirroring) -- i.e. a region that will actually still be
+// there, whole, after mirrorNaturalResourcesForFairness runs.
+//
 // Unlike the single-player, percentage-based seedStoneDeposits/
 // seedOreDeposits -- where a total spanning dozens of tiles is split
-// across 2-5 regions, so losing one region to the isthmus barely moves
-// the total -- a duel map's fixed, small per-quadrant count (as low as a
-// single tile, see duelXxxDepositTiles) can't afford to lose its only
-// region to an isthmus crossing and end up with zero of that resource
-// map-wide once mirrorNaturalResourcesForFairness folds it into all four
-// quadrants.
-func growFixedDepositRegion(grid *world.Grid, buildings []*building.Building, kind building.Kind, target int, seed uint32, avoid gridPoint, minDistance int, isthmuses []image.Rectangle) []*building.Building {
+// across 2-5 regions, so losing one region to the isthmus (or to a
+// mirror-target collision) barely moves the total -- a duel map's fixed,
+// small per-quadrant count (as low as a single tile, see
+// duelXxxDepositTiles) can't afford to lose its only region and end up
+// with zero of that resource map-wide.
+//
+// Two real bugs found testing this exact change (see
+// TestNewDuelGame_MineralDepositCountsAreFixedNotPercentage):
+//
+//  1. The isthmus check alone isn't enough. findStoneStart/findOreStart
+//     pick the best-scoring tile across the WHOLE map, with no awareness
+//     that mirrorNaturalResourcesForFairness will later require all four
+//     of a tile's mirrored positions to be simultaneously free (the same
+//     all-or-nothing atomicity that already protects a percentage-based
+//     region, see that function's own doc comment). Fixed by seeding
+//     minerals only after trees/thickets/fish have already been mirrored
+//     into their own final, stable layout (see newDuelGame) -- otherwise
+//     a tile could look perfectly clear, then still get wiped once a
+//     tree's own about-to-be-inserted mirror copy landed on it.
+//  2. avoid/minDistance here only ever kept the region away from ONE
+//     point (the player's own warehouse) -- but a canonical tile can land
+//     in ANY quadrant, and mirrorNaturalResourcesForFairness's own
+//     distance check (canOK) tests each mirrored copy against THAT
+//     quadrant's own warehouse, not the player's. A tile placed 30+ tiles
+//     from the player's base could still be well within
+//     minDepositDistanceFromWarehouse of a DIFFERENT quadrant's warehouse
+//     entirely, silently failing the real check later. Fixed by
+//     replicating that same per-quadrant distance test here too, against
+//     all four real warehouse points (see regionSurvivesMirroring).
+func growFixedDepositRegion(grid *world.Grid, buildings []*building.Building, kind building.Kind, target int, seed uint32, avoid gridPoint, minDistance int, isthmuses []image.Rectangle, warehousePoints [quadrantCount]gridPoint) []*building.Building {
 	if target <= 0 {
 		return buildings
 	}
@@ -389,34 +439,101 @@ func growFixedDepositRegion(grid *world.Grid, buildings []*building.Building, ki
 		}
 		return growOreRegion(grid, buildings, kind, target, attemptSeed, avoid, minDistance)
 	}
+	var lastAttempt []*building.Building
 	for attempt := uint32(0); attempt < maxFixedDepositAttempts; attempt++ {
 		grown := grow(seed ^ attempt*0x9e3779b9)
+		lastAttempt = grown
 		added := grown[len(buildings):]
 		if len(added) < target {
 			continue // this attempt's region came up short -- try another seed
 		}
-		clear := true
-		for _, b := range added {
-			p := image.Point{X: b.X, Y: b.Y}
-			for _, isthmus := range isthmuses {
-				if p.In(isthmus.Inset(-isthmusApproachBuffer)) {
-					clear = false
-					break
-				}
-			}
-			if !clear {
-				break
-			}
+		if !regionClearOfIsthmuses(added, isthmuses) {
+			continue
 		}
-		if clear {
-			return grown
+		if !regionSurvivesMirroring(grid, buildings, kind, added, minDistance, warehousePoints) {
+			continue
+		}
+		return grown
+	}
+	// Every attempt either came up short, touched an isthmus, or would
+	// collide with something once mirrored -- fall back to the last
+	// attempt so the map isn't silently left with zero of this resource;
+	// pruneNaturalResourcesFromIsthmus and mirrorNaturalResourcesForFairness's
+	// own atomic all-or-nothing check still run afterward as a safety net
+	// for whatever this leaves behind (possibly nothing, in the worst
+	// case -- exceedingly unlikely given maxFixedDepositAttempts tries).
+	return lastAttempt
+}
+
+// regionClearOfIsthmuses reports whether every tile in added sits outside
+// every isthmus (widened by isthmusApproachBuffer, same as
+// pruneNaturalResourcesFromIsthmus).
+func regionClearOfIsthmuses(added []*building.Building, isthmuses []image.Rectangle) bool {
+	for _, b := range added {
+		p := image.Point{X: b.X, Y: b.Y}
+		for _, isthmus := range isthmuses {
+			if p.In(isthmus.Inset(-isthmusApproachBuffer)) {
+				return false
+			}
 		}
 	}
-	// Every attempt either came up short or touched an isthmus -- fall
-	// back to one last unfiltered attempt so the map isn't silently left
-	// with zero of this resource; pruneNaturalResourcesFromIsthmus still
-	// runs afterward as a safety net for whatever this leaves behind.
-	return grow(seed)
+	return true
+}
+
+// regionSurvivesMirroring reports whether every tile in added will
+// actually still be placed, in every quadrant, once
+// mirrorNaturalResourcesForFairness runs -- replicating that function's
+// own canonical-fold + per-quadrant candidate + canOK logic exactly (see
+// its doc comment), rather than the narrower single-point distance check
+// growStoneRegion/growOreRegion apply during the initial search. Checked
+// against buildings (the map's state before this region existed), same
+// as that function's own kept starts without any natural resource in it.
+func regionSurvivesMirroring(grid *world.Grid, buildings []*building.Building, kind building.Kind, added []*building.Building, minDistance int, warehousePoints [quadrantCount]gridPoint) bool {
+	centerX := duelMapWidth / 2
+	centerY := duelMapHeight / 2
+	for _, b := range added {
+		foldedX, foldedY := b.X, b.Y
+		if foldedX >= centerX {
+			foldedX = mirrorX(duelMapWidth, foldedX)
+		}
+		if foldedY >= centerY {
+			foldedY = mirrorY(duelMapHeight, foldedY)
+		}
+		mx, my := mirrorX(duelMapWidth, foldedX), mirrorY(duelMapHeight, foldedY)
+
+		type candidate struct {
+			x, y  int
+			avoid gridPoint
+		}
+		seen := map[[2]int]bool{}
+		var candidates []candidate
+		for _, c := range []candidate{
+			{foldedX, foldedY, warehousePoints[quadrantNW]},
+			{mx, foldedY, warehousePoints[quadrantNE]},
+			{foldedX, my, warehousePoints[quadrantSW]},
+			{mx, my, warehousePoints[quadrantSE]},
+		} {
+			pos := [2]int{c.x, c.y}
+			if seen[pos] {
+				continue
+			}
+			seen[pos] = true
+			candidates = append(candidates, c)
+		}
+
+		for _, c := range candidates {
+			if tooCloseToPoint(c.x, c.y, c.avoid, minDistance) {
+				return false
+			}
+			if c.x == b.X && c.y == b.Y {
+				continue // this tile's own already-placed self
+			}
+			if !building.CanPlace(grid, buildings, kind, c.x, c.y) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // pruneNaturalResourcesFromIsthmus removes any natural resource node
