@@ -519,7 +519,25 @@ func (c *Controller) MaxWaitingHunger() int {
 // routes exclusively over the road network. soldiers lists every current
 // Archer/Swordsman so a hungry one can be found (NeedsDelivery) --
 // nil/empty is fine before the Barracks has hired any.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, soldiers []*soldier.Soldier) TickResult {
+//
+// buildings and obstacles are deliberately different lists. buildings is
+// this faction's own (plus shared-neutral: Road, natural resources --
+// see cmd/game's ownedBuildingsWithRoads) and picks WHICH job candidates
+// (producer, consumer, warehouse, construction site...) this serf may
+// even consider -- unchanged, an opposing faction's buildings must never
+// appear here. obstacles is the WHOLE map's buildings, every faction's,
+// and is used only for the off-road (FindLandPathForFaction) legs'
+// physical route: a real bug found from an actual playtest report
+// ("вражеские слуги свободно проходят через" the player's own wall) --
+// a soldier-delivery or construction-delivery leg can, by design, need to
+// physically walk into or across an opposing faction's territory (that
+// soldier being fed might be deep inside it, mid-attack), and that walk
+// must actually be blocked by a wall that isn't this faction's own, the
+// same as soldier movement already is (see cmd/game's Update/
+// tickAIFaction passing g.buildings to soldiers.Tick). Passing buildings
+// for obstacles too would work but silently make every foreign wall
+// invisible again -- the bug this fixes.
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, soldiers []*soldier.Soldier) TickResult {
 	c.tickConstructionBackoff()
 
 	// A soldier already claimed by a serf en route must not be picked
@@ -567,10 +585,10 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, stoc
 		}
 		if s.ph == idle {
 			if !c.tryStartMeal(s, buildings, ledger) {
-				c.assign(s, grid, buildings, stock, ledger, soldiers, claimedSoldiers)
+				c.assign(s, grid, buildings, obstacles, stock, ledger, soldiers, claimedSoldiers)
 			}
 		}
-		c.advance(s, grid, buildings, stock)
+		c.advance(s, grid, buildings, obstacles, stock)
 		remaining = append(remaining, s)
 	}
 	c.Serfs = remaining
@@ -723,11 +741,11 @@ func (c *Controller) tryStartMeal(s *Serf, buildings []*building.Building, ledge
 // built "when a serf is otherwise idle" would make the very first road --
 // the one everything else's connectivity depends on -- unreasonably slow
 // to appear.
-func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, soldiers []*soldier.Soldier, claimedSoldiers map[*soldier.Soldier]bool) {
+func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger, soldiers []*soldier.Soldier, claimedSoldiers map[*soldier.Soldier]bool) {
 	from := pathfind.Point{X: s.X, Y: s.Y}
 	if target, food, ok := findSoldierDeliveryJob(soldiers, claimedSoldiers, stock, ledger); ok {
 		destPoint := pathfind.Point{X: target.X, Y: target.Y}
-		if warehouse, path, ok := nearestReachableWarehouseOverLandToPoint(grid, buildings, c.warehouses(), from, destPoint); ok {
+		if warehouse, path, ok := nearestReachableWarehouseOverLandToPoint(grid, obstacles, c.warehouses(), from, destPoint, c.Warehouse.Owner); ok {
 			c.startSoldierLeg(s, warehouse, target, food, path, ledger)
 			claimedSoldiers[target] = true
 			return
@@ -737,12 +755,12 @@ func (c *Controller) assign(s *Serf, grid *world.Grid, buildings []*building.Bui
 		c.startLeg(s, pickup, dropoff, t, n, path, ledger)
 		return
 	}
-	if pickup, site, t, n, path, ok := findConstructionDirectJob(grid, buildings, ledger, from, c.constructionBackoff); ok {
+	if pickup, site, t, n, path, ok := findConstructionDirectJob(grid, buildings, obstacles, ledger, from, c.constructionBackoff, c.Warehouse.Owner); ok {
 		c.startConstructionLeg(s, pickup, site, t, n, path, ledger)
 		return
 	}
 	if dropoff, t, n, ok := findConstructionSupplyJob(buildings, stock, ledger, c.constructionBackoff); ok {
-		if warehouse, path, ok := nearestReachableWarehouseOverLand(grid, buildings, c.warehouses(), from, dropoff); ok {
+		if warehouse, path, ok := nearestReachableWarehouseOverLand(grid, obstacles, c.warehouses(), from, dropoff, c.Warehouse.Owner); ok {
 			c.startConstructionLeg(s, warehouse, dropoff, t, n, path, ledger)
 			return
 		}
@@ -1108,10 +1126,16 @@ var constructionMaterialProducer = map[resource.Type]building.Kind{
 // that does. Tried before findConstructionSupplyJob in assign, so a direct
 // haul wins whenever one is actually available; the Warehouse-sourced job
 // remains the fallback once nothing here reaches. Both legs use
-// pathfind.FindLandPath, the same off-road exception every construction
-// delivery gets (see startConstructionLeg) -- the site or its producer may
-// have no road yet.
-func findConstructionDirectJob(grid *world.Grid, buildings []*building.Building, ledger *reservations.Ledger, from pathfind.Point, blocked map[*building.Building]int) (pickup, site *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
+// pathfind.FindLandPathForFaction, the same off-road exception every
+// construction delivery gets (see startConstructionLeg) -- the site or
+// its producer may have no road yet. owner is this serf's own faction
+// (see assign's callers) -- see FindLandPathForFaction's doc comment for
+// why an off-road leg specifically needs to know it, unlike the
+// road-network-only jobs elsewhere in this file. buildings (this
+// faction's own candidates) and obstacles (the whole map, every
+// faction's, for the route itself) are deliberately different lists --
+// see Controller.Tick's doc comment on the same split.
+func findConstructionDirectJob(grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, ledger *reservations.Ledger, from pathfind.Point, blocked map[*building.Building]int, owner int) (pickup, site *building.Building, t resource.Type, amount int, path []pathfind.Point, ok bool) {
 	for _, cand := range buildings {
 		if cand.ConstructionStage == building.ConstructionNone || blocked[cand] > 0 {
 			continue
@@ -1150,11 +1174,11 @@ func findConstructionDirectJob(grid *world.Grid, buildings []*building.Building,
 				}
 				producerAccess := producer.AccessPoint()
 				producerPoint := pathfind.Point{X: producerAccess.X, Y: producerAccess.Y}
-				p, reachable := pathfind.FindLandPath(grid, buildings, from, producerPoint)
+				p, reachable := pathfind.FindLandPathForFaction(grid, obstacles, from, producerPoint, owner)
 				if !reachable {
 					continue
 				}
-				if _, deliverable := pathfind.FindLandPath(grid, buildings, producerPoint, sitePoint); !deliverable {
+				if _, deliverable := pathfind.FindLandPathForFaction(grid, obstacles, producerPoint, sitePoint, owner); !deliverable {
 					continue
 				}
 				if bestLen == -1 || len(p) < bestLen {
@@ -1193,16 +1217,24 @@ func findSoldierDeliveryJob(soldiers []*soldier.Soldier, claimed map[*soldier.So
 // nearestReachableWarehouseOverLandToPoint is
 // nearestReachableWarehouseOverLand's soldier-delivery counterpart: the
 // destination is a raw tile (a soldier's position at dispatch time, see
-// Serf.soldierTargetPoint) rather than a building.
-func nearestReachableWarehouseOverLandToPoint(grid *world.Grid, buildings []*building.Building, candidates []*building.Building, from, destPoint pathfind.Point) (warehouse *building.Building, path []pathfind.Point, ok bool) {
+// Serf.soldierTargetPoint) rather than a building. owner is this serf's
+// own faction -- see FindLandPathForFaction's doc comment: a hungry
+// soldier can, by design, be deep inside an opposing faction's walled
+// territory (that's the whole point of combat working at all), so this
+// off-road leg must actually be blocked by a wall that isn't this serf's
+// own, the same real bug found from an actual playtest report ("вражеские
+// слуги свободно проходят через" the player's own wall -- confirmed: it
+// was exactly this leg, an opposing faction's serf walking off-road to
+// feed its own soldier who'd fought its way inside).
+func nearestReachableWarehouseOverLandToPoint(grid *world.Grid, buildings []*building.Building, candidates []*building.Building, from, destPoint pathfind.Point, owner int) (warehouse *building.Building, path []pathfind.Point, ok bool) {
 	bestLen := -1
 	for _, w := range candidates {
 		access := w.AccessPoint()
-		p, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y})
+		p, reachable := pathfind.FindLandPathForFaction(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y}, owner)
 		if !reachable {
 			continue
 		}
-		if _, deliverable := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: access.X, Y: access.Y}, destPoint); !deliverable {
+		if _, deliverable := pathfind.FindLandPathForFaction(grid, buildings, pathfind.Point{X: access.X, Y: access.Y}, destPoint, owner); !deliverable {
 			continue
 		}
 		if bestLen == -1 || len(p) < bestLen {
@@ -1214,21 +1246,22 @@ func nearestReachableWarehouseOverLandToPoint(grid *world.Grid, buildings []*bui
 
 // nearestReachableWarehouseOverLand is nearestReachableWarehouse's
 // construction-delivery counterpart: both legs (serf to warehouse, warehouse
-// to the site) are checked with pathfind.FindLandPath instead of the
-// road-only pathfind.FindPath, since a site with no road to it yet must
+// to the site) are checked with pathfind.FindLandPathForFaction instead of
+// the road-only pathfind.FindPath, since a site with no road to it yet must
 // still be reachable -- that's the entire point of allowing this one job
-// type off the road network.
-func nearestReachableWarehouseOverLand(grid *world.Grid, buildings []*building.Building, candidates []*building.Building, from pathfind.Point, dest *building.Building) (warehouse *building.Building, path []pathfind.Point, ok bool) {
+// type off the road network. owner is this serf's own faction, same
+// reasoning as nearestReachableWarehouseOverLandToPoint.
+func nearestReachableWarehouseOverLand(grid *world.Grid, buildings []*building.Building, candidates []*building.Building, from pathfind.Point, dest *building.Building, owner int) (warehouse *building.Building, path []pathfind.Point, ok bool) {
 	destAccess := dest.AccessPoint()
 	destPoint := pathfind.Point{X: destAccess.X, Y: destAccess.Y}
 	bestLen := -1
 	for _, w := range candidates {
 		access := w.AccessPoint()
-		p, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y})
+		p, reachable := pathfind.FindLandPathForFaction(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y}, owner)
 		if !reachable {
 			continue
 		}
-		if _, deliverable := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: access.X, Y: access.Y}, destPoint); !deliverable {
+		if _, deliverable := pathfind.FindLandPathForFaction(grid, buildings, pathfind.Point{X: access.X, Y: access.Y}, destPoint, owner); !deliverable {
 			continue
 		}
 		if bestLen == -1 || len(p) < bestLen {
@@ -1286,7 +1319,7 @@ func (c *Controller) startSoldierLeg(s *Serf, pickup *building.Building, target 
 	ledger.ReservePickup(pickup, food, amount)
 }
 
-func (c *Controller) advance(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
+func (c *Controller) advance(s *Serf, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, stock *resource.Stockpile) {
 	if s.ph == idle || len(s.path) == 0 {
 		return
 	}
@@ -1305,15 +1338,15 @@ func (c *Controller) advance(s *Serf, grid *world.Grid, buildings []*building.Bu
 
 	switch s.ph {
 	case toPickup:
-		c.arriveAtPickup(s, grid, buildings, stock)
+		c.arriveAtPickup(s, grid, buildings, obstacles, stock)
 	case toDropoff:
-		c.arriveAtDropoff(s, grid, buildings, stock)
+		c.arriveAtDropoff(s, grid, obstacles, stock)
 	case returning:
 		s.reset()
 	}
 }
 
-func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
+func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, stock *resource.Stockpile) {
 	s.atBuilding = s.pickup
 
 	if s.eating {
@@ -1344,10 +1377,10 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 	var found bool
 	switch {
 	case s.soldierTarget != nil:
-		path, found = pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, s.soldierTargetPoint)
+		path, found = pathfind.FindLandPathForFaction(grid, obstacles, pathfind.Point{X: s.X, Y: s.Y}, s.soldierTargetPoint, c.Warehouse.Owner)
 	case s.construction:
 		dest := s.dropoff.AccessPoint()
-		path, found = pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: dest.X, Y: dest.Y})
+		path, found = pathfind.FindLandPathForFaction(grid, obstacles, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: dest.X, Y: dest.Y}, c.Warehouse.Owner)
 	default:
 		path, found = pathfind.FindPath(buildings, s.pickup, s.dropoff)
 	}
@@ -1373,7 +1406,7 @@ func (c *Controller) arriveAtPickup(s *Serf, grid *world.Grid, buildings []*buil
 	s.ph = toDropoff
 }
 
-func (c *Controller) arriveAtDropoff(s *Serf, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
+func (c *Controller) arriveAtDropoff(s *Serf, grid *world.Grid, obstacles []*building.Building, stock *resource.Stockpile) {
 	s.atBuilding = s.dropoff
 	// Captured before the switch below: every case except reset()s at the
 	// very end, and s.construction/s.soldierTarget still hold the values
@@ -1409,7 +1442,7 @@ func (c *Controller) arriveAtDropoff(s *Serf, grid *world.Grid, buildings []*bui
 		}
 	}
 	if offRoad {
-		c.startReturnToRoad(s, grid, buildings)
+		c.startReturnToRoad(s, grid, obstacles)
 		return
 	}
 	s.reset()
@@ -1417,11 +1450,14 @@ func (c *Controller) arriveAtDropoff(s *Serf, grid *world.Grid, buildings []*bui
 
 // startReturnToRoad walks a serf that just finished an off-road delivery
 // back to the nearest reachable warehouse over open land
-// (pathfind.FindLandPath), so it lands back on the road network before
-// going properly idle -- see the returning phase's doc comment for why
-// this exists. Best-effort: if no warehouse is reachable at all (e.g. a
-// freshly cut-off map), the serf simply goes idle right where it stands
-// rather than loop forever chasing an impossible route.
+// (pathfind.FindLandPathForFaction), so it lands back on the road network
+// before going properly idle -- see the returning phase's doc comment for
+// why this exists. Best-effort: if no warehouse is reachable at all (e.g.
+// a freshly cut-off map), the serf simply goes idle right where it stands
+// rather than loop forever chasing an impossible route. buildings here is
+// actually the caller's obstacles (whole-map) list -- see Controller.
+// Tick's doc comment on why an off-road leg needs that, not the
+// per-faction one.
 func (c *Controller) startReturnToRoad(s *Serf, grid *world.Grid, buildings []*building.Building) {
 	from := pathfind.Point{X: s.X, Y: s.Y}
 	s.pickup, s.dropoff = nil, nil
@@ -1432,7 +1468,7 @@ func (c *Controller) startReturnToRoad(s *Serf, grid *world.Grid, buildings []*b
 	var bestPath []pathfind.Point
 	for _, w := range c.warehouses() {
 		access := w.AccessPoint()
-		p, reachable := pathfind.FindLandPath(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y})
+		p, reachable := pathfind.FindLandPathForFaction(grid, buildings, from, pathfind.Point{X: access.X, Y: access.Y}, c.Warehouse.Owner)
 		if !reachable {
 			continue
 		}

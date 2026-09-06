@@ -377,7 +377,14 @@ func (g *Game) tickAIFaction(f *faction, grid *world.Grid) {
 	f.miners.Reserve(ledger)
 	f.sentries.Reserve(ledger)
 
-	serfResult := f.logi.Tick(grid, buildings, f.stock, ledger, f.soldiers.Soldiers)
+	// g.buildings (the WHOLE map) for the new obstacles param specifically
+	// -- see logistics.Controller.Tick's doc comment: a soldier-delivery
+	// or construction-delivery serf's off-road leg can legitimately need
+	// to walk into an opposing faction's territory (feeding a soldier
+	// mid-attack there), and that walk must actually be blocked by a
+	// wall that isn't this faction's own, the same real bug and fix as
+	// soldiers.Tick's own g.buildings argument just below.
+	serfResult := f.logi.Tick(grid, buildings, g.buildings, f.stock, ledger, f.soldiers.Soldiers)
 	villagerDeaths := f.vills.Tick(buildings, ledger)
 	jackEvents := f.jacks.Tick(grid, buildings, ledger)
 	fishEvents := f.fishers.Tick(grid, buildings, ledger)

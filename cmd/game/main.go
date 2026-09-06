@@ -662,7 +662,9 @@ func (g *Game) tickOnce() {
 			run    func()
 		}
 		steps := []unitStep{
-			{g.logi.MaxWaitingHunger(), func() { serfResult = g.logi.Tick(g.grid, playerBuildings, g.stock, ledger, g.soldiers.Soldiers) }},
+			{g.logi.MaxWaitingHunger(), func() {
+				serfResult = g.logi.Tick(g.grid, playerBuildings, g.buildings, g.stock, ledger, g.soldiers.Soldiers)
+			}},
 			{g.vills.MaxWaitingHunger(), func() { villagerDeaths = g.vills.Tick(playerBuildings, ledger) }},
 			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, playerBuildings, ledger) }},
 			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, playerBuildings, ledger) }},

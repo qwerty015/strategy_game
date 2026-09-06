@@ -73,7 +73,7 @@ func TestFullChain_FarmToMillToBakeryToTavern(t *testing.T) {
 		ledger := reservations.New()
 		logi.Reserve(ledger)
 		vills.Reserve(ledger)
-		logi.Tick(nil, buildings, stock, ledger, nil)
+		logi.Tick(nil, buildings, buildings, stock, ledger, nil)
 		vills.Tick(buildings, ledger)
 
 		if tavern.InputBuffer[resource.Bread] > 0 || stock.Amount(resource.Bread) > 0 {
@@ -152,7 +152,7 @@ func TestFullChain_FarmToPigFarmToMeatWorkshopToTavern(t *testing.T) {
 		ledger := reservations.New()
 		logi.Reserve(ledger)
 		vills.Reserve(ledger)
-		logi.Tick(nil, buildings, stock, ledger, nil)
+		logi.Tick(nil, buildings, buildings, stock, ledger, nil)
 		vills.Tick(buildings, ledger)
 		if tavern.InputBuffer[resource.Sausage] > 0 || stock.Amount(resource.Sausage) > 0 {
 			sawSausage = true
@@ -218,7 +218,7 @@ func TestFullChain_LumberjackHutToCarpentryWorkshopToWarehouse(t *testing.T) {
 		logi.Reserve(ledger)
 		vills.Reserve(ledger)
 		jacks.Reserve(ledger)
-		logi.Tick(nil, buildings, stock, ledger, nil)
+		logi.Tick(nil, buildings, buildings, stock, ledger, nil)
 		vills.Tick(buildings, ledger)
 		for _, event := range jacks.Tick(grid, buildings, ledger) {
 			if event.Kind == lumberjack.TreeCut {
@@ -285,7 +285,7 @@ func TestSharedTavernReservation_SerfAndVillagerDoNotDoubleBookTheLastLoaf(t *te
 		ledger := reservations.New()
 		logi.Reserve(ledger)
 		vills.Reserve(ledger)
-		logi.Tick(nil, buildings, stock, ledger, nil)
+		logi.Tick(nil, buildings, buildings, stock, ledger, nil)
 		vills.Tick(buildings, ledger)
 
 		// Check every tick, not just the final one: HungerTicks() resets

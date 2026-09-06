@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/hunger"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
+	"strategy_game/internal/soldier"
 	"strategy_game/internal/world"
 )
 
@@ -15,11 +17,14 @@ import (
 // ledger, seeded from this controller's own in-flight serfs, then Tick.
 // grid is nil-safe (pathfind.FindLandPath short-circuits on a nil grid) and
 // only matters for the construction-supply job, which none of these tests
-// exercise -- callers pass nil.
+// exercise -- callers pass nil. buildings doubles as obstacles too -- none
+// of these single-faction tests have a second faction's building to
+// distinguish it from (see Controller.Tick's doc comment on why real
+// callers pass two different lists).
 func tick(c *Controller, grid *world.Grid, buildings []*building.Building, stock *resource.Stockpile) {
 	ledger := reservations.New()
 	c.Reserve(ledger)
-	c.Tick(grid, buildings, stock, ledger, nil)
+	c.Tick(grid, buildings, buildings, stock, ledger, nil)
 }
 
 // straightRoad returns Road buildings filling every tile from x=fromX to
@@ -94,7 +99,7 @@ func TestController_OverflowAtDropoffGoesToStock(t *testing.T) {
 	s.tileTicks = TicksPerTile - 1
 
 	stock := resource.NewStockpile(100)
-	c.advance(s, nil, nil, stock)
+	c.advance(s, nil, nil, nil, stock)
 
 	if got := mill.InputBuffer[resource.Wheat]; got != building.BufferCapacity {
 		t.Fatalf("mill InputBuffer[Wheat] = %d, want %d (filled to capacity)", got, building.BufferCapacity)
@@ -1008,7 +1013,7 @@ func TestArriveAtPickup_ConstructionDeliveryFailureSetsBackoff(t *testing.T) {
 	s.construction = true
 	s.X, s.Y = warehouse.X, warehouse.Y
 
-	c.arriveAtPickup(s, grid, buildings, stock)
+	c.arriveAtPickup(s, grid, buildings, buildings, stock)
 
 	if got := stock.Amount(resource.Plank); got != 10 {
 		t.Fatalf("warehouse Plank after a failed delivery = %d, want 10 (cargo returned, not lost)", got)
@@ -1051,12 +1056,12 @@ func TestFindConstructionDirectJob_SkipsBlockedSite(t *testing.T) {
 	buildings := []*building.Building{workshop, site}
 	from := pathfind.Point{X: 0, Y: 0}
 
-	if _, _, _, _, _, ok := findConstructionDirectJob(grid, buildings, reservations.New(), from, nil); !ok {
+	if _, _, _, _, _, ok := findConstructionDirectJob(grid, buildings, buildings, reservations.New(), from, nil, 0); !ok {
 		t.Fatal("findConstructionDirectJob with no blocked sites = not found, want found")
 	}
 
 	blocked := map[*building.Building]int{site: constructionBackoffTicks}
-	if _, _, _, _, _, ok := findConstructionDirectJob(grid, buildings, reservations.New(), from, blocked); ok {
+	if _, _, _, _, _, ok := findConstructionDirectJob(grid, buildings, buildings, reservations.New(), from, blocked, 0); ok {
 		t.Fatal("findConstructionDirectJob found a site that's currently backed off, want it skipped")
 	}
 }
@@ -1306,6 +1311,83 @@ func TestController_SupplySkipsAnUnreachableShortageForAReachableOne(t *testing.
 	}
 	if got := barracks.InputBuffer[resource.Gold]; got == 0 {
 		t.Fatalf("barracks Gold input = %d after 200 ticks, want > 0 -- an unreachable WatchTower shortage must not block a reachable Barracks forever", got)
+	}
+}
+
+// TestController_SoldierDeliveryLegIsBlockedByAForeignWall is a real bug
+// found from an actual playtest report: "огородил свой кусок карты по
+// перешейкам стеной - вражеские слуги свободно проходят через неё... я
+// даже ворота не делал". A hungry soldier can, by design, end up deep
+// inside an opposing faction's walled territory (that's the whole point
+// of combat working at all), and the serf sent to feed it walks there
+// off-road (see startSoldierLeg) via pathfind.FindLandPathForFaction --
+// but that call used to receive this same faction's own per-faction
+// buildings list, which excludes every OTHER faction's buildings
+// entirely (the same convention that already correctly hides a rival's
+// unfinished construction, see ownedBuildingsWithRoads), so a rival's
+// wall was invisible to it too, off-road pathing walked straight through
+// as if it wasn't there. Controller.Tick now takes a separate obstacles
+// list (the whole map, every faction's) specifically for this off-road
+// leg's own route -- this proves a wall actually in that list blocks it.
+func TestController_SoldierDeliveryLegIsBlockedByAForeignWall(t *testing.T) {
+	grid := world.NewGrid(5, 3)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 1, Owner: 0}
+	// A complete wall across the whole map height, owned by a DIFFERENT
+	// faction -- no gate, no gap, nothing to route around.
+	wall := []*building.Building{
+		{Kind: building.StoneWall, X: 2, Y: 0, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 1, Owner: 1, ConstructionStage: building.ConstructionNone},
+		{Kind: building.StoneWall, X: 2, Y: 2, Owner: 1, ConstructionStage: building.ConstructionNone},
+	}
+	buildings := append([]*building.Building{warehouse}, wall...)
+
+	soldiers := soldier.NewController()
+	target := soldiers.Restore(soldier.Archer, 4, 1, hunger.MaxTicks, 0)
+	target.Owner = 0 // same faction as the warehouse -- only the WALL is foreign
+
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Bread, 10)
+
+	controller := NewController(warehouse, 1)
+	for i := 0; i < 200; i++ {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, buildings, stock, ledger, soldiers.Soldiers)
+	}
+	if got := target.HungerTicks(); got == 0 {
+		t.Fatalf("soldier HungerTicks = %d after 200 ticks behind a foreign wall, want > 0 (never fed) -- a wall belonging to another faction must actually block this off-road leg", got)
+	}
+}
+
+// TestController_SoldierDeliveryLegCrossesNoWallAtAll is
+// TestController_SoldierDeliveryLegIsBlockedByAForeignWall's sanity
+// counterpart -- same geometry, no wall in the way at all, confirming the
+// delivery genuinely succeeds when nothing blocks it (so the previous
+// test's failure-to-feed is actually the wall's doing, not some unrelated
+// setup mistake).
+func TestController_SoldierDeliveryLegCrossesNoWallAtAll(t *testing.T) {
+	grid := world.NewGrid(5, 3)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 1, Owner: 0}
+	buildings := []*building.Building{warehouse}
+
+	soldiers := soldier.NewController()
+	target := soldiers.Restore(soldier.Archer, 4, 1, hunger.MaxTicks, 0)
+	target.Owner = 0
+
+	stock := resource.NewStockpile(0)
+	stock.Add(resource.Bread, 10)
+
+	controller := NewController(warehouse, 1)
+	for i := 0; i < 200; i++ {
+		ledger := reservations.New()
+		controller.Reserve(ledger)
+		controller.Tick(grid, buildings, buildings, stock, ledger, soldiers.Soldiers)
+		if target.HungerTicks() == 0 {
+			break
+		}
+	}
+	if got := target.HungerTicks(); got != 0 {
+		t.Fatalf("soldier HungerTicks = %d after 200 ticks with an open route, want 0 (fed) -- confirms the previous test's block was really the wall, not a setup mistake", got)
 	}
 }
 
