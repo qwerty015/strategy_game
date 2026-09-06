@@ -284,7 +284,7 @@ func (s *Soldier) cooldownTicks() int {
 // road network serfs need. Reports whether a route was found; a false
 // result leaves any route already in progress untouched.
 func (s *Soldier) MoveTo(grid *world.Grid, buildings []*building.Building, x, y int) bool {
-	path, ok := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: x, Y: y})
+	path, ok := pathfind.FindLandPathForFaction(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: x, Y: y}, s.Owner)
 	if !ok {
 		return false
 	}
@@ -326,7 +326,7 @@ func (s *Soldier) approach(grid *world.Grid, buildings []*building.Building) {
 		s.path, s.pathIdx, s.tileTicks = nil, 0, 0
 		return
 	}
-	path, ok := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: s.attackTarget.X, Y: s.attackTarget.Y})
+	path, ok := pathfind.FindLandPathForFaction(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: s.attackTarget.X, Y: s.attackTarget.Y}, s.Owner)
 	if ok {
 		s.path, s.pathIdx, s.tileTicks = path, 0, 0
 	}
@@ -418,6 +418,19 @@ func (c *Controller) Restore(profession Profession, x, y, hungerTicks, hp int) *
 // targets for "1×1 против ИИ" mode (see TickFactionCombat's doc comment,
 // and combat.IntruderTarget for opposingIntruders -- any opposing unit
 // that isn't itself a rival Soldier) -- also nil/empty outside that mode.
+//
+// buildings is this soldier's movement obstacle list, not a target list --
+// unlike every other controller's Tick, it must be the WHOLE map's
+// buildings (every faction's, see cmd/game's Update/tickAIFaction), not
+// just this faction's own. A real bug found from an actual playtest report
+// ("юниты противника спокойно проходят через мои ворота"): every other
+// unit kind's obstacle list is already scoped to its own faction plus
+// shared-neutral objects (Road, natural resources), so it never contains
+// another faction's wall/gate to be blocked by in the first place -- if
+// this one were scoped the same way, an attacking faction's soldiers would
+// simply never see the defender's walls as obstacles at all, gate or no
+// gate. See pathfind.FindLandPathForFaction for how a foreign Gate still
+// blocks like a solid wall once it IS in the list.
 // Call once per simulation tick.
 func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enemies []*enemy.Enemy, opposingBuildings []*building.Building, opposingSoldiers []*Soldier, opposingIntruders []combat.IntruderTarget) int {
 	deaths := 0
@@ -547,7 +560,7 @@ func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.B
 	tx, ty := s.faction.pos()
 	if !inRange(s.X, s.Y, tx, ty, s.AttackRange()) {
 		if len(s.path) == 0 {
-			path, ok := pathfind.FindLandPath(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: tx, Y: ty})
+			path, ok := pathfind.FindLandPathForFaction(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: tx, Y: ty}, s.Owner)
 			if ok {
 				s.path, s.pathIdx, s.tileTicks = path, 0, 0
 			}

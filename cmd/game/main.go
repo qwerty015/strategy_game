@@ -681,12 +681,17 @@ func (g *Game) tickOnce() {
 		// their own food -- see package soldier's doc comment), so they sit
 		// outside the fairness-ordered steps above; their combat damage
 		// still needs to land before the prune below, same as a Sentry's.
-		// playerBuildings here too (movement/obstacle avoidance uses the
-		// player's own buildings, matching tickAIFaction's identical
-		// choice for the AI's own soldiers) -- opposingBuildingsFor
-		// already supplies the enemy's buildings separately, for
-		// targeting specifically, so this doesn't affect combat range.
-		soldierDeaths := g.soldiers.Tick(g.grid, playerBuildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers), g.opposingIntruderTargetsForSoldiers(g.soldiers))
+		// g.buildings (the WHOLE map), not playerBuildings, for the
+		// obstacle-avoidance param specifically -- a real bug found from
+		// an actual playtest report ("юниты противника спокойно проходят
+		// через мои ворота"): scoping a soldier's movement obstacles to
+		// its own faction (like every other controller correctly does)
+		// meant an opposing faction's walls/gates were never even in the
+		// list to be blocked by, letting soldiers walk straight through
+		// them. See soldier.Controller.Tick's doc comment and
+		// pathfind.FindLandPathForFaction. opposingBuildingsFor still
+		// supplies the enemy's buildings separately for targeting.
+		soldierDeaths := g.soldiers.Tick(g.grid, g.buildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers), g.opposingIntruderTargetsForSoldiers(g.soldiers))
 		// Enemies strike back after every Sentry has had a chance to fire
 		// this tick -- see internal/enemy's Tick. A dead one (HP reaching
 		// 0 from a Sentry's own shot, applied above) is pruned right away

@@ -45,8 +45,32 @@ func IsFinishedWallSegment(b *Building) bool {
 // GatePassable reports whether a finished gate can be used as a land or road
 // tile. Auto gates are routeable while visually closed so an ally can approach
 // and trigger their opening; manual closed gates are true barriers.
+//
+// This has no concept of who is walking through -- every existing caller
+// (serfs, villagers, lumberjacks, fishermen, quarrymen, builders, miners,
+// sentries) only ever pathfinds across its own faction's own buildings plus
+// shared-neutral ones (Road, natural resources -- see
+// Game.ownedBuildingsWithRoads), so the gates it can even encounter are
+// always its own faction's. See GatePassableTo for the one caller (soldier
+// movement) whose obstacle list can legitimately contain another faction's
+// gate.
 func GatePassable(b *Building) bool {
 	return b != nil && b.Kind == Gate && b.ConstructionStage == ConstructionNone && (b.GateOpen || b.GateAuto)
+}
+
+// GatePassableTo is GatePassable restricted to a specific owner -- a real bug
+// found from an actual playtest report ("юниты противника спокойно проходят
+// через мои ворота"): GatePassable alone lets ANY unit through an Open/Auto
+// gate regardless of whose it is, which in the FFA duel mode means a hostile
+// AI faction's soldiers can simply walk through the player's walls the
+// instant a single gate anywhere in them is left on Auto (its default state
+// right after building one -- see cmd/game's gate-placement flow). A gate's
+// own owner still passes exactly as GatePassable always allowed (Open or
+// Auto); every other owner is blocked outright, the same as a plain
+// StoneWall segment -- GateOpen/GateAuto only ever meant "convenient for my
+// own traffic", never "anyone may enter".
+func GatePassableTo(b *Building, owner int) bool {
+	return b != nil && b.Owner == owner && GatePassable(b)
 }
 
 // FinishedWallSegments indexes completed walls and gates once. Renderers use

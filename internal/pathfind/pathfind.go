@@ -43,7 +43,31 @@ func FindPathFromPoint(buildings []*building.Building, from Point, to *building.
 // obstacles; the start and goal tiles are allowed so a worker can leave a
 // workplace and reach a tree occupying its goal tile. Unlike FindPath, this
 // route does not require a road anywhere in the path.
+//
+// Every caller except soldier movement pathfinds across a buildings list
+// already scoped to its own faction plus shared-neutral objects (see
+// building.GatePassable's doc comment), so a plain building.GatePassable
+// check is always evaluating that same faction's own gate here -- see
+// FindLandPathForFaction for the one caller whose obstacle list can
+// legitimately contain another faction's buildings, gates included.
 func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Point) ([]Point, bool) {
+	return findLandPath(grid, buildingOccupancy(buildings), buildings, from, to)
+}
+
+// FindLandPathForFaction is FindLandPath, but a Gate belonging to any owner
+// other than owner blocks like a solid wall regardless of its Open/Auto
+// state -- see building.GatePassableTo's doc comment for the playtest bug
+// this fixes. Used only by soldier movement (package soldier): an attacking
+// faction's soldiers must actually be stopped by an opponent's walls/gates,
+// which means their obstacle list has to include the opponent's buildings
+// at all (see cmd/game's Update/tickAIFaction passing g.buildings, not the
+// usual per-faction ownedBuildingsWithRoads, to soldiers.Tick) -- the only
+// unit kind for which "another faction's gate" is ever actually in the list.
+func FindLandPathForFaction(grid *world.Grid, buildings []*building.Building, from, to Point, owner int) ([]Point, bool) {
+	return findLandPath(grid, buildingOccupancyForFaction(buildings, owner), buildings, from, to)
+}
+
+func findLandPath(grid *world.Grid, blocked map[Point]bool, buildings []*building.Building, from, to Point) ([]Point, bool) {
 	if grid == nil || !grid.InBounds(from.X, from.Y) || !grid.InBounds(to.X, to.Y) {
 		return nil, false
 	}
@@ -55,7 +79,6 @@ func FindLandPath(grid *world.Grid, buildings []*building.Building, from, to Poi
 	// see landWalkable's doc comment for why this matters on a large,
 	// densely-decorated map (hundreds of stone/ore deposits, each its own
 	// Building).
-	blocked := buildingOccupancy(buildings)
 	barriers := wallBarrierOccupancy(buildings)
 
 	visited := map[Point]Point{from: from}
@@ -146,6 +169,25 @@ func buildingOccupancy(buildings []*building.Building) map[Point]bool {
 	blocked := make(map[Point]bool, len(buildings))
 	for _, b := range buildings {
 		if b == nil || b.Kind == building.Road || building.GatePassable(b) {
+			continue
+		}
+		footprint := building.Types[b.Kind].Footprint
+		for dy := 0; dy < footprint; dy++ {
+			for dx := 0; dx < footprint; dx++ {
+				blocked[Point{b.X + dx, b.Y + dy}] = true
+			}
+		}
+	}
+	return blocked
+}
+
+// buildingOccupancyForFaction is buildingOccupancy, but a Gate not owned by
+// owner never exempts its tile -- see building.GatePassableTo and
+// FindLandPathForFaction.
+func buildingOccupancyForFaction(buildings []*building.Building, owner int) map[Point]bool {
+	blocked := make(map[Point]bool, len(buildings))
+	for _, b := range buildings {
+		if b == nil || b.Kind == building.Road || building.GatePassableTo(b, owner) {
 			continue
 		}
 		footprint := building.Types[b.Kind].Footprint

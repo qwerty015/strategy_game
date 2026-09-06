@@ -252,6 +252,45 @@ func TestFindLandPath_WallBlocksAndGateOpens(t *testing.T) {
 	}
 }
 
+// TestFindLandPathForFaction_ForeignGateBlocksRegardlessOfOpenOrAuto is the
+// regression for a real playtest report ("юниты противника спокойно
+// проходят через мои ворота"): FindLandPath (and plain GatePassable) has no
+// concept of ownership, so an Open or Auto gate lets literally anyone
+// through -- including a hostile faction's soldiers. FindLandPathForFaction
+// must keep the gate owner's own passage exactly as before while blocking
+// every other owner outright, whatever GateOpen/GateAuto say.
+func TestFindLandPathForFaction_ForeignGateBlocksRegardlessOfOpenOrAuto(t *testing.T) {
+	grid := world.NewGrid(5, 3)
+	from, to := Point{X: 0, Y: 1}, Point{X: 4, Y: 1}
+	wall := []*building.Building{
+		{Kind: building.StoneWall, X: 2, Y: 0, Owner: 0},
+		{Kind: building.Gate, X: 2, Y: 1, GateAxis: building.WallHorizontal, Owner: 0, GateOpen: true},
+		{Kind: building.StoneWall, X: 2, Y: 2, Owner: 0},
+	}
+	if _, ok := FindLandPathForFaction(grid, wall, from, to, 0); !ok {
+		t.Fatal("owner 0 (the gate's own owner) could not walk through its own open gate")
+	}
+	if _, ok := FindLandPathForFaction(grid, wall, from, to, 1); ok {
+		t.Fatal("owner 1 (a foreign faction) walked through owner 0's open gate")
+	}
+
+	wall[1].GateOpen = false
+	wall[1].GateAuto = true
+	if _, ok := FindLandPathForFaction(grid, wall, from, to, 0); !ok {
+		t.Fatal("owner 0 could not walk through its own automatic gate")
+	}
+	if _, ok := FindLandPathForFaction(grid, wall, from, to, 1); ok {
+		t.Fatal("owner 1 (a foreign faction) walked through owner 0's automatic gate")
+	}
+
+	// The plain, owner-blind FindLandPath is untouched -- every other unit
+	// kind's obstacle list is already scoped to its own faction (see
+	// building.GatePassable's doc comment), so it never needs to ask.
+	if _, ok := FindLandPath(grid, wall, from, to); !ok {
+		t.Fatal("FindLandPath regressed on an automatic gate")
+	}
+}
+
 // TestWallCornerCannotBeCutDiagonally keeps a closed wall enclosure meaningful
 // even though all normal land movement supports diagonal steps.
 func TestWallCornerCannotBeCutDiagonally(t *testing.T) {

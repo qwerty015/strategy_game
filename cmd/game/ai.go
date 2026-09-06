@@ -385,7 +385,13 @@ func (g *Game) tickAIFaction(f *faction, grid *world.Grid) {
 	builderEvents := f.builders.Tick(grid, buildings, ledger)
 	minerEvents := f.miners.Tick(grid, buildings, ledger)
 	sentryDeaths := f.sentries.Tick(buildings, nil, g.opposingIntruderTargetsFor(f.sentries), ledger)
-	soldierDeaths := f.soldiers.Tick(grid, buildings, nil, g.opposingBuildingsFor(f.soldiers), g.opposingSoldiersFor(f.soldiers), g.opposingIntruderTargetsForSoldiers(f.soldiers))
+	// g.buildings (the WHOLE map), not the per-faction buildings above, for
+	// the obstacle-avoidance param specifically -- see soldier.Controller.
+	// Tick's doc comment and the identical choice in Update's player tick
+	// block for why: an attacking faction's soldiers must actually be
+	// blocked by an opponent's walls/gates, which means those need to be
+	// in the obstacle list at all.
+	soldierDeaths := f.soldiers.Tick(grid, g.buildings, nil, g.opposingBuildingsFor(f.soldiers), g.opposingSoldiersFor(f.soldiers), g.opposingIntruderTargetsForSoldiers(f.soldiers))
 
 	f.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryDeaths + soldierDeaths
 	f.pop.UnitsDismissed += serfResult.Dismissed

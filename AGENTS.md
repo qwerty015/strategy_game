@@ -3789,6 +3789,75 @@ enum'а `appScreen`), `drawOpponentCountSelectScreen`,
 функция исчезла); `TestNewGameFlow_DuelModeWithMultipleOpponentsPicksOneDifficultyEach`
 поправлен на `g.duelOpponentCount = maxDuelOpponents` вместо литерала `3`.
 
+## Баг: вражеские юниты проходят сквозь стены/ворота как сквозь пустое место
+
+Пользователь прислал реальный сейв ("слот 3"), где после постройки ворот
+в стене его собственный отряд слуг вымер подчистую (0 живых слуг при
+30 смертях), а армия одного из ботов (15 лучников + 14 мечников)
+разгуливала по его территории — "юниты противника спокойно проходят
+через мои ворота". Найдено и подтверждено двумя независимыми, наложенными
+друг на друга багами, оба реальные, не выдуманные:
+
+1. **`building.GatePassable(b)` не знает, кто идёт через ворота.**
+   Условие — `b.Kind == Gate && ... && (b.GateOpen || b.GateAuto)` — не
+   смотрит на `b.Owner` вообще. `GateAuto` (дефолт сразу после постройки
+   ворот) при этом, по своему же доккомменту в `updateAutomaticGates`,
+   "pathfinding treats an automatic gate as routeable even while it is
+   visually closed" — то есть для pathfinding'а `GateAuto` всегда открыт,
+   визуальный "открыт/закрыт" — чисто косметика. Итог: любые ворота в
+   режиме "авто" (а это дефолт) были проходимы АБСОЛЮТНО для всех, включая
+   вражескую фракцию, с самого начала мультифракционного режима.
+2. **Более глубокая причина, из-за которой первого бага было мало.**
+   Даже почини `GatePassable` в одиночку — вражеский солдат физически не
+   мог бы упереться в чужую стену: `soldier.Controller.Tick`'s
+   pathfinding-обход препятствий (`pathfind.FindLandPath`) получал
+   `buildings`-список, который `Game.tickAIFaction`/`Update` формировали
+   через `g.ownedBuildingsWithRoads(f.owner)` — список, отфильтрованный
+   ИСКЛЮЧИТЕЛЬНО под "свою" фракцию плюс нейтральные Road/натуральные
+   ресурсы. Чужие стены (не Road, не натуральный ресурс) в этот список
+   вообще не попадали — soldier.Tick о них попросту не знал, значит и
+   `buildingOccupancy` не считал их препятствием: солдат шёл прямо сквозь
+   них, как будто их нет. Это осталось незамеченным раньше, потому что до
+   FFA-режима вообще не было активно атакующего ИИ-противника, способного
+   этим воспользоваться.
+
+Исправление, оба слоя разом:
+
+- `internal/building/wall.go`: новая `GatePassableTo(b *Building, owner
+  int) bool` — свой хозяин проходит как раньше (Open/Auto), любой другой
+  owner — всегда блокирован, будто это сплошная стена. Старая
+  `GatePassable(b)` оставлена как есть для всех остальных вызывающих (они
+  и так видят только свои же ворота, см. её доккомментарий — им нечего
+  спрашивать про owner).
+- `internal/pathfind/pathfind.go`: `FindLandPath` разбит на общий
+  `findLandPath(grid, blocked, buildings, from, to)` + новая
+  `FindLandPathForFaction(grid, buildings, from, to, owner)`, которая
+  считает occupancy через `buildingOccupancyForFaction` (чужие ворота не
+  освобождают тайл). Использует её только `package soldier` — единственный
+  потребитель, чей список препятствий вообще может содержать чужие
+  здания.
+- `internal/soldier/soldier.go`: три вызова `pathfind.FindLandPath` (в
+  `MoveTo`/`approach`/`tickFactionCombat`) заменены на
+  `FindLandPathForFaction(..., s.Owner)`.
+- `cmd/game/main.go`/`ai.go`: единственный аргумент, реально изменившийся
+  в вызовах `soldiers.Tick(...)` — список препятствий сменился с
+  `playerBuildings`/пер-фракционного `buildings` на `g.buildings` целиком
+  (карту целиком, все фракции). Аргумент `opposingBuildingsFor(...)`
+  (выбор ЦЕЛИ для атаки) не менялся — это была и остаётся отдельная
+  величина.
+
+### Тесты
+
+`internal/building/wall_test.go` (новый файл):
+`TestGatePassableTo_OnlyTheGatesOwnOwnerEverPasses`,
+`TestGatePassableTo_NonGateOrUnfinishedNeverPasses`.
+`internal/pathfind/pathfind_test.go`:
+`TestFindLandPathForFaction_ForeignGateBlocksRegardlessOfOpenOrAuto`
+(тот же сценарий, что `TestFindLandPath_WallBlocksAndGateOpens`, но
+проверяет, что owner=1 не проходит через open/auto ворота owner=0, при
+этом сам owner=0 и старая owner-агностичная `FindLandPath` не
+регрессировали).
+
 ## Текущий план
 
 Исходный план MVP хранится отдельно от репозитория, в файлах планирования
