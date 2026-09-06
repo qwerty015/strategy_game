@@ -197,6 +197,44 @@ func TestNewDuelGame_MineralDepositCountsAreFixedNotPercentage(t *testing.T) {
 	}
 }
 
+// TestNewDuelGame_MineralsLandNearTheirOwnWarehouse is the regression for
+// the user's explicit request ("переделай спавн ресурсов чтоб они
+// появлялись рядом а не раскиданые на карте"): findStoneStart/findOreStart
+// pick the single best-scoring tile across the WHOLE map with no notion of
+// "nearby" beyond minDepositDistanceFromWarehouse's lower bound, so a
+// cluster could previously land clear across the quadrant from a
+// faction's own base. Every mineral tile must now sit within
+// maxDepositDistanceFromWarehouse of SOME warehouse (each quadrant's own,
+// by the four-way symmetry mirrorNaturalResourcesForFairness guarantees).
+func TestNewDuelGame_MineralsLandNearTheirOwnWarehouse(t *testing.T) {
+	for attempt := 0; attempt < 5; attempt++ {
+		g := newDuelGame([]aiDifficulty{AINormal, AINormal, AINormal})
+		var warehouses []*building.Building
+		for _, b := range g.buildings {
+			if b.Kind == building.Warehouse {
+				warehouses = append(warehouses, b)
+			}
+		}
+		for _, b := range g.buildings {
+			switch b.Kind {
+			case building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
+			default:
+				continue
+			}
+			nearest := math.Inf(1)
+			for _, wh := range warehouses {
+				dx, dy := float64(b.X-wh.X), float64(b.Y-wh.Y)
+				if d := math.Hypot(dx, dy); d < nearest {
+					nearest = d
+				}
+			}
+			if nearest > maxDepositDistanceFromWarehouse {
+				t.Fatalf("attempt %d: %v at (%d,%d) is %.1f tiles from its nearest warehouse, want <= %d", attempt, b.Kind, b.X, b.Y, nearest, maxDepositDistanceFromWarehouse)
+			}
+		}
+	}
+}
+
 // countAIConstructedBuildings counts the AI's own player/AI-constructed
 // buildings, excluding natural resource nodes -- g.ownedBuildings(1) now
 // also returns every Tree/Fish/deposit on the whole map (see

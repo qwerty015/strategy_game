@@ -57,6 +57,23 @@ const (
 	duelIronOreDepositTiles = 1
 	duelCoalDepositTiles    = 3
 	duelStoneDepositTiles   = 2
+
+	// duelTreeTilesPerQuadrant is half a percent of ONE quadrant's own
+	// area, per the user's explicit request ("по деревьем... по 0.5%
+	// клеток в зоне юзера") -- see seedTreesWithCount's doc comment for
+	// why the plain single-player seedTrees (one percent of THIS grid's
+	// own area) massively overshot on a duel map, whose grid is the
+	// whole 4-quadrant map, not one quadrant.
+	duelTreeTilesPerQuadrant = duelMapWidth * duelMapHeight * 5 / (4 * 1000)
+
+	// maxDepositDistanceFromWarehouse caps how far a mineral cluster's
+	// canonical region may land from the player's own warehouse, per the
+	// user's explicit "переделай спавн ресурсов чтоб они появлялись рядом
+	// а не раскиданые на карте" -- see growFixedDepositRegion/
+	// regionWithinDistance. minDepositDistanceFromWarehouse (10) already
+	// keeps it from landing right on top of the warehouse; this keeps it
+	// from landing clear across the quadrant instead.
+	maxDepositDistanceFromWarehouse = 20
 )
 
 // quadrant identifies one of the four territories a duel map is divided
@@ -250,7 +267,6 @@ var quadrantAssignmentOrder = [quadrantCount]quadrant{quadrantNW, quadrantSE, qu
 // folds the same canonical region into all four quadrants below, same as
 // everything else natural.
 func newDuelGame(difficulties []aiDifficulty) *Game {
-	mapSeed := newMapSeed()
 	grid := world.NewGrid(duelMapWidth, duelMapHeight)
 	isthmuses := growQuadrantWaterCross(grid)
 
@@ -287,8 +303,18 @@ func newDuelGame(difficulties []aiDifficulty) *Game {
 	}
 
 	playerPoint := points[quadrantAssignmentOrder[0]]
-	buildings = seedTrees(grid, buildings)
-	buildings = seedThickets(grid, buildings, mapSeed^0x27d4eb2f)
+	// seedTreesWithCount, not seedTrees/seedThickets -- a real playtest
+	// report ("деревьев очень много спавнится на карте... что-то явно
+	// сломалось в генерации"): seedTrees' own one-percent rule already
+	// scales with THIS grid's area, and this grid is the whole 4-quadrant
+	// duel map, much bigger than a single-player map -- seedThickets'
+	// dense clusters piled on top scaled the same way. Per the user's
+	// explicit request ("по деревьем... по 0.5% клеток в зоне юзера" +
+	// "разбросаны, просто реже", not clustered like a mineral deposit):
+	// half a percent of ONE quadrant's own area, scattered the same way
+	// seedTrees always has, with no separate thicket-cluster mechanic on
+	// the duel map at all.
+	buildings = seedTreesWithCount(grid, buildings, duelTreeTilesPerQuadrant)
 	buildings = seedFish(grid, buildings)
 	buildings = pruneNaturalResourcesFromIsthmus(buildings, isthmuses)
 	// Trees/Thickets/Fish are mirrored into their own final, stable
@@ -309,10 +335,10 @@ func newDuelGame(difficulties []aiDifficulty) *Game {
 	// entirely.
 	buildings = mirrorNaturalResourcesForFairness(grid, buildings, points)
 
-	buildings = growFixedDepositRegion(grid, buildings, building.StoneDeposit, duelStoneDepositTiles, defaultStoneSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses, points)
-	buildings = growFixedDepositRegion(grid, buildings, building.CoalDeposit, duelCoalDepositTiles, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses, points)
-	buildings = growFixedDepositRegion(grid, buildings, building.GoldOreDeposit, duelGoldOreDepositTiles, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses, points)
-	buildings = growFixedDepositRegion(grid, buildings, building.IronOreDeposit, duelIronOreDepositTiles, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses, points)
+	buildings = growFixedDepositRegion(grid, buildings, building.StoneDeposit, duelStoneDepositTiles, defaultStoneSeed, playerPoint, minDepositDistanceFromWarehouse, maxDepositDistanceFromWarehouse, isthmuses, points)
+	buildings = growFixedDepositRegion(grid, buildings, building.CoalDeposit, duelCoalDepositTiles, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse, maxDepositDistanceFromWarehouse, isthmuses, points)
+	buildings = growFixedDepositRegion(grid, buildings, building.GoldOreDeposit, duelGoldOreDepositTiles, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse, maxDepositDistanceFromWarehouse, isthmuses, points)
+	buildings = growFixedDepositRegion(grid, buildings, building.IronOreDeposit, duelIronOreDepositTiles, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse, maxDepositDistanceFromWarehouse, isthmuses, points)
 	buildings = pruneNaturalResourcesFromIsthmus(buildings, isthmuses)
 	// Idempotent for the already-symmetric trees/thickets/fish (folding a
 	// symmetric set back to canonical and re-mirroring it just recreates
@@ -429,7 +455,15 @@ const maxFixedDepositAttempts = 25
 //     entirely, silently failing the real check later. Fixed by
 //     replicating that same per-quadrant distance test here too, against
 //     all four real warehouse points (see regionSurvivesMirroring).
-func growFixedDepositRegion(grid *world.Grid, buildings []*building.Building, kind building.Kind, target int, seed uint32, avoid gridPoint, minDistance int, isthmuses []image.Rectangle, warehousePoints [quadrantCount]gridPoint) []*building.Building {
+//
+// maxDistance (see regionWithinDistance) is the separate, later addition
+// answering the user's explicit "переделай спавн ресурсов чтоб они
+// появлялись рядом а не раскиданые на карте": findStoneStart/findOreStart
+// pick the single best-scoring tile across the WHOLE map with no
+// awareness of avoid's own position beyond "not too close", so a
+// perfectly valid region could still land clear across the quadrant from
+// the player's own base. maxDistance <= 0 disables the constraint.
+func growFixedDepositRegion(grid *world.Grid, buildings []*building.Building, kind building.Kind, target int, seed uint32, avoid gridPoint, minDistance, maxDistance int, isthmuses []image.Rectangle, warehousePoints [quadrantCount]gridPoint) []*building.Building {
 	if target <= 0 {
 		return buildings
 	}
@@ -446,6 +480,9 @@ func growFixedDepositRegion(grid *world.Grid, buildings []*building.Building, ki
 		added := grown[len(buildings):]
 		if len(added) < target {
 			continue // this attempt's region came up short -- try another seed
+		}
+		if !regionWithinDistance(added, avoid, maxDistance) {
+			continue // too far from the player's own warehouse -- try another seed
 		}
 		if !regionClearOfIsthmuses(added, isthmuses) {
 			continue
@@ -475,6 +512,25 @@ func regionClearOfIsthmuses(added []*building.Building, isthmuses []image.Rectan
 			if p.In(isthmus.Inset(-isthmusApproachBuffer)) {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+// regionWithinDistance reports whether every tile in added sits within
+// maxDistance of avoid (maxDistance <= 0 disables the check) -- see
+// growFixedDepositRegion's own doc comment on maxDistance for why this
+// exists (findStoneStart/findOreStart's best-scoring pick otherwise has
+// no notion of "nearby", only "not too close").
+func regionWithinDistance(added []*building.Building, avoid gridPoint, maxDistance int) bool {
+	if maxDistance <= 0 {
+		return true
+	}
+	maxDistSq := float64(maxDistance * maxDistance)
+	for _, b := range added {
+		dx, dy := float64(b.X-avoid.x), float64(b.Y-avoid.y)
+		if dx*dx+dy*dy > maxDistSq {
+			return false
 		}
 	}
 	return true

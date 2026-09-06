@@ -4594,8 +4594,21 @@ func treePlacementKeepsEveryoneReachable(g *world.Grid, existing []*building.Bui
 // scattered while old-save migration remains reproducible. CanPlace also
 // protects against roads, buildings, and trees already occupying a cell.
 func seedTrees(grid *world.Grid, buildings []*building.Building) []*building.Building {
-	maxTrees := grid.Width * grid.Height / 100
-	if maxTrees == 0 {
+	return seedTreesWithCount(grid, buildings, grid.Width*grid.Height/100)
+}
+
+// seedTreesWithCount is seedTrees with an explicit tile budget instead of
+// the single-player one-percent-of-this-grid's-own-area rule -- see
+// newDuelGame's use of it: the duel map's own grid is the WHOLE
+// 4-quadrant map, much bigger than a single-player map, so reusing
+// seedTrees' own area-based formula there scattered several times as many
+// trees as intended (a real playtest report, "деревьев очень много
+// спавнится на карте... что-то явно сломалось в генерации" -- confirmed:
+// seedTrees alone already scales with the whole map, and seedThickets
+// piled dense clusters on top of that, scaling the same way). The caller
+// works out the right budget for its own map (see duelTreeTilesPerQuadrant).
+func seedTreesWithCount(grid *world.Grid, buildings []*building.Building, maxTrees int) []*building.Building {
+	if maxTrees <= 0 {
 		return buildings
 	}
 
