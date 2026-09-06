@@ -31,12 +31,19 @@ func Tick() {
 }
 
 var (
-	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}    // freshly tilled earth (tints assets.Fertile)
-	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255}  // golden, ready to harvest
-	vineyardSoil   = color.RGBA{R: 80, G: 61, B: 38, A: 255}    // darker soil for grape rows
-	unstaffedTint  = color.RGBA{R: 214, G: 63, B: 55, A: 90}    // translucent red over a workerless building
-	stoneFullColor = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
-	stoneWornColor = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
+	soilColor      = color.RGBA{R: 92, G: 66, B: 38, A: 255}   // freshly tilled earth (tints assets.Fertile)
+	ripeWheatColor = color.RGBA{R: 231, G: 196, B: 84, A: 255} // golden, ready to harvest
+	vineyardSoil   = color.RGBA{R: 80, G: 61, B: 38, A: 255}   // darker soil for grape rows
+	unstaffedTint  = color.RGBA{R: 214, G: 63, B: 55, A: 90}   // translucent red over a workerless building
+	// hoverHighlightColor rings a building on the map while its kind's
+	// card is hovered in the build panel's "Стройка" tab, per the user's
+	// explicit request ("при наведении на постройку которая есть,
+	// подсвечивай на карте постройки") -- a bright, cool color that never
+	// gets confused with unstaffedTint's red or an owner's own faction
+	// outline color (see colorForOwner).
+	hoverHighlightColor = color.RGBA{R: 90, G: 220, B: 235, A: 255}
+	stoneFullColor      = color.RGBA{R: 150, G: 150, B: 150, A: 255} // freshly placed, full Reserve
+	stoneWornColor      = color.RGBA{R: 196, G: 189, B: 150, A: 255} // nearly spent, sun-bleached
 
 	coalWornColor    = color.RGBA{R: 150, G: 150, B: 150, A: 255} // nearly spent, ashen
 	goldOreWornColor = color.RGBA{R: 210, G: 200, B: 150, A: 255} // nearly spent, pale
@@ -73,7 +80,7 @@ func lerpColor(a, b color.RGBA, t float32) color.RGBA {
 // than the tile itself (see buildingHeight), with a production-progress bar
 // underneath. MillFrames contains three compact sail positions, switched
 // periodically to animate the windmill.
-func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera, unstaffed, disconnected map[*building.Building]bool) {
+func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building.Building, cam *Camera, unstaffed, disconnected, highlighted map[*building.Building]bool) {
 	tilePixels := cam.TilePixels()
 	// Two tiles cover tall roofs, construction effects and the one-tile
 	// prefetch ring while the camera pans. Objects outside this rectangle are
@@ -295,6 +302,12 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			vector.FillRect(screen, float32(sx), float32(sy), size, size, unstaffedTint, false)
 		case disconnected[b], buildingStallReason(b) != stallNone:
 			drawIdleBubble(screen, b.Kind, sx, sy, tilePixels)
+		}
+		if highlighted[b] {
+			// A slow pulse (not a static ring) is what actually catches the
+			// eye among everything else already drawn on a busy map.
+			pulse := float32(math.Sin(float64(animFrame)/15)*0.5+0.5) * 3
+			vector.StrokeRect(screen, float32(sx)-pulse, float32(sy)-pulse, size+pulse*2, size+pulse*2, 3, hoverHighlightColor, false)
 		}
 		drawOwnerOutline(screen, b, sx, sy, size)
 	}

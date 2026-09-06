@@ -4,6 +4,7 @@ import (
 	"image"
 	"testing"
 
+	"strategy_game/internal/building"
 	"strategy_game/internal/world"
 )
 
@@ -50,4 +51,50 @@ func abs(v int) int {
 		return -v
 	}
 	return v
+}
+
+// TestMinimapBuildingColor_OpponentBuildingsUseTheirFactionColor is the
+// regression for the user's explicit request ("раскрашивай постройки
+// противников на миникарте согласно цвету игрока"): an opponent-owned
+// building must show up on the minimap in that faction's own color (see
+// colorForOwner, already used for the main map's drawOwnerOutline), not
+// the generic kind-bucket color every building used to get regardless of
+// owner.
+func TestMinimapBuildingColor_OpponentBuildingsUseTheirFactionColor(t *testing.T) {
+	for owner := 1; owner <= 3; owner++ {
+		got := minimapBuildingColor(building.Barracks, owner)
+		want := colorForOwner(owner)
+		if got != want {
+			t.Errorf("owner %d: minimapBuildingColor(Barracks, %d) = %v, want %v (colorForOwner)", owner, owner, got, want)
+		}
+	}
+}
+
+// TestMinimapBuildingColor_PlayerBuildingsUnchanged locks in that Owner 0
+// (the player, and every building in an ordinary single-player game) keeps
+// exactly its old kind-bucket color -- this change must not alter how a
+// single-player minimap has always looked.
+func TestMinimapBuildingColor_PlayerBuildingsUnchanged(t *testing.T) {
+	warehouse := minimapBuildingColor(building.Warehouse, 0)
+	if warehouse != minimapBuildingColor(building.Tavern, 0) {
+		t.Fatalf("Warehouse and Tavern (owner 0) should share the same bucket color")
+	}
+	other := minimapBuildingColor(building.Farm, 0)
+	if other == warehouse {
+		t.Fatalf("Farm (owner 0) should not share the Warehouse/Tavern bucket color")
+	}
+}
+
+// TestMinimapBuildingColor_NaturalResourcesAndRoadsIgnoreOwner keeps
+// shared/neutral map objects reading as neutral regardless of which
+// faction happens to be nearest -- these aren't territory markers (same
+// convention as drawOwnerOutline/isNaturalResourceKind elsewhere).
+func TestMinimapBuildingColor_NaturalResourcesAndRoadsIgnoreOwner(t *testing.T) {
+	for _, kind := range []building.Kind{building.Road, building.Tree, building.Fish, building.StoneDeposit, building.CoalDeposit} {
+		neutral := minimapBuildingColor(kind, 0)
+		owned := minimapBuildingColor(kind, 1)
+		if neutral != owned {
+			t.Errorf("%v: owner 0 color %v != owner 1 color %v, want them equal (neutral)", kind, neutral, owned)
+		}
+	}
 }

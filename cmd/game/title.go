@@ -601,7 +601,7 @@ func (g *Game) drawFrontScreen(screen *ebiten.Image) {
 	// the player hasn't triggered themselves.
 	render.SetWorldTicks(worldclock.TicksPerDay / 2)
 	render.DrawGrid(screen, g.grid, g.camera)
-	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, map[*building.Building]bool{}, map[*building.Building]bool{})
+	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, map[*building.Building]bool{}, map[*building.Building]bool{}, nil)
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera, 0)
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera, 0)
 	render.DrawAmbientSkyLife(screen, g.grid, g.camera)

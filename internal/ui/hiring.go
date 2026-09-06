@@ -55,3 +55,13 @@ type HireOption struct {
 	// рекомендуется слуг".
 	Recommended int
 }
+
+// HasEmptyWorkplace reports whether at least one building matching this
+// profession stands finished but unstaffed -- per the user's explicit
+// request ("во вкладке 'юниты' выделяй красным юнитов которых нет
+// (пустые здания)"). A Limit of zero (serfs, the one town-wide unit with
+// no dedicated building) never counts as "empty" -- there's no building
+// to be missing a worker in.
+func (o HireOption) HasEmptyWorkplace() bool {
+	return o.Limit > 0 && o.Current < o.Limit
+}

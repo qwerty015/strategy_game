@@ -1000,6 +1000,31 @@ func (g *Game) finishedBuildingCounts() map[building.Kind]int {
 	return counts
 }
 
+// hoveredExistingBuildingKind reports the building kind whose card is
+// currently under the cursor in the Build tab (Layout.BuildIndexAt, the
+// same hit-test the click handler already uses), but only when the
+// player actually has at least one finished building of that kind --
+// per the user's explicit request ("во вкладке 'Стройка', при наведении
+// на постройку которая есть, подсвечивай на карте постройки"). Used by
+// Draw to highlight every matching building on the map; false for every
+// other tab/state (paused, a different tab open, hovering an empty
+// palette slot) so nothing lights up with nothing to show for it.
+func (g *Game) hoveredExistingBuildingKind() (building.Kind, bool) {
+	if g.leftTab != ui.BuildTab {
+		return 0, false
+	}
+	mx, my := ebiten.CursorPosition()
+	index, ok := g.layout.BuildIndexAt(mx, my, len(g.palette.Kinds), g.leftScrollBuild)
+	if !ok || index >= len(g.palette.Kinds) {
+		return 0, false
+	}
+	kind := g.palette.Kinds[index]
+	if g.finishedBuildingCounts()[kind] == 0 {
+		return 0, false
+	}
+	return kind, true
+}
+
 // producedResourceTypes scans the player's own completed buildings once
 // and reports every resource type at least one of them can currently
 // output (primary or secondary, primary or alt recipe) -- the "a producer
@@ -5646,7 +5671,16 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			disconnected[b] = true
 		}
 	}
-	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, g.unstaffedWorkerBuildings(), disconnected)
+	var highlighted map[*building.Building]bool
+	if kind, ok := g.hoveredExistingBuildingKind(); ok {
+		highlighted = make(map[*building.Building]bool)
+		for _, b := range g.ownedBuildings(0) {
+			if b.Kind == kind && b.ConstructionStage == building.ConstructionNone {
+				highlighted[b] = true
+			}
+		}
+	}
+	render.DrawBuildings(screen, g.grid, g.buildings, g.camera, g.unstaffedWorkerBuildings(), disconnected, highlighted)
 	render.DrawSerfs(screen, g.logi.Serfs, g.camera, 0)
 	render.DrawVillagers(screen, g.vills.Villagers, g.camera, 0)
 	render.DrawLumberjacks(screen, g.jacks.Lumberjacks, g.camera, 0)

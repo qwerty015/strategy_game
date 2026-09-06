@@ -4078,6 +4078,49 @@ SaveAndLoadRoundTripsTheAIFaction`: его собственные 5000 тико�
 `internal/save`, и `internal/save` через prebuilt-binary) прогнан и
 зелёный.
 
+## Три UI-фикса: пустые здания, подсветка на карте, цвет на миникарте
+
+Три отдельных запроса пользователя, каждый — небольшая, независимая
+доработка UI:
+
+1. **"во вкладке 'юниты' выделяй красным юнитов которых нет (пустые
+   здания)"** — `ui.HireOption` получил `HasEmptyWorkplace() bool`
+   (`Limit > 0 && Current < Limit` — серfы с `Limit == 0` никогда не
+   считаются "пустыми", им некуда быть пустыми). `drawHireCardInfo`
+   красит счётчик "N/M" в `emptyWorkplaceTextColor` (тёплый
+   предупреждающий красный), когда это так — новый `DrawCompactMenuTextColor`
+   в `text.go` (тот же outlined-стиль, что и обычный `DrawCompactMenuText`,
+   но с явным цветом заливки).
+2. **"во вкладке 'Стройка', при наведении на постройку которая есть,
+   подсвечивай на карте постройки"** — новый `Game.hoveredExistingBuildingKind()`
+   (`cmd/game/main.go`) переиспользует уже существующий
+   `Layout.BuildIndexAt` (тот же хит-тест, что и клик по карточке) и
+   `finishedBuildingCounts()`, чтобы определить, на какой ИМЕЮЩЕЙСЯ
+   постройке сейчас наведена карточка. `render.DrawBuildings` получил
+   новый параметр `highlighted map[*building.Building]bool` — обводит
+   каждое совпадающее здание пульсирующей бирюзовой рамкой
+   (`hoverHighlightColor`, `vector.StrokeRect` с амплитудой на
+   `animFrame`, тот же анимационный счётчик, что уже используют другие
+   пульсирующие эффекты в этом файле).
+3. **"раскрашивай постройки противников на миникарте согласно цвету
+   игрока"** — `minimapBuildingColor(kind, owner)` получил параметр
+   `owner`: дорога/дерево/рыба/месторождения остаются нейтральными
+   (не территориальные маркеры, тот же принцип, что уже применяется в
+   `drawOwnerOutline`/`isNaturalResourceKind`), а любое другое здание с
+   `Owner != 0` красится в `colorForOwner(owner)` вместо общего
+   оранжевого "прочее" — та же палитра фракций, что уже видна на
+   основной карте.
+
+### Тесты
+
+`internal/ui/hiring_test.go`: `TestHireOption_HasEmptyWorkplace` (5
+случаев: нет зданий вовсе, одно пустое, частично занято, все заняты,
+серf — никогда не флагуется). `internal/render/minimap_test.go`:
+`TestMinimapBuildingColor_OpponentBuildingsUseTheirFactionColor`,
+`TestMinimapBuildingColor_PlayerBuildingsUnchanged`,
+`TestMinimapBuildingColor_NaturalResourcesAndRoadsIgnoreOwner`. Полный
+набор тестов прогнан и зелёный.
+
 ## Текущий план
 
 Исходный план MVP хранится отдельно от репозитория, в файлах планирования

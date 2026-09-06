@@ -67,10 +67,22 @@ func DrawInspectorText(screen *ebiten.Image, s string, x, y float64) {
 }
 
 func drawOutlinedText(screen *ebiten.Image, s string, x, y float64) {
+	drawOutlinedTextColor(screen, s, x, y, color.White)
+}
+
+// DrawCompactMenuTextColor is DrawCompactMenuText with an explicit fill
+// color instead of white -- used to flag urgent state (an empty
+// workplace's hire card, see drawHireCardInfo) without a whole separate
+// text-drawing path.
+func DrawCompactMenuTextColor(screen *ebiten.Image, s string, x, y float64, tint color.Color) {
+	drawOutlinedTextColor(screen, s, x, y, tint)
+}
+
+func drawOutlinedTextColor(screen *ebiten.Image, s string, x, y float64, tint color.Color) {
 	for _, offset := range [][2]float64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
 		drawTextColor(screen, s, x+offset[0], y+offset[1], textOutlineColor)
 	}
-	drawTextColor(screen, s, x, y, color.White)
+	drawTextColor(screen, s, x, y, tint)
 }
 
 func drawTextColor(screen *ebiten.Image, s string, x, y float64, tint color.Color) {

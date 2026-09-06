@@ -38,6 +38,11 @@ var (
 	// a hire option with too little gold, or (see DrawBuildPanel) a building
 	// whose production chain isn't ready yet (building.Unlocked).
 	unavailableCardColor = color.RGBA{R: 69, G: 50, B: 48, A: 245}
+	// emptyWorkplaceTextColor flags a hire card whose Limit exceeds
+	// Current -- a real building of this profession stands empty, per the
+	// user's explicit request ("во вкладке 'юниты' выделяй красным
+	// юнитов которых нет (пустые здания)"). See drawHireCardInfo.
+	emptyWorkplaceTextColor = color.RGBA{R: 235, G: 80, B: 70, A: 255}
 	// lockedCardWashColor darkens a locked build card's icon and text too,
 	// not just its background -- see DrawBuildPanel's doc comment on why
 	// unavailableCardColor alone read as barely different from an ordinary
@@ -276,6 +281,10 @@ func drawHireCardInfo(screen *ebiten.Image, option HireOption, x, y int) {
 	}
 	if option.Recommended > 0 {
 		count += " (" + fmt.Sprintf(i18n.T().RecommendedServeCountLabel, option.Recommended) + ")"
+	}
+	if option.HasEmptyWorkplace() {
+		DrawCompactMenuTextColor(screen, count, float64(x+resourceIconSize+4), float64(y), emptyWorkplaceTextColor)
+		return
 	}
 	DrawCompactMenuText(screen, count, float64(x+resourceIconSize+4), float64(y))
 }

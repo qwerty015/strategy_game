@@ -29,7 +29,17 @@ var minimapTerrainColor = map[world.TerrainType]color.RGBA{
 // minimapBuildingColor buckets every building kind into a small readable
 // palette rather than 21 near-identical dots -- the minimap is meant for
 // at-a-glance orientation, not for telling a Mill from a Bakery.
-func minimapBuildingColor(k building.Kind) color.RGBA {
+//
+// A road/tree/fish/deposit tile keeps its neutral bucket color regardless
+// of owner (same convention as drawOwnerOutline/isNaturalResourceKind
+// elsewhere -- these aren't faction territory markers). Everything else
+// owned by another faction (owner != 0) uses that faction's own color
+// (see colorForOwner) instead of the generic orange bucket, per the
+// user's explicit request ("раскрашивай постройки противников на
+// миникарте согласно цвету игрока") -- so an opponent's base reads as a
+// distinct blob of their own color at a glance, the same way it already
+// does on the main map via drawOwnerOutline.
+func minimapBuildingColor(k building.Kind, owner int) color.RGBA {
 	switch k {
 	case building.Road:
 		return color.RGBA{R: 176, G: 168, B: 150, A: 255}
@@ -39,6 +49,11 @@ func minimapBuildingColor(k building.Kind) color.RGBA {
 		return color.RGBA{R: 130, G: 190, B: 210, A: 255}
 	case building.StoneDeposit, building.CoalDeposit, building.GoldOreDeposit, building.IronOreDeposit:
 		return color.RGBA{R: 150, G: 150, B: 150, A: 255}
+	}
+	if owner != 0 {
+		return colorForOwner(owner)
+	}
+	switch k {
 	case building.Warehouse, building.Tavern:
 		return color.RGBA{R: 224, G: 168, B: 68, A: 255}
 	default:
@@ -84,7 +99,7 @@ func DrawMinimap(screen *ebiten.Image, grid *world.Grid, buildings []*building.B
 		}
 		x := float32(rect.Min.X) + float32(float64(b.X)*scaleX)
 		y := float32(rect.Min.Y) + float32(float64(b.Y)*scaleY)
-		vector.FillRect(screen, x, y, maxPixel(scaleX), maxPixel(scaleY), minimapBuildingColor(b.Kind), false)
+		vector.FillRect(screen, x, y, maxPixel(scaleX), maxPixel(scaleY), minimapBuildingColor(b.Kind, b.Owner), false)
 	}
 
 	drawMinimapViewport(screen, grid, cam, rect)
