@@ -155,6 +155,47 @@ func TestNewDuelGame_NaturalResourcesAreExactlyMirrored(t *testing.T) {
 	}
 }
 
+// TestNewDuelGame_MineralDepositCountsAreFixedNotPercentage is the
+// regression for a real playtest report ("деревьев просто какое-то
+// нереальное количество создалось", filed against ore/stone specifically
+// -- see AGENTS.md): the duel map used to reuse the single-player
+// percentage-based seedStoneDeposits/seedOreDeposits across its whole
+// (much bigger, 4-quadrant) area, producing hundreds of tiles of each
+// mineral. Each mineral must now land in exactly duelXxxDepositTiles-sized
+// canonical clusters, mirrored into up to 4 quadrants -- so the map-wide
+// total must be an exact multiple of the per-quadrant count, never more
+// (a self-mirroring tile sitting exactly on a mirror axis only ever
+// reduces the total below 4x, it can't inflate it above the per-quadrant
+// count times the number of quadrants that actually got a copy).
+func TestNewDuelGame_MineralDepositCountsAreFixedNotPercentage(t *testing.T) {
+	cases := []struct {
+		kind  building.Kind
+		tiles int
+	}{
+		{building.StoneDeposit, duelStoneDepositTiles},
+		{building.CoalDeposit, duelCoalDepositTiles},
+		{building.GoldOreDeposit, duelGoldOreDepositTiles},
+		{building.IronOreDeposit, duelIronOreDepositTiles},
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		g := newDuelGame([]aiDifficulty{AINormal, AINormal, AINormal})
+		for _, c := range cases {
+			count := 0
+			for _, b := range g.buildings {
+				if b.Kind == c.kind {
+					count++
+				}
+			}
+			if count == 0 {
+				t.Fatalf("attempt %d: kind=%v has zero tiles anywhere on the map, want up to %d per quadrant", attempt, c.kind, c.tiles)
+			}
+			if count > c.tiles*int(quadrantCount) {
+				t.Fatalf("attempt %d: kind=%v has %d tiles total, want at most %d (%d per quadrant x %d quadrants) -- looks percentage-scaled again, not fixed", attempt, c.kind, count, c.tiles*int(quadrantCount), c.tiles, int(quadrantCount))
+			}
+		}
+	}
+}
+
 // countAIConstructedBuildings counts the AI's own player/AI-constructed
 // buildings, excluding natural resource nodes -- g.ownedBuildings(1) now
 // also returns every Tree/Fish/deposit on the whole map (see

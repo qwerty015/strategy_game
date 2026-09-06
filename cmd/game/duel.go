@@ -41,6 +41,22 @@ const (
 	// with narrow dry crossings between neighbouring quadrants.
 	duelWaterStripWidth = 6
 	duelIsthmusWidth    = 4
+
+	// duelXxxDepositTiles are the exact per-quadrant tile counts for each
+	// mineral on a duel map, per the user's explicit request ("оставь
+	// только по 1 клетке золота, 3 клетки угля, 2 клетки камня, и 1
+	// железо"). Each count is placed once, canonically, then
+	// mirrorNaturalResourcesForFairness folds it into all four quadrants
+	// -- so the map ends up with up to 4x this many of each mineral in
+	// total, one cluster per quadrant. Replaces the single-player
+	// percentage-based seedStoneDeposits/seedOreDeposits for the duel map
+	// specifically (see growFixedDepositRegion) -- those scale with the
+	// whole map's area, which on this much bigger 4-quadrant map produced
+	// a wildly overabundant result a real playtest report called out.
+	duelGoldOreDepositTiles = 1
+	duelIronOreDepositTiles = 1
+	duelCoalDepositTiles    = 3
+	duelStoneDepositTiles   = 2
 )
 
 // quadrant identifies one of the four territories a duel map is divided
@@ -213,15 +229,26 @@ var quadrantAssignmentOrder = [quadrantCount]quadrant{quadrantNW, quadrantSE, qu
 // remaining three quadrants as len(difficulties) calls for, and
 // identical starting resources for every faction on any difficulty.
 //
-// Deliberately reuses the ordinary single-player generation functions
-// (seedTrees/seedThickets/seedFish/seedStoneDeposits/seedOreDeposits)
-// called once across the whole map rather than mirroring one quadrant's
-// output into the other three -- a real simplification from the
-// original design (see AGENTS.md's "1×1 против ИИ" notes): every
-// quadrant still gets comparable resources at the same density the
-// single-player map already uses, just not a pixel-exact mirror image
-// of each other before mirrorNaturalResourcesForFairness folds them into
-// one.
+// Deliberately reuses the ordinary single-player generation functions for
+// Trees/Thickets/Fish (seedTrees/seedThickets/seedFish) called once across
+// the whole map rather than mirroring one quadrant's output into the
+// other three -- a real simplification from the original design (see
+// AGENTS.md's "1×1 против ИИ" notes): every quadrant still gets comparable
+// wood/food at the same density the single-player map already uses, just
+// not a pixel-exact mirror image of each other before
+// mirrorNaturalResourcesForFairness folds them into one.
+//
+// Mineral deposits (Stone/Coal/GoldOre/IronOre) do NOT reuse the
+// single-player percentage-based seedStoneDeposits/seedOreDeposits --
+// those scale with the WHOLE map's area, which on this much bigger
+// 4-quadrant map produced a wildly overabundant duel map (hundreds of
+// tiles of each) that a real playtest report called out by name
+// ("деревьев просто какое-то нереальное количество создалось" -- filed
+// against ore/stone specifically, see the fixed duelXxxDepositTiles
+// constants below and growFixedDepositRegion). Each mineral gets exactly
+// that many tiles placed once, then mirrorNaturalResourcesForFairness
+// folds the same canonical region into all four quadrants below, same as
+// everything else natural.
 func newDuelGame(difficulties []aiDifficulty) *Game {
 	mapSeed := newMapSeed()
 	grid := world.NewGrid(duelMapWidth, duelMapHeight)
@@ -263,10 +290,10 @@ func newDuelGame(difficulties []aiDifficulty) *Game {
 	buildings = seedTrees(grid, buildings)
 	buildings = seedThickets(grid, buildings, mapSeed^0x27d4eb2f)
 	buildings = seedFish(grid, buildings)
-	buildings = seedStoneDeposits(grid, buildings, defaultStoneSeed, playerPoint, minDepositDistanceFromWarehouse)
-	buildings = seedOreDeposits(grid, buildings, building.CoalDeposit, coalMinPercent, coalMaxPercent, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse)
-	buildings = seedOreDeposits(grid, buildings, building.GoldOreDeposit, goldOreMinPercent, goldOreMaxPercent, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse)
-	buildings = seedOreDeposits(grid, buildings, building.IronOreDeposit, ironOreMinPercent, ironOreMaxPercent, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse)
+	buildings = growFixedDepositRegion(grid, buildings, building.StoneDeposit, duelStoneDepositTiles, defaultStoneSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses)
+	buildings = growFixedDepositRegion(grid, buildings, building.CoalDeposit, duelCoalDepositTiles, defaultCoalSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses)
+	buildings = growFixedDepositRegion(grid, buildings, building.GoldOreDeposit, duelGoldOreDepositTiles, defaultGoldOreSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses)
+	buildings = growFixedDepositRegion(grid, buildings, building.IronOreDeposit, duelIronOreDepositTiles, defaultIronOreSeed, playerPoint, minDepositDistanceFromWarehouse, isthmuses)
 	buildings = pruneNaturalResourcesFromIsthmus(buildings, isthmuses)
 	buildings = mirrorNaturalResourcesForFairness(grid, buildings, points)
 
@@ -333,6 +360,64 @@ func newDuelGame(difficulties []aiDifficulty) *Game {
 // between two quadrant warehouses is what actually caught this --
 // nothing sat ON the isthmus, but nothing could reach it either.
 const isthmusApproachBuffer = 5
+
+// maxFixedDepositAttempts bounds growFixedDepositRegion's retry loop.
+// Isthmus crossings cover a tiny fraction of a duel map's total area, so a
+// handful of differently-seeded attempts is overwhelmingly likely to land
+// a small (1-3 tile) region entirely clear of all four on the first try or
+// two; this just guards against a pathological seed run.
+const maxFixedDepositAttempts = 25
+
+// growFixedDepositRegion places exactly target deposit tiles of kind
+// (building.StoneDeposit or one of the ore kinds), retrying with a
+// different seed until the whole region survives isthmus pruning intact.
+// Unlike the single-player, percentage-based seedStoneDeposits/
+// seedOreDeposits -- where a total spanning dozens of tiles is split
+// across 2-5 regions, so losing one region to the isthmus barely moves
+// the total -- a duel map's fixed, small per-quadrant count (as low as a
+// single tile, see duelXxxDepositTiles) can't afford to lose its only
+// region to an isthmus crossing and end up with zero of that resource
+// map-wide once mirrorNaturalResourcesForFairness folds it into all four
+// quadrants.
+func growFixedDepositRegion(grid *world.Grid, buildings []*building.Building, kind building.Kind, target int, seed uint32, avoid gridPoint, minDistance int, isthmuses []image.Rectangle) []*building.Building {
+	if target <= 0 {
+		return buildings
+	}
+	grow := func(attemptSeed uint32) []*building.Building {
+		if kind == building.StoneDeposit {
+			return growStoneRegion(grid, buildings, target, attemptSeed, avoid, minDistance)
+		}
+		return growOreRegion(grid, buildings, kind, target, attemptSeed, avoid, minDistance)
+	}
+	for attempt := uint32(0); attempt < maxFixedDepositAttempts; attempt++ {
+		grown := grow(seed ^ attempt*0x9e3779b9)
+		added := grown[len(buildings):]
+		if len(added) < target {
+			continue // this attempt's region came up short -- try another seed
+		}
+		clear := true
+		for _, b := range added {
+			p := image.Point{X: b.X, Y: b.Y}
+			for _, isthmus := range isthmuses {
+				if p.In(isthmus.Inset(-isthmusApproachBuffer)) {
+					clear = false
+					break
+				}
+			}
+			if !clear {
+				break
+			}
+		}
+		if clear {
+			return grown
+		}
+	}
+	// Every attempt either came up short or touched an isthmus -- fall
+	// back to one last unfiltered attempt so the map isn't silently left
+	// with zero of this resource; pruneNaturalResourcesFromIsthmus still
+	// runs afterward as a safety net for whatever this leaves behind.
+	return grow(seed)
+}
 
 // pruneNaturalResourcesFromIsthmus removes any natural resource node
 // (isNaturalResourceKind -- Tree/Fish/StoneDeposit/CoalDeposit/
