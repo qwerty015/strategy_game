@@ -217,6 +217,11 @@ func init() {
 		DuelDefeatSubtitle:    "Every one of your own buildings and units is gone",
 		DuelResultToTitle:     "Main menu",
 
+		FactionColorNominative: map[int]string{0: "You", 1: "Red", 2: "Blue", 3: "Green"},
+		FactionColorAccusative: map[int]string{1: "Red", 2: "Blue", 3: "Green"},
+		FactionDefeatedByFmt:   "%s defeated %s!",
+		FactionDefeatedFmt:     "%s has fallen!",
+
 		SaveSlotsLabel:      "Save slots",
 		SlotEmptyLabel:      "— empty —",
 		SlotSaveButton:      "Save",

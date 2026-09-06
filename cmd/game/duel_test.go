@@ -6,6 +6,7 @@ import (
 	"math"
 	"testing"
 
+	"strategy_game/internal/advisor"
 	"strategy_game/internal/building"
 	"strategy_game/internal/combat"
 	"strategy_game/internal/pathfind"
@@ -518,6 +519,74 @@ func TestDuelGame_FFAResultRequiresEveryBotDefeated(t *testing.T) {
 	g.tickOnce()
 	if g.duelResult != duelResultVictory {
 		t.Fatalf("duelResult = %v after defeating every bot, want duelResultVictory", g.duelResult)
+	}
+}
+
+// TestCheckAIFactionDefeats_AnnouncesOnceWithAHeuristicVictor is the
+// feature the user explicitly requested ("добавь в игровые уведомления
+// (советник), когда синий противник побеждает зеленого например, или
+// другие цвета"): one bot faction's elimination must surface exactly one
+// KindFactionDefeated advisor tip, crediting whichever other still-living
+// faction (the player included) is nearest -- and never announce the
+// same faction's defeat twice.
+func TestCheckAIFactionDefeats_AnnouncesOnceWithAHeuristicVictor(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy, AIEasy})
+	wipeFactionForTest(g, 1)
+	g.tickOnce() // prunes owner 1's buildings so factionDefeated(1) actually reports true
+
+	g.checkAIFactionDefeats()
+	if g.advisorVisible == nil || g.advisorVisible.Kind != advisor.KindFactionDefeated {
+		t.Fatalf("advisorVisible = %+v, want a queued KindFactionDefeated tip", g.advisorVisible)
+	}
+	if g.advisorVisible.DefeatedOwner != 1 {
+		t.Fatalf("DefeatedOwner = %d, want 1", g.advisorVisible.DefeatedOwner)
+	}
+	if v := g.advisorVisible.VictorOwner; v != 0 && v != 2 {
+		t.Fatalf("VictorOwner = %d, want 0 (player) or 2 (the other bot) -- the only two factions still alive", v)
+	}
+
+	// Calling again (as the next periodic tickAdvisor check would) must
+	// not requeue the same faction's defeat a second time.
+	g.acknowledgeAdvisorTip()
+	g.checkAIFactionDefeats()
+	if g.advisorVisible != nil || len(g.advisorQueue) != 0 {
+		t.Fatalf("faction 1's defeat was announced again -- want silence, it was already reported once")
+	}
+}
+
+// TestQueueAdvisorTip_FactionDefeatedBypassesTheUsualDedup is the reason
+// KindFactionDefeated needed its own carve-out in queueAdvisorTip: unlike
+// every other advisor Kind (one ongoing situation, only one instance
+// matters), a match can have several DIFFERENT factions defeated in
+// sequence, and the usual "same Kind already shown/queued/on cooldown"
+// checks would silently swallow every one after the first.
+func TestQueueAdvisorTip_FactionDefeatedBypassesTheUsualDedup(t *testing.T) {
+	g := &Game{}
+	g.queueAdvisorTip(advisor.Tip{Kind: advisor.KindFactionDefeated, DefeatedOwner: 2, VictorOwner: 1})
+	g.queueAdvisorTip(advisor.Tip{Kind: advisor.KindFactionDefeated, DefeatedOwner: 3, VictorOwner: 1})
+
+	if g.advisorVisible == nil || g.advisorVisible.DefeatedOwner != 2 {
+		t.Fatalf("advisorVisible = %+v, want the first faction's defeat (Owner 2) showing", g.advisorVisible)
+	}
+	if len(g.advisorQueue) != 1 || g.advisorQueue[0].DefeatedOwner != 3 {
+		t.Fatalf("advisorQueue = %+v, want the second faction's defeat (Owner 3) still queued behind it, not dropped", g.advisorQueue)
+	}
+}
+
+// TestAdvisorTipText_FactionDefeated locks in both message shapes: a
+// heuristic victor named directly, and the no-attribution fallback.
+func TestAdvisorTipText_FactionDefeated(t *testing.T) {
+	withVictor := advisorTipText(advisor.Tip{Kind: advisor.KindFactionDefeated, DefeatedOwner: 3, VictorOwner: 2})
+	if withVictor != "Синие разгромили Зелёных!" {
+		t.Fatalf("text with a victor = %q, want %q", withVictor, "Синие разгромили Зелёных!")
+	}
+	byPlayer := advisorTipText(advisor.Tip{Kind: advisor.KindFactionDefeated, DefeatedOwner: 1, VictorOwner: 0})
+	if byPlayer != "Вы разгромили Красных!" {
+		t.Fatalf("text with the player as victor = %q, want %q", byPlayer, "Вы разгромили Красных!")
+	}
+	noVictor := advisorTipText(advisor.Tip{Kind: advisor.KindFactionDefeated, DefeatedOwner: 2, VictorOwner: -1})
+	if noVictor != "Синие повержены!" {
+		t.Fatalf("text with no attribution = %q, want %q", noVictor, "Синие повержены!")
 	}
 }
 

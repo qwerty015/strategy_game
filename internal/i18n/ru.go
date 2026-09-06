@@ -217,6 +217,11 @@ func init() {
 		DuelDefeatSubtitle:    "Все ваши постройки и юниты уничтожены",
 		DuelResultToTitle:     "В главное меню",
 
+		FactionColorNominative: map[int]string{0: "Вы", 1: "Красные", 2: "Синие", 3: "Зелёные"},
+		FactionColorAccusative: map[int]string{1: "Красных", 2: "Синих", 3: "Зелёных"},
+		FactionDefeatedByFmt:   "%s разгромили %s!",
+		FactionDefeatedFmt:     "%s повержены!",
+
 		SaveSlotsLabel:      "Сохранения",
 		SlotEmptyLabel:      "— пусто —",
 		SlotSaveButton:      "Сохранить",

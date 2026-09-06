@@ -189,6 +189,24 @@ type Catalog struct {
 	DuelDefeatSubtitle    string
 	DuelResultToTitle     string
 
+	// FactionColorNominative/FactionColorAccusative name each AI faction
+	// by its own map/unit marker color (see render.colorForOwner), keyed
+	// by Owner (1/2/3) -- the advisor notification for one bot faction
+	// eliminating another (see cmd/game's checkAIFactionDefeats, per the
+	// user's explicit request "добавь в игровые уведомления, когда синий
+	// противник побеждает зеленого") needs both a subject and an object
+	// form; Russian's plural substantivized color ("синие", "зелёных")
+	// declines differently in each role, English does not (both map to
+	// the same value there).
+	FactionColorNominative map[int]string
+	FactionColorAccusative map[int]string
+	// FactionDefeatedByFmt formats as (victor nominative, defeated
+	// accusative) -- e.g. "Синие разгромили Зелёных!". FactionDefeatedFmt
+	// is the no-attribution fallback (defeated nominative only) for when
+	// no other faction can be credited (see nearestSurvivingFactionTo).
+	FactionDefeatedByFmt string
+	FactionDefeatedFmt   string
+
 	SaveSlotsLabel      string
 	SlotEmptyLabel      string
 	SlotSaveButton      string

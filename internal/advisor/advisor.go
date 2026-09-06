@@ -61,6 +61,17 @@ const (
 	KindGatherWorkerStuck
 	KindConstructionMaterialsMissing
 	KindGatherWorkerEnclosed
+
+	// KindFactionDefeated reports one AI faction's elimination in an "N
+	// против ИИ" match -- see cmd/game's checkAIFactionDefeats. Unlike
+	// every other Kind here, this is a discrete, one-time event, not an
+	// ongoing situation: several can happen over one match (each bot
+	// faction defeated separately), each permanent (a defeated faction
+	// never un-defeats). cmd/game's queueAdvisorTip special-cases it for
+	// exactly that reason -- the usual per-Kind dedup/cooldown (built for
+	// "only one instance of this situation ever matters at a time") would
+	// wrongly suppress every defeat notification after the first.
+	KindFactionDefeated
 )
 
 // Tip is one actionable observation. Only the fields relevant to its Kind
@@ -89,6 +100,16 @@ type Tip struct {
 	// KindConstructionMaterialsMissing.
 	Resource resource.Type
 	Missing  int
+
+	// DefeatedOwner/VictorOwner are meaningful only for
+	// KindFactionDefeated: which faction (see building.Building.Owner's
+	// convention) was just eliminated, and which one gets heuristic
+	// credit for it (the player, Owner 0, included) -- see cmd/game's
+	// nearestSurvivingFactionTo for how that's picked. VictorOwner is -1
+	// when no attribution could be made (should be rare: the match isn't
+	// over, so some other faction must still stand).
+	DefeatedOwner int
+	VictorOwner   int
 }
 
 // Evaluate returns every situation currently worth a tip, in a fixed

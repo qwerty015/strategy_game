@@ -327,6 +327,11 @@ type Game struct {
 	advisorCooldowns map[advisor.Kind]int
 	advisorQueue     []advisor.Tip
 	advisorVisible   *advisor.Tip
+	// aiDefeatedAnnounced marks which AI factions (by Owner) have already
+	// had their elimination reported via KindFactionDefeated -- see
+	// checkAIFactionDefeats. Permanent once set: a defeated faction never
+	// un-defeats, so unlike advisorCooldowns this never expires.
+	aiDefeatedAnnounced map[int]bool
 
 	camera         *render.Camera
 	palette        *ui.Palette
@@ -3006,6 +3011,73 @@ func (g *Game) tickAdvisor() {
 	for _, tip := range tips {
 		g.queueAdvisorTip(tip)
 	}
+	g.checkAIFactionDefeats()
+}
+
+// checkAIFactionDefeats reports each AI faction's elimination, once, the
+// first time this notices it -- per the user's explicit request ("добавь
+// в игровые уведомления (советник), когда синий противник побеждает
+// зеленого например, или другие цвета"). A no-op outside "N против ИИ"
+// (g.ais empty). checkDuelResult already knows how to tell "defeated"
+// (factionDefeated) and when the WHOLE match ends; this is the one-off,
+// per-faction announcement layered on top of it -- every bot faction
+// still gets checked even after the match is decided (so the last one or
+// two eliminations before an eventual player victory still get their own
+// toast), since Update's own early return on g.duelResult freezes the
+// simulation (and so this call) at that point anyway.
+func (g *Game) checkAIFactionDefeats() {
+	if len(g.ais) == 0 {
+		return
+	}
+	if g.aiDefeatedAnnounced == nil {
+		g.aiDefeatedAnnounced = make(map[int]bool)
+	}
+	for _, f := range g.ais {
+		if g.aiDefeatedAnnounced[f.owner] || !g.factionDefeated(f.owner) {
+			continue
+		}
+		g.aiDefeatedAnnounced[f.owner] = true
+		// f.logi.Warehouse itself is never nil (every faction starts with
+		// one) and, though pruneDestroyedBuildings has by now removed it
+		// from g.buildings, the struct itself is untouched -- its X/Y
+		// still marks where this faction's territory was, the reference
+		// point nearestSurvivingFactionTo needs.
+		victor := g.nearestSurvivingFactionTo(f.logi.Warehouse.X, f.logi.Warehouse.Y, f.owner)
+		g.queueAdvisorTip(advisor.Tip{Kind: advisor.KindFactionDefeated, DefeatedOwner: f.owner, VictorOwner: victor})
+	}
+}
+
+// nearestSurvivingFactionTo heuristically credits a faction's elimination
+// to whichever other still-living faction (the player, Owner 0, included)
+// has the nearest warehouse to (x, y) -- typically the just-defeated
+// faction's own last warehouse position. Not a real kill-attribution
+// system (nothing tracks who actually landed the last hit on a faction as
+// a whole) -- just a reasonable "who was closest to have done this"
+// guess, good enough for a flavor notification. Returns -1 if no other
+// faction is currently alive (should be unreachable in practice: the
+// match isn't over, or checkAIFactionDefeats wouldn't still be running --
+// see Update's early return on g.duelResult -- so some other faction must
+// still stand).
+func (g *Game) nearestSurvivingFactionTo(x, y, excludeOwner int) int {
+	best := -1
+	bestDistSq := -1
+	consider := func(owner, wx, wy int) {
+		dx, dy := wx-x, wy-y
+		distSq := dx*dx + dy*dy
+		if best == -1 || distSq < bestDistSq {
+			best, bestDistSq = owner, distSq
+		}
+	}
+	if excludeOwner != 0 && !g.factionDefeated(0) {
+		consider(0, g.logi.Warehouse.X, g.logi.Warehouse.Y)
+	}
+	for _, f := range g.ais {
+		if f.owner == excludeOwner || g.factionDefeated(f.owner) {
+			continue
+		}
+		consider(f.owner, f.logi.Warehouse.X, f.logi.Warehouse.Y)
+	}
+	return best
 }
 
 // enclosedGatherWorkerTip reports the actual consequence of a sealed wall,
@@ -3058,17 +3130,28 @@ func (g *Game) enclosedGatherWorkerTip() (advisor.Tip, bool) {
 // queueAdvisorTip keeps one visible/queued tip of each kind and respects the
 // acknowledgement cooldown. Placement calls it immediately for a newly
 // unaffordable construction site; periodic evaluation uses the same path.
+//
+// KindFactionDefeated skips all of that: it's a discrete, one-time event
+// (see its own doc comment), not an ongoing situation, so the usual
+// per-Kind dedup/cooldown -- built for "only one instance of this
+// situation ever matters at a time" -- would wrongly swallow every
+// faction's defeat notification after the first one shown/queued/on
+// cooldown. checkAIFactionDefeats already guarantees each owner is only
+// ever queued once (aiDefeatedAnnounced), so there's nothing left for
+// this function to protect against for that Kind.
 func (g *Game) queueAdvisorTip(tip advisor.Tip) {
-	if g.advisorVisible != nil && g.advisorVisible.Kind == tip.Kind {
-		return
-	}
-	for _, queued := range g.advisorQueue {
-		if queued.Kind == tip.Kind {
+	if tip.Kind != advisor.KindFactionDefeated {
+		if g.advisorVisible != nil && g.advisorVisible.Kind == tip.Kind {
 			return
 		}
-	}
-	if readyAt, onCooldown := g.advisorCooldowns[tip.Kind]; onCooldown && g.worldTicks < readyAt {
-		return
+		for _, queued := range g.advisorQueue {
+			if queued.Kind == tip.Kind {
+				return
+			}
+		}
+		if readyAt, onCooldown := g.advisorCooldowns[tip.Kind]; onCooldown && g.worldTicks < readyAt {
+			return
+		}
 	}
 	g.advisorQueue = append(g.advisorQueue, tip)
 	g.advisorPumpQueue()
@@ -3167,6 +3250,15 @@ func advisorTipText(tip advisor.Tip) string {
 		return fmt.Sprintf(t.AdvisorTipGatherWorkerEnclosed, tip.Count, exampleName)
 	case advisor.KindConstructionMaterialsMissing:
 		return fmt.Sprintf(t.AdvisorTipConstructionMaterialsMissing, t.ResourceName[tip.Resource], tip.Missing, exampleName)
+	case advisor.KindFactionDefeated:
+		defeated := t.FactionColorAccusative[tip.DefeatedOwner]
+		if victor, ok := t.FactionColorNominative[tip.VictorOwner]; ok {
+			return fmt.Sprintf(t.FactionDefeatedByFmt, victor, defeated)
+		}
+		// No attribution (nearestSurvivingFactionTo found nobody, should
+		// be unreachable in practice) -- still worth telling the player
+		// someone's gone, just without crediting anyone specific.
+		return fmt.Sprintf(t.FactionDefeatedFmt, t.FactionColorNominative[tip.DefeatedOwner])
 	default:
 		return ""
 	}
