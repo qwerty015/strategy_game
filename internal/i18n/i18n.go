@@ -24,20 +24,21 @@ const Default = RU
 type Catalog struct {
 	WindowTitle string
 
-	Population                  string
-	DeathsLabel                 string
-	KillsLabel                  string
-	ScoreLabel                  string
-	RemovedLabel                string
-	BuildingsRemovedLabel       string
-	UnitsDismissedLabel         string
-	BuildingsLabel              string
-	PlayTimeLabel               string
-	TownSummaryLabel            string
-	DevelopmentLeaderboardLabel string
-	ResourcesInWarehousesLabel  string
-	ResourceName                map[resource.Type]string
-	BuildingName                map[building.Kind]string
+	Population                   string
+	DeathsLabel                  string
+	KillsLabel                   string
+	EnemyBuildingsDestroyedLabel string
+	ScoreLabel                   string
+	RemovedLabel                 string
+	BuildingsRemovedLabel        string
+	UnitsDismissedLabel          string
+	BuildingsLabel               string
+	PlayTimeLabel                string
+	TownSummaryLabel             string
+	DevelopmentLeaderboardLabel  string
+	ResourcesInWarehousesLabel   string
+	ResourceName                 map[resource.Type]string
+	BuildingName                 map[building.Kind]string
 
 	BuildMenuTitle   string
 	BuildTab         string

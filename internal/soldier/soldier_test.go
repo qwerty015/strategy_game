@@ -254,7 +254,7 @@ func TestController_StarvationStillKills(t *testing.T) {
 
 	deaths := 0
 	for range hunger.MaxTicks + 10 {
-		deaths += c.Tick(grid, nil, nil, nil, nil, nil)
+		deaths += c.Tick(grid, nil, nil, nil, nil, nil).Deaths
 	}
 	if deaths != 1 {
 		t.Fatalf("deaths after starving out a soldier with no delivery = %d, want 1", deaths)
@@ -280,6 +280,65 @@ func TestController_AutoEngagesAnOpposingBuildingWithinFactionEngageRange(t *tes
 	c.Tick(grid, nil, nil, opposingBuildings, nil, nil) // auto-engage + kill in one hit (HP == one hit's worth)
 	if rival.HP > 0 {
 		t.Fatalf("rival building HP = %d, want 0 after one hit at exactly combat.DamagePerHit health", rival.HP)
+	}
+}
+
+// TestController_Tick_ReportsBuildingsDestroyedOnLethalHit,
+// TestController_Tick_ReportsKillOnLethalSoldierHit and
+// TestController_Tick_ReportsKillOnIntruderKill are the regression tests
+// for a real playtest report ("счетчик убито врагов не считает юнитов,
+// нужно считать убитых с помощью башни или убитых боевыми юнитами, и
+// введи новый счетчик: 'Разрушено построек'"): Controller.Tick's
+// TickResult must actually report Kills/BuildingsDestroyed for real
+// cross-faction combat, not just Deaths -- cmd/game had no way to credit
+// economy.Population.Kills/EnemyBuildingsDestroyed for anything beyond
+// the sandbox debug enemy before this.
+func TestController_Tick_ReportsBuildingsDestroyedOnLethalHit(t *testing.T) {
+	grid := world.NewGrid(10, 10)
+	c := NewController()
+	c.Spawn(Swordsman, 5, 5)
+	rival := &building.Building{Kind: building.Warehouse, X: 5, Y: 6, HP: combat.DamagePerHit}
+
+	result := c.Tick(grid, nil, nil, []*building.Building{rival}, nil, nil)
+	if result.BuildingsDestroyed != 1 {
+		t.Fatalf("TickResult.BuildingsDestroyed = %d, want 1", result.BuildingsDestroyed)
+	}
+	if result.Kills != 0 {
+		t.Fatalf("TickResult.Kills = %d, want 0 (a building was destroyed, not a unit killed)", result.Kills)
+	}
+}
+
+func TestController_Tick_ReportsKillOnLethalSoldierHit(t *testing.T) {
+	grid := world.NewGrid(10, 10)
+	c := NewController()
+	c.Spawn(Archer, 5, 5)
+	rivalController := NewController()
+	rival := rivalController.Spawn(Swordsman, 5, 5+FactionEngageRange)
+	rival.HP = combat.UnitDamagePerHit // one hit is lethal
+
+	result := c.Tick(grid, nil, nil, nil, rivalController.Soldiers, nil)
+	if result.Kills != 1 {
+		t.Fatalf("TickResult.Kills = %d, want 1", result.Kills)
+	}
+	if result.BuildingsDestroyed != 0 {
+		t.Fatalf("TickResult.BuildingsDestroyed = %d, want 0 (a soldier was killed, not a building destroyed)", result.BuildingsDestroyed)
+	}
+}
+
+func TestController_Tick_ReportsKillOnIntruderKill(t *testing.T) {
+	grid := world.NewGrid(10, 10)
+	c := NewController()
+	c.Spawn(Swordsman, 5, 5)
+	alive := true
+	intruder := combat.IntruderTarget{
+		X: 5, Y: 6,
+		Alive: func() bool { return alive },
+		Kill:  func() { alive = false },
+	}
+
+	result := c.Tick(grid, nil, nil, nil, nil, []combat.IntruderTarget{intruder})
+	if result.Kills != 1 {
+		t.Fatalf("TickResult.Kills = %d, want 1", result.Kills)
 	}
 }
 

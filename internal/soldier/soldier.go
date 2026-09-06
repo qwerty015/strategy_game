@@ -486,9 +486,27 @@ func (c *Controller) Restore(profession Profession, x, y, hungerTicks, hp int) *
 // simply never see the defender's walls as obstacles at all, gate or no
 // gate. See pathfind.FindLandPathForFaction for how a foreign Gate still
 // blocks like a solid wall once it IS in the list.
+// TickResult summarizes one Controller.Tick call. Deaths is this
+// controller's own soldiers lost to starvation. Kills and
+// BuildingsDestroyed count opposing-faction targets these soldiers
+// actually finished off in cross-faction ("1×1 против ИИ") combat this
+// tick -- a real playtest report ("счетчик убито врагов не считает
+// юнитов, нужно считать убитых с помощью башни или убитых боевыми
+// юнитами") found that economy.Population.Kills only ever incremented
+// for the sandbox-only debug enemy.Enemy (see cmd/game's
+// pruneDeadEnemies), never for a real opponent's soldier/unit killed in
+// duel mode -- this is the soldier half of that fix (see package
+// sentry's identical TickResult for the WatchTower half). Kills counts a
+// rival Soldier or any other opposing unit (combat.IntruderTarget);
+// BuildingsDestroyed is the new, separate counter the same report asked
+// for ("введи новый счетчик: 'Разрушено построек'").
+type TickResult struct {
+	Deaths, Kills, BuildingsDestroyed int
+}
+
 // Call once per simulation tick.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enemies []*enemy.Enemy, opposingBuildings []*building.Building, opposingSoldiers []*Soldier, opposingIntruders []combat.IntruderTarget) int {
-	deaths := 0
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enemies []*enemy.Enemy, opposingBuildings []*building.Building, opposingSoldiers []*Soldier, opposingIntruders []combat.IntruderTarget) TickResult {
+	var result TickResult
 	remaining := c.Soldiers[:0]
 	for _, s := range c.Soldiers {
 		if s.attackVisualTicks > 0 {
@@ -500,7 +518,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 		}
 		s.ticksSinceMeal++
 		if hunger.Dead(s.ticksSinceMeal) {
-			deaths++
+			result.Deaths++
 			continue
 		}
 		// len(s.path) == 0 is the real fix for a bug the user reported:
@@ -527,11 +545,17 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 				s.faction = t
 			}
 		}
-		c.tick(grid, buildings, s)
+		killedUnit, killedBuilding := c.tick(grid, buildings, s)
+		if killedUnit {
+			result.Kills++
+		}
+		if killedBuilding {
+			result.BuildingsDestroyed++
+		}
 		remaining = append(remaining, s)
 	}
 	c.Soldiers = remaining
-	return deaths
+	return result
 }
 
 // nearestEnemyWithin returns the closest living enemy to (x, y) within a
@@ -551,15 +575,21 @@ func nearestEnemyWithin(x, y int, enemies []*enemy.Enemy, radius int) *enemy.Ene
 	return best
 }
 
-func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *Soldier) {
+// tick returns whether this call's combat resolution landed the killing
+// blow on an opposing unit or building, respectively -- see TickResult's
+// doc comment. Always (false, false) for the sandbox-only
+// tickDebugEnemyCombat path, which cmd/game's pruneDeadEnemies counts
+// separately.
+func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool) {
 	tickMovement(s)
 	if s.attackTarget != nil {
 		c.tickDebugEnemyCombat(grid, buildings, s)
-		return
+		return false, false
 	}
 	if s.faction.alive() {
-		c.tickFactionCombat(grid, buildings, s)
+		return c.tickFactionCombat(grid, buildings, s)
 	}
+	return false, false
 }
 
 // tickDebugEnemyCombat is the original (sandbox-only) attackTarget combat
@@ -607,10 +637,10 @@ func (c *Controller) tickDebugEnemyCombat(grid *world.Grid, buildings []*buildin
 // pendingKillTarget-style deferred visual: cross-faction combat has no
 // rendered attack animation yet in this first pass (a deliberate,
 // documented scope cut -- see AGENTS.md).
-func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) {
+func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool) {
 	if !s.faction.alive() {
 		s.faction = factionTarget{}
-		return
+		return false, false
 	}
 	tx, ty := s.faction.pos()
 	if !inRange(s.X, s.Y, tx, ty, s.AttackRange()) {
@@ -620,18 +650,25 @@ func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.B
 				s.path, s.pathIdx, s.tileTicks = path, 0, 0
 			}
 		}
-		return
+		return false, false
 	}
 	s.path, s.pathIdx, s.tileTicks = nil, 0, 0
 	if s.attackCooldown > 0 {
 		s.attackCooldown--
-		return
+		return false, false
 	}
 	s.attackCooldown = s.cooldownTicks()
+	wasBuilding := s.faction.building != nil
 	s.faction.hit()
 	if !s.faction.alive() {
 		s.faction = factionTarget{}
+		if wasBuilding {
+			killedBuilding = true
+		} else {
+			killedUnit = true
+		}
 	}
+	return killedUnit, killedBuilding
 }
 
 // tickMovement advances s one step along its current path every

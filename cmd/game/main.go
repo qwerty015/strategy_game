@@ -661,7 +661,7 @@ func (g *Game) tickOnce() {
 		var minerEvents []miner.Event
 		var serfResult logistics.TickResult
 		var villagerDeaths int
-		var sentryDeaths int
+		var sentryResult sentry.TickResult
 		type unitStep struct {
 			hunger int
 			run    func()
@@ -677,7 +677,7 @@ func (g *Game) tickOnce() {
 			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
 			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
 			{g.sentries.MaxWaitingHunger(), func() {
-				sentryDeaths = g.sentries.Tick(playerBuildings, g.enemies, g.opposingIntruderTargetsFor(g.sentries), ledger)
+				sentryResult = g.sentries.Tick(playerBuildings, g.enemies, g.opposingIntruderTargetsFor(g.sentries), ledger)
 			}},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
@@ -698,7 +698,7 @@ func (g *Game) tickOnce() {
 		// them. See soldier.Controller.Tick's doc comment and
 		// pathfind.FindLandPathForFaction. opposingBuildingsFor still
 		// supplies the enemy's buildings separately for targeting.
-		soldierDeaths := g.soldiers.Tick(g.grid, g.buildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers), g.opposingIntruderTargetsForSoldiers(g.soldiers))
+		soldierResult := g.soldiers.Tick(g.grid, g.buildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers), g.opposingIntruderTargetsForSoldiers(g.soldiers))
 		// Enemies strike back after every Sentry has had a chance to fire
 		// this tick -- see internal/enemy's Tick. A dead one (HP reaching
 		// 0 from a Sentry's own shot, applied above) is pruned right away
@@ -709,8 +709,14 @@ func (g *Game) tickOnce() {
 		if g.attackMarkerTarget != nil && !g.attackMarkerTarget.Alive() {
 			g.attackMarkerTarget = nil
 		}
-		g.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryDeaths + soldierDeaths
+		g.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryResult.Deaths + soldierResult.Deaths
 		g.pop.UnitsDismissed += serfResult.Dismissed
+		// Real cross-faction kills/building destructions -- see
+		// soldier.Controller.TickResult and sentry.Controller.TickResult's
+		// own doc comments for the playtest report this fixes ("счетчик
+		// убито врагов не считает юнитов").
+		g.pop.Kills += soldierResult.Kills + sentryResult.Kills
+		g.pop.EnemyBuildingsDestroyed += soldierResult.BuildingsDestroyed
 		for _, event := range jackEvents {
 			switch event.Kind {
 			case lumberjack.TreeCut:

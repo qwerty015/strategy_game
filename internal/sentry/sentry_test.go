@@ -107,6 +107,50 @@ func TestSentry_FiresAtOpposingFactionIntruderAndKillsIt(t *testing.T) {
 	}
 }
 
+// TestController_Tick_ReportsKillOnIntruderKill is the regression test for
+// a real playtest report ("счетчик убито врагов не считает юнитов, нужно
+// считать убитых с помощью башни или убитых боевыми юнитами"):
+// Controller.Tick's TickResult must actually report a Kill once a
+// WatchTower's stone visually lands on a real "1×1 против ИИ" opponent's
+// unit, not just count the sandbox debug enemy.Enemy.
+func TestController_Tick_ReportsKillOnIntruderKill(t *testing.T) {
+	tower := &building.Building{Kind: building.WatchTower, X: 10, Y: 10, ConstructionStage: building.ConstructionNone}
+	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
+
+	c := NewController()
+	c.Spawn(tower)
+
+	alive := true
+	intruder := IntruderTarget{
+		X: tower.X + 1, Y: tower.Y,
+		Alive: func() bool { return alive },
+		Kill:  func() { alive = false },
+	}
+
+	tick := func() TickResult {
+		ledger := reservations.New()
+		c.Reserve(ledger)
+		return c.Tick([]*building.Building{tower}, nil, []IntruderTarget{intruder}, ledger)
+	}
+
+	if result := tick(); result.Kills != 0 {
+		t.Fatalf("TickResult.Kills on the throwing tick = %d, want 0 (the kill waits for the stone to visually arrive)", result.Kills)
+	}
+
+	var gotKill bool
+	for range shotVisualLifetime {
+		if result := tick(); result.Kills != 0 {
+			gotKill = true
+			if result.Kills != 1 {
+				t.Fatalf("TickResult.Kills on the arrival tick = %d, want 1", result.Kills)
+			}
+		}
+	}
+	if !gotKill {
+		t.Fatal("TickResult.Kills never reported 1 across the stone's full flight time")
+	}
+}
+
 // TestSentry_KillNeverLandsBeforeTheStoneVisuallyArrives is a direct
 // regression test for the user's exact bug report: "раньше было сперва
 // противник погибает, а потом летит камень в него" -- while ShotVisual()

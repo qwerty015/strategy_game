@@ -26,6 +26,7 @@ const (
 	townSummaryUnitsDismissed
 	townSummaryBuildings
 	townSummaryKills
+	townSummaryEnemyBuildingsDestroyed
 	townSummaryScore
 	townSummaryPlayTime
 )
@@ -55,13 +56,14 @@ func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resour
 	t := i18n.T()
 	DrawInspectorText(screen, t.TownSummaryLabel, float64(x), 62)
 
-	population, deaths, buildingsRemoved, unitsDismissed, kills := 0, 0, 0, 0, 0
+	population, deaths, buildingsRemoved, unitsDismissed, kills, enemyBuildingsDestroyed := 0, 0, 0, 0, 0, 0
 	if pop != nil {
 		population = pop.Count
 		deaths = pop.Deaths
 		buildingsRemoved = pop.BuildingsRemoved
 		unitsDismissed = pop.UnitsDismissed
 		kills = pop.Kills
+		enemyBuildingsDestroyed = pop.EnemyBuildingsDestroyed
 	}
 	stats := []struct {
 		icon  townSummaryIcon
@@ -73,6 +75,7 @@ func drawTownSummary(screen *ebiten.Image, panelX, panelWidth int, stock *resour
 		{townSummaryUnitsDismissed, fmt.Sprintf("%s: %d", t.UnitsDismissedLabel, unitsDismissed)},
 		{townSummaryBuildings, fmt.Sprintf("%s: %d", t.BuildingsLabel, buildings)},
 		{townSummaryKills, fmt.Sprintf("%s: %d", t.KillsLabel, kills)},
+		{townSummaryEnemyBuildingsDestroyed, fmt.Sprintf("%s: %d", t.EnemyBuildingsDestroyedLabel, enemyBuildingsDestroyed)},
 		{townSummaryScore, fmt.Sprintf("%s: %d", t.ScoreLabel, score)},
 		{townSummaryPlayTime, fmt.Sprintf("%s: %s", t.PlayTimeLabel, formatPlayedFrames(playedFrames))},
 	}
@@ -178,6 +181,18 @@ func drawTownSummaryIcon(screen *ebiten.Image, kind townSummaryIcon, x, y int) {
 			fillIconRect(screen, x+4+i, y+4+i, 2, 2, color.RGBA{R: 200, G: 200, B: 205, A: 255})
 			fillIconRect(screen, x+10-i, y+4+i, 2, 2, color.RGBA{R: 150, G: 60, B: 50, A: 255})
 		}
+	case townSummaryEnemyBuildingsDestroyed:
+		// The same house silhouette as townSummaryBuildingsRemoved, but
+		// with a fiery orange burst instead of a plain red demolish bar --
+		// visually distinct at a glance ("destroyed by force" vs. "you
+		// demolished your own"), same house shape so the two read as
+		// related counters.
+		fillIconRect(screen, x+4, y+5, 8, 7, color.RGBA{R: 137, G: 117, B: 93, A: 255})
+		fillIconRect(screen, x+5, y+4, 6, 2, color.RGBA{R: 184, G: 151, B: 90, A: 255})
+		fillIconRect(screen, x+6, y+6, 4, 4, color.RGBA{R: 235, G: 130, B: 40, A: 255})
+		fillIconRect(screen, x+7, y+3, 2, 3, color.RGBA{R: 235, G: 130, B: 40, A: 255})
+		fillIconRect(screen, x+3, y+7, 3, 2, color.RGBA{R: 235, G: 130, B: 40, A: 255})
+		fillIconRect(screen, x+10, y+7, 3, 2, color.RGBA{R: 235, G: 130, B: 40, A: 255})
 	case townSummaryScore:
 		// A small five-point-ish star: a filled diamond core plus four
 		// short rays, simple enough to read at 16px.

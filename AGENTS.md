@@ -4554,6 +4554,60 @@ pathfinder'а этого юнита. Обычная стена (`StoneWall`, н�
 (4 * 100)`, N: 2→4). Ничего не тестирует точное число — правка чисто
 параметрическая.
 
+## Счётчик убийств не считал реальных юнитов + новый счётчик "Разрушено построек"
+
+Пользователь: "счетчик убито врагов не считает юнитов, нужно считать
+убитых с помощью башни или убитых боевыми юнитами, и введи новый
+счетчик: 'Разрушено построек'".
+
+Причина: `economy.Population.Kills` инкрементировался ТОЛЬКО в
+`pruneDeadEnemies` (cmd/game) — а это исключительно песочный дебажный
+`enemy.Enemy` (F10). Реальные убийства в режиме "N против ИИ" — боец
+добивает вражеского солдата/юнита/здание, часовой поражает вражеский
+юнит камнем — нигде не учитывались вообще: `soldier.Controller.Tick` и
+`sentry.Controller.Tick` возвращали только `deaths` (свои же голодные
+смерти), у боевого попадания/убийства не было вообще никакого канала
+наружу.
+
+Фикс — оба `Tick` теперь возвращают структуру `TickResult` вместо
+голого `int`:
+- `soldier.Controller.TickResult{Deaths, Kills, BuildingsDestroyed}` —
+  `tickFactionCombat` определяет по `factionTarget.building != nil`,
+  была ли только что добита ПОСТРОЙКА (`BuildingsDestroyed++`) или
+  ЮНИТ — вражеский солдат либо intruder (`Kills++`).
+- `sentry.Controller.TickResult{Deaths, Kills}` — инкремент в момент,
+  когда камень ВИЗУАЛЬНО долетает и `shotPendingIntruder.Kill()`
+  реально срабатывает (не в момент броска — та же уже существующая
+  логика отложенного убийства). Часовая башня не может разрушать
+  постройки (её `intruders` — только юниты), поэтому у неё нет
+  `BuildingsDestroyed`.
+- `economy.Population`: новое поле `EnemyBuildingsDestroyed` (отдельно
+  от уже существующего `BuildingsRemoved`, который считает СВОИ снесённые
+  постройки, а не чужие уничтоженные).
+- `cmd/game`'s игровой тик-блок и `tickAIFaction` суммируют
+  `soldierResult.Kills + sentryResult.Kills` в `pop.Kills` и
+  `soldierResult.BuildingsDestroyed` в `pop.EnemyBuildingsDestroyed` —
+  для игрока и для каждой AI-фракции отдельно. Дебажный путь
+  (`pruneDeadEnemies`'s `g.pop.Kills++`) не тронут — это два непересекающихся
+  механизма (attackTarget vs faction), двойного счёта нет.
+- UI: `internal/ui/town_summary.go` — новая строка
+  `townSummaryEnemyBuildingsDestroyed` (пиктограмма — тот же домик, что
+  у "Снесено", но с огненно-оранжевой вспышкой вместо красной черты) +
+  `i18n.EnemyBuildingsDestroyedLabel` ("Разрушено построек"/
+  "Buildings destroyed").
+
+### Тесты
+
+`internal/soldier/soldier_test.go`:
+`TestController_Tick_ReportsBuildingsDestroyedOnLethalHit`,
+`TestController_Tick_ReportsKillOnLethalSoldierHit`,
+`TestController_Tick_ReportsKillOnIntruderKill`.
+`internal/sentry/sentry_test.go`:
+`TestController_Tick_ReportsKillOnIntruderKill` (тот же "удар засчитан
+только когда камень визуально долетел" контракт, что уже проверяют
+существующие тесты). Полный набор (`go build`/`go vet`/`gofmt`, весь
+`go test ./...`) прогнан и зелёный.
+
 ## Текущий план
 
 Исходный план MVP хранится отдельно от репозитория, в файлах планирования

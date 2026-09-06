@@ -305,6 +305,22 @@ func (c *Controller) MaxWaitingHunger() int {
 	return best
 }
 
+// TickResult summarizes one Controller.Tick call. Deaths is this
+// controller's own Sentries lost to starvation; Kills is opposing units
+// (see IntruderTarget) a WatchTower's stone actually finished off this
+// tick -- a real playtest report ("счетчик убито врагов не считает
+// юнитов, нужно считать убитых с помощью башни или убитых боевыми
+// юнитами") found economy.Population.Kills never counted a WatchTower's
+// real cross-faction kills at all, only the sandbox-only debug
+// enemy.Enemy (see cmd/game's pruneDeadEnemies) -- this is the WatchTower
+// half of that fix (see package soldier's identical TickResult for the
+// combat-unit half). No BuildingsDestroyed counter here: a WatchTower's
+// intruders list only ever wraps opposing units, never buildings -- see
+// cmd/game's intruderTargetsFrom.
+type TickResult struct {
+	Deaths, Kills int
+}
+
 // Tick advances hunger, movement and combat for every Sentry. Call once
 // per simulation tick, after every controller sharing ledger has had a
 // chance to Reserve its own pre-existing in-flight units. enemies is the
@@ -312,8 +328,8 @@ func (c *Controller) MaxWaitingHunger() int {
 // it, never mutates the slice itself, though it does lower a target's HP
 // in place. intruders is this Sentry's "1×1 против ИИ" targets -- see
 // IntruderTarget's doc comment; nil/empty outside that mode.
-func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) int {
-	deaths := 0
+func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) TickResult {
+	var result TickResult
 	remaining := c.Sentries[:0]
 	for _, s := range c.Sentries {
 		if s.shotVisualTicks > 0 {
@@ -329,19 +345,20 @@ func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy
 				if s.shotPendingIntruder != nil {
 					s.shotPendingIntruder.Kill()
 					s.shotPendingIntruder = nil
+					result.Kills++
 				}
 			}
 		}
 		s.ticksSinceMeal++
 		if hunger.Dead(s.ticksSinceMeal) {
-			deaths++
+			result.Deaths++
 			continue
 		}
 		c.tick(s, buildings, enemies, intruders, ledger)
 		remaining = append(remaining, s)
 	}
 	c.Sentries = remaining
-	return deaths
+	return result
 }
 
 func (c *Controller) tick(s *Sentry, buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) {
