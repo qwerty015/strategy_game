@@ -1,0 +1,71 @@
+package main
+
+import (
+	"testing"
+
+	"strategy_game/internal/building"
+	"strategy_game/internal/soldier"
+	"strategy_game/internal/ui"
+)
+
+// TestOpposingBuildingAt_FindsAnyTileOfAMultiTileFootprint confirms
+// opposingBuildingAt matches the same footprint-aware convention as
+// buildingSelectionAt -- a click anywhere on a >1-tile building's
+// footprint must resolve to it, not just its (X, Y) origin tile.
+func TestOpposingBuildingAt_FindsAnyTileOfAMultiTileFootprint(t *testing.T) {
+	g := &Game{
+		soldiers: soldier.NewController(),
+		ais:      []*faction{{owner: 1, soldiers: soldier.NewController()}},
+	}
+	rival := &building.Building{Kind: building.Farm, Owner: 1, X: 5, Y: 5, HP: building.MaxHP}
+	g.buildings = []*building.Building{rival}
+
+	footprint := building.Types[building.Farm].Footprint
+	if footprint < 2 {
+		t.Fatal("test setup: expected Farm to have a >1 footprint")
+	}
+	if got := g.opposingBuildingAt(rival.X+footprint-1, rival.Y+footprint-1); got != rival {
+		t.Fatalf("opposingBuildingAt(far corner of footprint) = %v, want the rival warehouse", got)
+	}
+	if got := g.opposingBuildingAt(rival.X-1, rival.Y); got != nil {
+		t.Fatalf("opposingBuildingAt(just outside footprint) = %v, want nil", got)
+	}
+}
+
+// TestOpposingBuildingAt_IgnoresADestroyedBuilding confirms a building
+// already at 0 HP (pending pruneDestroyedBuildings) is never offered up
+// as a click-to-attack target -- matching opposingBuildingsFor's own
+// candidate list, which auto-engage already respects.
+func TestOpposingBuildingAt_IgnoresADestroyedBuilding(t *testing.T) {
+	g := &Game{
+		soldiers: soldier.NewController(),
+		ais:      []*faction{{owner: 1, soldiers: soldier.NewController()}},
+	}
+	rival := &building.Building{Kind: building.Warehouse, Owner: 1, X: 5, Y: 5, HP: 0}
+	g.buildings = []*building.Building{rival}
+
+	if got := g.opposingBuildingAt(rival.X, rival.Y); got != nil {
+		t.Fatalf("opposingBuildingAt(destroyed building) = %v, want nil", got)
+	}
+}
+
+// TestCommandSoldierGroupAttackFaction_OrdersEverySoldierInTheGroup is the
+// regression test for the real playtest bug ("клик боевым юнитом на
+// постройку противника - перемещает юнитов, но не уничтожает постройку
+// врага"): every soldier in the current SelectionSoldierGroup must come
+// away with a standing AttackFactionOrder against the clicked opposing
+// building, not merely a move order toward it.
+func TestCommandSoldierGroupAttackFaction_OrdersEverySoldierInTheGroup(t *testing.T) {
+	g := &Game{soldiers: soldier.NewController()}
+	rival := &building.Building{Kind: building.Warehouse, Owner: 1, X: 5, Y: 5, HP: building.MaxHP}
+
+	a := g.soldiers.Spawn(soldier.Archer, 0, 0)
+	b := g.soldiers.Spawn(soldier.Swordsman, 1, 0)
+	g.selection = ui.Selection{Kind: ui.SelectionSoldierGroup, SoldierGroup: []*soldier.Soldier{a, b}}
+
+	g.commandSoldierGroupAttackFaction(rival)
+
+	if !a.HasFactionTarget() || !b.HasFactionTarget() {
+		t.Fatal("commandSoldierGroupAttackFaction did not set a standing faction target on every soldier in the group")
+	}
+}

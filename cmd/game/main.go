@@ -1586,15 +1586,30 @@ func (g *Game) handleMouse() {
 		// right-click either orders an attack (cursor landed on a live
 		// enemy -- red square marker) or a formation move (empty tile) --
 		// see commandSoldierGroupAttack/commandSoldierGroupTo.
+		//
+		// opposingBuildingAt is checked too -- a real bug found from an
+		// actual playtest report ("клик боевым юнитом на постройку
+		// противника - перемещает юнитов, но не уничтожает постройку
+		// врага"): only the sandbox debug enemy had an attack-order path
+		// here; clicking an opposing faction's building in "N против ИИ"
+		// fell straight through to a plain move order, which never
+		// actually set anything to fight. See
+		// commandSoldierGroupAttackFaction/AttackFactionOrder.
 		if g.selection.Kind == ui.SelectionSoldierGroup && len(g.selection.SoldierGroup) > 0 && image.Pt(mx, my).In(g.layout.MapRect()) {
 			tx, ty := g.camera.ScreenToTile(mx, my)
-			if target := g.enemyAt(tx, ty); target != nil {
-				g.commandSoldierGroupAttack(target)
-			} else {
+			enemyTarget := g.enemyAt(tx, ty)
+			buildingTarget := g.opposingBuildingAt(tx, ty)
+			switch {
+			case enemyTarget != nil:
+				g.commandSoldierGroupAttack(enemyTarget)
+			case buildingTarget != nil:
+				g.commandSoldierGroupAttackFaction(buildingTarget)
+			default:
 				g.commandSoldierGroupTo(mx, my)
 			}
 			return
 		}
+
 		g.buildMode = false
 		g.demolitionMode = false
 		g.clearWallAnchor()

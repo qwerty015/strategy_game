@@ -318,6 +318,33 @@ func (s *Soldier) HasAttackOrder() bool { return s.attackTarget != nil }
 // factionTarget), for the same kind of UI/marker use as HasAttackOrder.
 func (s *Soldier) HasFactionTarget() bool { return s.faction.alive() }
 
+// AttackFactionOrder is AttackOrder's cross-faction equivalent -- a
+// standing order to approach and keep attacking an opposing faction's
+// building, re-approaching on its own if it drifts out of range (in
+// practice buildings never move, but Controller.tick's dispatch already
+// re-checks range every tick regardless, the same loop that already
+// drives automatic FactionEngageRange engagement -- see TickFactionCombat
+// -- so nothing else has to change here for the approach/attack itself to
+// actually happen).
+//
+// A real bug found from an actual playtest report ("клик боевым юнитом
+// на постройку противника - перемещает юнитов, но не уничтожает
+// постройку врага"): right-clicking an opposing faction's building used
+// to have no attack-order path at all -- only the sandbox debug
+// enemy.Enemy had one (AttackOrder above) -- so cmd/game's click handler
+// fell through to a plain move order every time, which could walk a
+// squad right up to a building without ever actually setting a target to
+// fight. A nil or already-destroyed target simply clears any existing
+// order, matching AttackOrder's own convention.
+func (s *Soldier) AttackFactionOrder(target *building.Building) {
+	if target == nil || target.HP <= 0 {
+		s.faction = factionTarget{}
+		return
+	}
+	s.attackTarget = nil
+	s.faction = factionTarget{building: target}
+}
+
 func (s *Soldier) approach(grid *world.Grid, buildings []*building.Building) {
 	if s.attackTarget == nil {
 		return

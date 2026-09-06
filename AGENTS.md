@@ -4363,6 +4363,54 @@ build`/`go vet`/`gofmt`, весь `go test ./...` включая `cmd/game`/
 `internal/render`/`internal/ui`, `internal/save` через prebuilt-binary)
 прогнан и зелёный.
 
+## Баг: клик боевым юнитом на постройку противника не атаковал её
+
+Реальный playtest-баг из "слот 4": "клик боевым юнитом на постройку
+противника - перемещает юнитов, но не уничтожает постройку врага, хотя
+они должны подойти для дистанции атаки и атаковать".
+
+Причина: правый клик отрядом на карте (`SelectionSoldierGroup`) умел
+отличать только клик на дебажного `enemy.Enemy` (`g.enemyAt` →
+`commandSoldierGroupAttack` → `soldier.AttackOrder`) от обычного
+перемещения — для клика на РЕАЛЬНУЮ постройку чужой фракции ("N против
+ИИ") никакого пути постановки боевого приказа не было вообще, клик
+всегда попадал в `commandSoldierGroupTo` (просто марш к точке, без цели
+для боя).
+
+Фикс — по образцу уже существующего `AttackOrder`:
+
+- `soldier.Soldier.AttackFactionOrder(target *building.Building)` —
+  cross-faction аналог `AttackOrder`: выставляет `s.faction =
+  factionTarget{building: target}` (или снимает приказ при `nil`/уже
+  мёртвой цели). Дальше ничего не нужно — `Controller.tick` уже сам
+  диспетчерит `s.faction.alive()` в `tickFactionCombat` (та же функция,
+  что ведёт автобой по `FactionEngageRange`), т.е. подход и атака идут
+  тем же существующим циклом.
+- `cmd/game/soldiers.go`: `opposingBuildingAt(tx, ty)` — находит чужую
+  постройку под курсором тем же footprint-aware способом, что и
+  `buildingSelectionAt`, и из того же списка кандидатов, что уже
+  использует автобой (`opposingBuildingsFor(g.soldiers)`) — ручной клик
+  никогда не может атаковать то, во что автобой бы не вступил.
+  `commandSoldierGroupAttackFaction(target)` — рассылает
+  `AttackFactionOrder` всем бойцам группы.
+- Правый клик (`cmd/game/main.go`) стал 3-веткой: сначала `enemyAt`
+  (дебажный враг), затем `opposingBuildingAt` (реальная чужая
+  постройка), иначе — обычное перемещение.
+
+### Тесты
+
+`internal/soldier/soldier_test.go`:
+`TestAttackFactionOrder_ChasesAndDestroysADistantOpposingBuilding`
+(цель далеко вне `FactionEngageRange` — солдат подходит сам и добивает
+здание), `TestAttackFactionOrder_ClearsOnNilOrDeadTarget` (тот же
+контракт очистки приказа, что у `AttackOrder`).
+`cmd/game/soldiers_test.go` (новый файл):
+`TestOpposingBuildingAt_FindsAnyTileOfAMultiTileFootprint`,
+`TestOpposingBuildingAt_IgnoresADestroyedBuilding`,
+`TestCommandSoldierGroupAttackFaction_OrdersEverySoldierInTheGroup`.
+Полный набор (`go build`/`go vet`/`gofmt`, весь `go test ./...`) прогнан
+и зелёный.
+
 ## Текущий план
 
 Исходный план MVP хранится отдельно от репозитория, в файлах планирования

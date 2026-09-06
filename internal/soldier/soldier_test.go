@@ -283,6 +283,67 @@ func TestController_AutoEngagesAnOpposingBuildingWithinFactionEngageRange(t *tes
 	}
 }
 
+// TestAttackFactionOrder_ChasesAndDestroysADistantOpposingBuilding is the
+// manual (right-click) counterpart to
+// TestController_AutoEngagesAnOpposingBuildingWithinFactionEngageRange: a
+// real bug found from an actual playtest report ("клик боевым юнитом на
+// постройку противника - перемещает юнитов, но не уничтожает постройку
+// врага, хотя они должны подойти для дистанции атаки и атаковать"). Before
+// AttackFactionOrder existed, cmd/game's right-click handler had no way to
+// set a cross-faction combat target at all, so a click on a distant
+// opposing building fell through to a plain move order that walked the
+// squad up to it without ever fighting. This confirms the standing order
+// alone (target far outside FactionEngageRange, no auto-engage possible on
+// the first tick) makes the soldier approach on its own and keep attacking
+// until the building is destroyed.
+func TestAttackFactionOrder_ChasesAndDestroysADistantOpposingBuilding(t *testing.T) {
+	grid := world.NewGrid(20, 20)
+	c := NewController()
+	s := c.Spawn(Swordsman, 0, 0)
+	rival := &building.Building{Kind: building.Warehouse, X: 10, Y: 0, HP: combat.MaxHP}
+	s.AttackFactionOrder(rival)
+
+	if !s.HasFactionTarget() {
+		t.Fatal("AttackFactionOrder did not set a standing faction target")
+	}
+
+	for range 200 {
+		c.Tick(grid, nil, nil, []*building.Building{rival}, nil, nil)
+		if rival.HP <= 0 {
+			break
+		}
+	}
+	if rival.HP > 0 {
+		t.Fatal("swordsman never closed the distance and destroyed the ordered building")
+	}
+}
+
+// TestAttackFactionOrder_ClearsOnNilOrDeadTarget mirrors AttackOrder's own
+// clearing convention (see AttackOrder's doc comment) -- a nil target, or
+// one already at 0 HP, must clear any existing standing order instead of
+// leaving the soldier fighting a corpse/nothing.
+func TestAttackFactionOrder_ClearsOnNilOrDeadTarget(t *testing.T) {
+	c := NewController()
+	s := c.Spawn(Swordsman, 0, 0)
+	rival := &building.Building{Kind: building.Warehouse, X: 1, Y: 0, HP: combat.MaxHP}
+	s.AttackFactionOrder(rival)
+	if !s.HasFactionTarget() {
+		t.Fatal("test setup: expected a standing faction target")
+	}
+
+	s.AttackFactionOrder(nil)
+	if s.HasFactionTarget() {
+		t.Fatal("AttackFactionOrder(nil) did not clear the standing faction target")
+	}
+
+	s.AttackFactionOrder(rival)
+	rival.HP = 0
+	s.AttackFactionOrder(rival)
+	if s.HasFactionTarget() {
+		t.Fatal("AttackFactionOrder(deadTarget) did not clear the standing faction target")
+	}
+}
+
 // TestController_AutoEngagesAnOpposingIntruder covers the user's explicit
 // request "боевые юниты могут уничтожать любых юнитов противника - это
 // враги!": a Soldier must be able to auto-engage ANY opposing unit, not

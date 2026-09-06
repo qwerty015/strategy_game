@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strategy_game/internal/building"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/enemy"
 	"strategy_game/internal/i18n"
@@ -147,6 +148,38 @@ func (g *Game) commandSoldierGroupAttack(target *enemy.Enemy) {
 		sd.AttackOrder(g.grid, g.buildings, target)
 	}
 	g.attackMarkerTarget = target
+}
+
+// opposingBuildingAt returns the opposing faction's building (any tile of
+// its footprint, matching buildingSelectionAt's own convention) standing
+// at (tx, ty), if any -- used by the soldier group's right-click handling
+// to tell a cross-faction attack order apart from a plain move order, the
+// same way enemyAt already does for the sandbox debug enemy. Reuses
+// opposingBuildingsFor(g.soldiers) -- the exact same candidate list
+// automatic FactionEngageRange engagement already targets, so a manual
+// click can never attack something auto-engage wouldn't have fought too.
+func (g *Game) opposingBuildingAt(tx, ty int) *building.Building {
+	for _, b := range g.opposingBuildingsFor(g.soldiers) {
+		if b == nil || b.HP <= 0 {
+			continue
+		}
+		footprint := building.Types[b.Kind].Footprint
+		if tx >= b.X && tx < b.X+footprint && ty >= b.Y && ty < b.Y+footprint {
+			return b
+		}
+	}
+	return nil
+}
+
+// commandSoldierGroupAttackFaction is opposingBuildingAt's counterpart to
+// commandSoldierGroupAttack: every soldier in the group gets a standing
+// AttackFactionOrder against the clicked opposing building -- see that
+// method's own doc comment for the real bug this fixes (a plain move
+// order that never actually attacked anything).
+func (g *Game) commandSoldierGroupAttackFaction(target *building.Building) {
+	for _, sd := range g.selection.SoldierGroup {
+		sd.AttackFactionOrder(target)
+	}
 }
 
 // soldierFormationPositions lays out n points on a lines-rank grid
