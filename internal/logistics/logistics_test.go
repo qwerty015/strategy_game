@@ -668,6 +668,101 @@ func TestController_RemoveWarehousePromotesAnotherWarehouse(t *testing.T) {
 	}
 }
 
+// TestController_ForceRemoveWarehouseDropsTheLastOneEntirely is the
+// regression test for a real playtest bug found from an actual save
+// ("красный вроде не осталось склада, но его слуги продолжают носить
+// рыбу куда-то"): unlike RemoveWarehouse, ForceRemoveWarehouse must
+// actually drop the controller's only Warehouse (combat destruction, not
+// a player choice that needs protecting against), and warehouses() must
+// not silently fall back to the now-unregistered c.Warehouse -- a serf
+// with nowhere left to deliver to should find no reachable warehouse at
+// all, not keep "delivering" to a building already gone from the map.
+func TestController_ForceRemoveWarehouseDropsTheLastOneEntirely(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	c := NewController(warehouse, 0)
+
+	c.ForceRemoveWarehouse(warehouse)
+
+	if len(c.Warehouses) != 0 {
+		t.Fatalf("registered warehouses after ForceRemoveWarehouse(only one) = %v, want none", c.Warehouses)
+	}
+	if c.Warehouse != warehouse {
+		t.Fatalf("c.Warehouse = %v, want it left pointing at the destroyed warehouse (never nil)", c.Warehouse)
+	}
+	if _, _, ok := nearestReachableWarehouse(nil, c.warehouses(), pathfind.Point{X: 0, Y: 0}); ok {
+		t.Fatal("nearestReachableWarehouse still found a candidate after the only warehouse was force-removed")
+	}
+}
+
+// TestController_ForceRemoveWarehousePromotesAnotherWarehouse mirrors
+// RemoveWarehouse's own promotion behaviour: with a second warehouse
+// still registered, ForceRemoveWarehouse must re-anchor c.Warehouse to
+// it, exactly like the protected RemoveWarehouse already does.
+func TestController_ForceRemoveWarehousePromotesAnotherWarehouse(t *testing.T) {
+	first := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	second := &building.Building{Kind: building.Warehouse, X: 6, Y: 0}
+	c := NewController(first, 0)
+	c.AddWarehouse(second)
+
+	c.ForceRemoveWarehouse(first)
+
+	if c.Warehouse != second {
+		t.Fatalf("primary warehouse = %v, want the remaining warehouse %v", c.Warehouse, second)
+	}
+	if len(c.Warehouses) != 1 || c.Warehouses[0] != second {
+		t.Fatalf("registered warehouses = %v, want only %v", c.Warehouses, second)
+	}
+}
+
+// TestController_CancelAllJobsRecoversCargoAfterWarehouseForceRemoved is
+// the end-to-end version of the same bug, matching cmd/game's real fix
+// (pruneDestroyedBuildings calls ForceRemoveWarehouse then CancelAllJobs
+// for the owning faction, exactly as the manual player-delete path
+// already did): a serf already mid-haul toward the now-destroyed
+// warehouse must be recovered immediately -- its cargo credited to
+// stock right away -- rather than left walking toward a building that no
+// longer exists on the map forever.
+func TestController_CancelAllJobsRecoversCargoAfterWarehouseForceRemoved(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
+	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}
+	farm.AddOutput(resource.Wheat, 5)
+	buildings := append([]*building.Building{warehouse, farm}, straightRoad(1, 5, 0)...)
+
+	c := NewController(warehouse, 1)
+	stock := resource.NewStockpile(100)
+
+	// Run until the serf has actually picked up the farm's output and is
+	// mid-haul back toward the warehouse -- then the warehouse "dies".
+	for range 500 {
+		tick(c, nil, buildings, stock)
+		if c.Serfs[0].ph == toDropoff {
+			break
+		}
+	}
+	if c.Serfs[0].ph != toDropoff {
+		t.Fatal("test setup: serf never picked up the farm's output")
+	}
+
+	c.ForceRemoveWarehouse(warehouse)
+	c.CancelAllJobs(stock)
+
+	if got := stock.Amount(resource.Wheat); got != 5 {
+		t.Fatalf("stock Wheat right after CancelAllJobs = %d, want 5 (cargo recovered immediately)", got)
+	}
+	if c.Serfs[0].ph != idle {
+		t.Fatalf("serf phase after CancelAllJobs = %v, want idle", c.Serfs[0].ph)
+	}
+
+	// Nothing further should ever get delivered -- warehouses() no
+	// longer offers the destroyed building as a candidate at all.
+	for range 200 {
+		tick(c, nil, buildings, stock)
+	}
+	if got := stock.Amount(resource.Wheat); got != 5 {
+		t.Fatalf("stock Wheat after more ticks = %d, want still 5 -- nothing more should ever reach a force-removed warehouse", got)
+	}
+}
+
 func TestController_DismissalWaitsForCurrentHaul(t *testing.T) {
 	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0}
 	farm := &building.Building{Kind: building.Farm, X: 5, Y: 0}

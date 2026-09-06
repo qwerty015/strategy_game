@@ -4411,6 +4411,95 @@ build`/`go vet`/`gofmt`, весь `go test ./...` включая `cmd/game`/
 Полный набор (`go build`/`go vet`/`gofmt`, весь `go test ./...`) прогнан
 и зелёный.
 
+## Клик на атаку расширен на юнитов противника, не только постройки
+
+Пользователь после предыдущего фикса уточнил: "клик боевым юнитом на
+любого юнита/постройку противника, должен переходить в режим атаки" —
+клик на здание уже работал (см. выше), но клик на вражеского солдата
+или любого другого юнита (слугу, лесоруба и т.д.) всё ещё падал в
+обычное перемещение.
+
+Симметрично уже существующему `AttackFactionOrder`/`opposingBuildingAt`:
+
+- `soldier.Soldier.AttackFactionSoldierOrder(target *Soldier)` — для
+  вражеского бойца.
+- `soldier.Soldier.AttackFactionIntruderOrder(target combat.IntruderTarget)`
+  — для любого другого юнита без HP-модели (слуга/крестьянин/лесоруб/...),
+  тот же `combat.IntruderTarget`, что уже использует авто-бой и часовые.
+- `cmd/game/soldiers.go`: `opposingSoldierAt`/`opposingIntruderAt` (из тех
+  же списков кандидатов, что и авто-бой —
+  `opposingSoldiersFor`/`opposingIntruderTargetsForSoldiers`) +
+  `commandSoldierGroupAttackSoldier`/`commandSoldierGroupAttackIntruder`.
+- Правый клик — теперь 5-веткой: `enemyAt` → `opposingBuildingAt` →
+  `opposingSoldierAt` → `opposingIntruderAt` → обычное перемещение.
+
+### Тесты
+
+`internal/soldier/soldier_test.go`:
+`TestAttackFactionSoldierOrder_ChasesAndDestroysADistantRival`,
+`TestAttackFactionIntruderOrder_KillsADistantIntruder`,
+`TestAttackFactionSoldierOrder_ClearsOnNilOrDeadTarget`,
+`TestAttackFactionIntruderOrder_ClearsOnDeadOrEmptyTarget`.
+`cmd/game/soldiers_test.go`:
+`TestOpposingSoldierAt_FindsALivingRivalSoldier`,
+`TestOpposingIntruderAt_FindsALivingRivalVillager`,
+`TestCommandSoldierGroupAttackSoldier_OrdersEverySoldierInTheGroup`,
+`TestCommandSoldierGroupAttackIntruder_OrdersEverySoldierInTheGroup`.
+Полный набор прогнан и зелёный.
+
+## Баг: уничтоженный склад ИИ оставлял "мёртвый" якорь у логистики
+
+Реальный playtest-баг из "слот 4": "красный вроде не осталось склада,
+но его слуги продолжают носить рыбу куда-то".
+
+Причина: `pruneDestroyedBuildings` (cmd/game) при уничтожении здания в
+бою убирала его из `g.buildings`, но НИКОГДА не сообщала об этом
+владеющей фракции `logistics.Controller` — если уничтоженное здание
+было складом, `Controller.Warehouse`/`Warehouses` продолжали хранить
+голый указатель на ту же (уже снятую с карты) структуру. Ручное удаление
+своего склада игроком через UI всегда вызывало `RemoveWarehouse` +
+`CancelAllJobs` (main.go, ветка `b.Kind == building.Warehouse`) — но это
+единственное место, где это вообще происходило; автоматическое
+уничтожение в бою этого не делало вообще. `IsOperationalWarehouse` не
+проверяет HP, так что "мёртвый" склад продолжал считаться нормальным
+кандидатом для доставки — слуги ходили и "доставляли" рыбу на пустое
+место, где раньше стоял склад, до бесконечности.
+
+Разбирался и отверг более простой на первый взгляд фикс — добавить
+`b.HP > 0` прямо в `IsOperationalWarehouse` — он ломает ~20 тестов в
+`internal/logistics` (и ещё 10 файлов по всему репозиторию), которые по
+устоявшейся в проекте практике строят тестовые здания голым литералом
+без явного HP (нулевое значение). Вместо этого:
+
+- `logistics.Controller.ForceRemoveWarehouse(warehouse)` — снимает
+  регистрацию БЕЗ защиты "последнего склада" (в отличие от
+  `RemoveWarehouse`, которая намеренно её не отдаёт: у игрока склад
+  никогда не может кончиться совсем, а у уничтоженной в бою фракции —
+  вполне может, `factionDefeated` это не запрещает).
+- `Controller.warehouses()` упрощён до `return c.Warehouses` (убран
+  fallback на голый `c.Warehouse`, который иначе тут же "воскрешал бы"
+  тот же мёртвый указатель, как только `Warehouses` опустеет).
+- `cmd/game.pruneDestroyedBuildings`: при уничтожении склада — новые
+  `g.logiFor(owner)`/`g.buildersFor(owner)`/`g.stockFor(owner)` находят
+  контроллеры нужной фракции (игрока или конкретного бота в `g.ais`) и
+  вызывают `ForceRemoveWarehouse` + `builders.RemoveWarehouse` (то же
+  переанкеривание строителей, что и у ручного удаления) +
+  `CancelAllJobs` (снимает груз с уже идущих в путь слуг сразу, не
+  оставляя их идти к призраку).
+
+### Тесты
+
+`internal/logistics/logistics_test.go`:
+`TestController_ForceRemoveWarehouseDropsTheLastOneEntirely`,
+`TestController_ForceRemoveWarehousePromotesAnotherWarehouse`,
+`TestController_CancelAllJobsRecoversCargoAfterWarehouseForceRemoved`
+(сквозной: слуга с грузом в пути, склад уничтожен, груз спасён
+немедленно, дальше ничего больше не доставляется). `cmd/game/ai_test.go`
+(новый файл): `TestPruneDestroyedBuildings_ForceRemovesADestroyedAIWarehouse`,
+`TestPruneDestroyedBuildings_LeavesAnUnrelatedFactionsWarehouseAlone`
+(фикс не задевает чужую, живую фракцию). Полный набор (`go build`/
+`go vet`/`gofmt`, весь `go test ./...`) прогнан и зелёный.
+
 ## Текущий план
 
 Исходный план MVP хранится отдельно от репозитория, в файлах планирования

@@ -1587,23 +1587,33 @@ func (g *Game) handleMouse() {
 		// enemy -- red square marker) or a formation move (empty tile) --
 		// see commandSoldierGroupAttack/commandSoldierGroupTo.
 		//
-		// opposingBuildingAt is checked too -- a real bug found from an
-		// actual playtest report ("клик боевым юнитом на постройку
-		// противника - перемещает юнитов, но не уничтожает постройку
-		// врага"): only the sandbox debug enemy had an attack-order path
-		// here; clicking an opposing faction's building in "N против ИИ"
-		// fell straight through to a plain move order, which never
+		// opposingBuildingAt/opposingSoldierAt/opposingIntruderAt are
+		// checked too -- a real bug found from an actual playtest report
+		// ("клик боевым юнитом на постройку противника - перемещает
+		// юнитов, но не уничтожает постройку врага", later widened to
+		// "клик боевым юнитом на любого юнита/постройку противника,
+		// должен переходить в режим атаки"): only the sandbox debug enemy
+		// had an attack-order path here; clicking ANY opposing faction
+		// target in "N против ИИ" (building, rival soldier, or any other
+		// unit) fell straight through to a plain move order, which never
 		// actually set anything to fight. See
-		// commandSoldierGroupAttackFaction/AttackFactionOrder.
+		// commandSoldierGroupAttackFaction/AttackFactionOrder and its two
+		// siblings below.
 		if g.selection.Kind == ui.SelectionSoldierGroup && len(g.selection.SoldierGroup) > 0 && image.Pt(mx, my).In(g.layout.MapRect()) {
 			tx, ty := g.camera.ScreenToTile(mx, my)
 			enemyTarget := g.enemyAt(tx, ty)
 			buildingTarget := g.opposingBuildingAt(tx, ty)
+			soldierTarget := g.opposingSoldierAt(tx, ty)
+			intruderTarget, hasIntruderTarget := g.opposingIntruderAt(tx, ty)
 			switch {
 			case enemyTarget != nil:
 				g.commandSoldierGroupAttack(enemyTarget)
 			case buildingTarget != nil:
 				g.commandSoldierGroupAttackFaction(buildingTarget)
+			case soldierTarget != nil:
+				g.commandSoldierGroupAttackSoldier(soldierTarget)
+			case hasIntruderTarget:
+				g.commandSoldierGroupAttackIntruder(intruderTarget)
 			default:
 				g.commandSoldierGroupTo(mx, my)
 			}
@@ -5073,6 +5083,31 @@ func (g *Game) pruneDestroyedBuildings() {
 		}
 		if b.HP <= 0 {
 			changed = true
+			if b.Kind == building.Warehouse {
+				// A real playtest bug ("слуги продолжают носить рыбу
+				// куда-то" after "красный вроде не осталось склада"):
+				// removing a destroyed Warehouse from g.buildings here
+				// used to be the only cleanup -- the owning faction's
+				// logistics.Controller kept a raw pointer to the same
+				// (now off-map) building and happily kept sending serfs
+				// to "deliver" to it forever. See
+				// logistics.Controller.ForceRemoveWarehouse's own doc
+				// comment for the full explanation.
+				if logi := g.logiFor(b.Owner); logi != nil {
+					logi.ForceRemoveWarehouse(b)
+					if builders := g.buildersFor(b.Owner); builders != nil {
+						builders.RemoveWarehouse(b, logi.Warehouse)
+					}
+					// CancelAllJobs re-anchors every serf already mid-haul
+					// (crediting any cargo already in hand to stock,
+					// exactly as the manual player-delete path already
+					// does) instead of leaving them walking toward a
+					// building that no longer exists on the map.
+					if stock := g.stockFor(b.Owner); stock != nil {
+						logi.CancelAllJobs(stock)
+					}
+				}
+			}
 			continue
 		}
 		alive = append(alive, b)

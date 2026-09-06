@@ -393,14 +393,49 @@ func (c *Controller) RemoveWarehouse(warehouse *building.Building) bool {
 	return true
 }
 
+// ForceRemoveWarehouse unregisters warehouse unconditionally, even if it
+// is the controller's only one -- unlike RemoveWarehouse (which
+// deliberately protects a player's last Warehouse, since the player must
+// always keep one physical logistics endpoint to resupply from), this is
+// for a Warehouse destroyed by combat: an AI faction reduced to zero
+// Warehouses is a valid, ongoing state (see cmd/game's factionDefeated,
+// which only requires every REAL building gone, not specifically the
+// Warehouse -- a straggler faction can very much have no warehouse left).
+//
+// A real playtest bug found from an actual save ("красный вроде не
+// осталось склада, но его слуги продолжают носить рыбу куда-то"):
+// cmd/game's pruneDestroyedBuildings removes a combat-killed Warehouse
+// from the map's building list, but nothing ever told this Controller to
+// stop treating it as a live delivery destination -- c.Warehouse/
+// Warehouses kept a raw pointer to the same now-detached struct forever
+// (it's never garbage collected, nothing else references it), so every
+// pickup/dropoff search kept finding and "delivering" to a building that
+// no longer existed on the map. c.Warehouse itself is deliberately left
+// pointing at warehouse when nothing else remains (never nil -- other
+// code, e.g. Hire, still dereferences .X/.Y/.Owner directly), but
+// warehouses() only ever returns c.Warehouses, so an emptied Warehouses
+// list correctly stops offering any candidate at all from here on.
+func (c *Controller) ForceRemoveWarehouse(warehouse *building.Building) {
+	for i, candidate := range c.Warehouses {
+		if candidate == warehouse {
+			c.Warehouses = append(c.Warehouses[:i], c.Warehouses[i+1:]...)
+			break
+		}
+	}
+	if c.Warehouse == warehouse && len(c.Warehouses) > 0 {
+		c.Warehouse = c.Warehouses[0]
+	}
+}
+
+// warehouses returns every registered candidate delivery/pickup endpoint.
+// NewController always seeds Warehouses with the primary Warehouse too,
+// so in practice this is just c.Warehouses -- deliberately NOT falling
+// back to c.Warehouse alone when Warehouses is empty: that emptiness is
+// exactly what ForceRemoveWarehouse produces once a faction's last
+// Warehouse is destroyed, and a fallback here would silently resurrect
+// the very dangling reference that fix removes (see its own doc comment).
 func (c *Controller) warehouses() []*building.Building {
-	if len(c.Warehouses) > 0 {
-		return c.Warehouses
-	}
-	if c.Warehouse != nil {
-		return []*building.Building{c.Warehouse}
-	}
-	return nil
+	return c.Warehouses
 }
 
 // Hire creates one additional serf at the Warehouse. The current MVP does

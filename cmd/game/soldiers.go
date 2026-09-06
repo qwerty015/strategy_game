@@ -2,6 +2,7 @@ package main
 
 import (
 	"strategy_game/internal/building"
+	"strategy_game/internal/combat"
 	"strategy_game/internal/economy"
 	"strategy_game/internal/enemy"
 	"strategy_game/internal/i18n"
@@ -179,6 +180,49 @@ func (g *Game) opposingBuildingAt(tx, ty int) *building.Building {
 func (g *Game) commandSoldierGroupAttackFaction(target *building.Building) {
 	for _, sd := range g.selection.SoldierGroup {
 		sd.AttackFactionOrder(target)
+	}
+}
+
+// opposingSoldierAt is opposingBuildingAt's counterpart for a rival
+// Soldier standing at (tx, ty) -- part of the fix for "клик боевым
+// юнитом на любого юнита/постройку противника, должен переходить в режим
+// атаки": a right-click landing on an opposing soldier used to fall
+// through to a plain move order the same way an opposing building once
+// did, with no way to tell cmd/game's handler apart from an empty tile.
+func (g *Game) opposingSoldierAt(tx, ty int) *soldier.Soldier {
+	for _, s := range g.opposingSoldiersFor(g.soldiers) {
+		if s != nil && s.Alive() && s.X == tx && s.Y == ty {
+			return s
+		}
+	}
+	return nil
+}
+
+// opposingIntruderAt is opposingSoldierAt's counterpart for any other
+// opposing unit (a rival serf/villager/lumberjack/... with no Soldier or
+// Building identity of its own -- see combat.IntruderTarget), completing
+// the same fix for every remaining kind of clickable opponent.
+func (g *Game) opposingIntruderAt(tx, ty int) (combat.IntruderTarget, bool) {
+	for _, in := range g.opposingIntruderTargetsForSoldiers(g.soldiers) {
+		if in.Alive != nil && in.Alive() && in.X == tx && in.Y == ty {
+			return in, true
+		}
+	}
+	return combat.IntruderTarget{}, false
+}
+
+// commandSoldierGroupAttackSoldier/commandSoldierGroupAttackIntruder are
+// commandSoldierGroupAttackFaction's counterparts for the two remaining
+// opposing-target kinds a right-click can land on.
+func (g *Game) commandSoldierGroupAttackSoldier(target *soldier.Soldier) {
+	for _, sd := range g.selection.SoldierGroup {
+		sd.AttackFactionSoldierOrder(target)
+	}
+}
+
+func (g *Game) commandSoldierGroupAttackIntruder(target combat.IntruderTarget) {
+	for _, sd := range g.selection.SoldierGroup {
+		sd.AttackFactionIntruderOrder(target)
 	}
 }
 

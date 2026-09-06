@@ -152,6 +152,41 @@ func (g *Game) factionByOwner(owner int) *faction {
 	return nil
 }
 
+// logiFor/buildersFor return owner's own logistics/builder controller --
+// the player's for owner 0, an AI faction's for any owner in g.ais, or
+// nil if owner matches neither (already-defeated/nonexistent faction).
+// Used by pruneDestroyedBuildings to tell the right controller to forget
+// a Warehouse that combat just destroyed.
+func (g *Game) logiFor(owner int) *logistics.Controller {
+	if owner == 0 {
+		return g.logi
+	}
+	if f := g.factionByOwner(owner); f != nil {
+		return f.logi
+	}
+	return nil
+}
+
+func (g *Game) buildersFor(owner int) *builder.Controller {
+	if owner == 0 {
+		return g.builders
+	}
+	if f := g.factionByOwner(owner); f != nil {
+		return f.builders
+	}
+	return nil
+}
+
+func (g *Game) stockFor(owner int) *resource.Stockpile {
+	if owner == 0 {
+		return g.stock
+	}
+	if f := g.factionByOwner(owner); f != nil {
+		return f.stock
+	}
+	return nil
+}
+
 // ownerOfSoldiers/ownerOfSentries identify which faction a live
 // controller pointer belongs to -- the opposing*For dispatchers below
 // need this to know whose "everyone else" to gather.

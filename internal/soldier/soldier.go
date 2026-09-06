@@ -345,6 +345,34 @@ func (s *Soldier) AttackFactionOrder(target *building.Building) {
 	s.faction = factionTarget{building: target}
 }
 
+// AttackFactionSoldierOrder is AttackFactionOrder's counterpart for a
+// rival Soldier target -- a real gap found alongside that same playtest
+// report: right-clicking an opposing soldier had no standing-order path
+// either, only a building did. A nil or already-dead target clears any
+// existing order, matching AttackFactionOrder's own convention.
+func (s *Soldier) AttackFactionSoldierOrder(target *Soldier) {
+	if target == nil || !target.Alive() {
+		s.faction = factionTarget{}
+		return
+	}
+	s.attackTarget = nil
+	s.faction = factionTarget{soldier: target}
+}
+
+// AttackFactionIntruderOrder is AttackFactionOrder's counterpart for any
+// other opposing unit -- a rival serf/villager/lumberjack/... with no HP
+// concept of its own (see combat.IntruderTarget, and factionTarget.hit's
+// one-hit-kill handling of this case). A target with no Alive callback,
+// or one already dead, clears any existing order.
+func (s *Soldier) AttackFactionIntruderOrder(target combat.IntruderTarget) {
+	if target.Alive == nil || !target.Alive() {
+		s.faction = factionTarget{}
+		return
+	}
+	s.attackTarget = nil
+	s.faction = factionTarget{intruder: &target}
+}
+
 func (s *Soldier) approach(grid *world.Grid, buildings []*building.Building) {
 	if s.attackTarget == nil {
 		return

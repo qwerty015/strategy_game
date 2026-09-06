@@ -344,6 +344,116 @@ func TestAttackFactionOrder_ClearsOnNilOrDeadTarget(t *testing.T) {
 	}
 }
 
+// TestAttackFactionSoldierOrder_ChasesAndDestroysADistantRival mirrors
+// TestAttackFactionOrder_ChasesAndDestroysADistantOpposingBuilding for a
+// rival Soldier target instead of a building -- part of the follow-up
+// request "клик боевым юнитом на любого юнита/постройку противника,
+// должен переходить в режим атаки" (a rival soldier, not just a
+// building, must also become a real standing attack order).
+func TestAttackFactionSoldierOrder_ChasesAndDestroysADistantRival(t *testing.T) {
+	grid := world.NewGrid(20, 20)
+	c := NewController()
+	s := c.Spawn(Swordsman, 0, 0)
+	rivalController := NewController()
+	rival := rivalController.Spawn(Swordsman, 10, 0)
+	s.AttackFactionSoldierOrder(rival)
+
+	if !s.HasFactionTarget() {
+		t.Fatal("AttackFactionSoldierOrder did not set a standing faction target")
+	}
+
+	for range 200 {
+		c.Tick(grid, nil, nil, nil, rivalController.Soldiers, nil)
+		if !rival.Alive() {
+			break
+		}
+	}
+	if rival.Alive() {
+		t.Fatal("swordsman never closed the distance and destroyed the ordered rival soldier")
+	}
+}
+
+// TestAttackFactionIntruderOrder_KillsADistantIntruder is the same
+// coverage for the third and last opposing-target kind: any other rival
+// unit with no HP concept of its own (see combat.IntruderTarget).
+func TestAttackFactionIntruderOrder_KillsADistantIntruder(t *testing.T) {
+	grid := world.NewGrid(20, 20)
+	c := NewController()
+	s := c.Spawn(Swordsman, 0, 0)
+
+	killed := false
+	alive := true
+	intruder := combat.IntruderTarget{
+		X: 10, Y: 0,
+		Alive: func() bool { return alive },
+		Kill:  func() { killed = true; alive = false },
+	}
+	s.AttackFactionIntruderOrder(intruder)
+
+	if !s.HasFactionTarget() {
+		t.Fatal("AttackFactionIntruderOrder did not set a standing faction target")
+	}
+
+	for range 200 {
+		c.Tick(grid, nil, nil, nil, nil, []combat.IntruderTarget{intruder})
+		if killed {
+			break
+		}
+	}
+	if !killed {
+		t.Fatal("swordsman never closed the distance and killed the ordered intruder")
+	}
+}
+
+// TestAttackFactionSoldierOrder_ClearsOnNilOrDeadTarget and its intruder
+// counterpart mirror AttackFactionOrder's own clearing convention.
+func TestAttackFactionSoldierOrder_ClearsOnNilOrDeadTarget(t *testing.T) {
+	c := NewController()
+	s := c.Spawn(Swordsman, 0, 0)
+	rivalController := NewController()
+	rival := rivalController.Spawn(Swordsman, 1, 0)
+
+	s.AttackFactionSoldierOrder(rival)
+	if !s.HasFactionTarget() {
+		t.Fatal("test setup: expected a standing faction target")
+	}
+	s.AttackFactionSoldierOrder(nil)
+	if s.HasFactionTarget() {
+		t.Fatal("AttackFactionSoldierOrder(nil) did not clear the standing faction target")
+	}
+
+	s.AttackFactionSoldierOrder(rival)
+	rival.HP = 0
+	s.AttackFactionSoldierOrder(rival)
+	if s.HasFactionTarget() {
+		t.Fatal("AttackFactionSoldierOrder(deadTarget) did not clear the standing faction target")
+	}
+}
+
+func TestAttackFactionIntruderOrder_ClearsOnDeadOrEmptyTarget(t *testing.T) {
+	c := NewController()
+	s := c.Spawn(Swordsman, 0, 0)
+	alive := true
+	intruder := combat.IntruderTarget{X: 1, Y: 0, Alive: func() bool { return alive }, Kill: func() { alive = false }}
+
+	s.AttackFactionIntruderOrder(intruder)
+	if !s.HasFactionTarget() {
+		t.Fatal("test setup: expected a standing faction target")
+	}
+
+	alive = false
+	s.AttackFactionIntruderOrder(intruder)
+	if s.HasFactionTarget() {
+		t.Fatal("AttackFactionIntruderOrder(deadTarget) did not clear the standing faction target")
+	}
+
+	s.AttackFactionIntruderOrder(intruder) // Alive still false from above
+	s.AttackFactionIntruderOrder(combat.IntruderTarget{})
+	if s.HasFactionTarget() {
+		t.Fatal("AttackFactionIntruderOrder(zero value) did not clear the standing faction target")
+	}
+}
+
 // TestController_AutoEngagesAnOpposingIntruder covers the user's explicit
 // request "боевые юниты могут уничтожать любых юнитов противника - это
 // враги!": a Soldier must be able to auto-engage ANY opposing unit, not
