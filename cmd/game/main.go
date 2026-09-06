@@ -2588,11 +2588,28 @@ func developmentScoreFrom(completedBuildings int, pop *economy.Population, stock
 // player) outside "N против ИИ" -- see drawTownSummary's own doc comment
 // on why that means the section doesn't render at all: nothing to rank
 // against.
+//
+// A defeated faction (factionDefeated) always scores 0, regardless of
+// developmentScoreFrom's own formula -- a real playtest report ("2
+// противника уничтожены, но у них высокие очки, а тот кто их уничтожил -
+// имеет самые низкие очки"): g.ais never removes an eliminated faction
+// (see tickAIFaction's own doc comment on why it keeps ticking one
+// forever), and its stock/Kills don't reset on defeat either -- a rich,
+// battle-hardened faction wiped out at its economic peak kept outranking
+// its own killer, who had just spent gold on soldiers/an Armory to
+// actually win the fight. Once every real building and unit is gone,
+// there is nothing left to rank as "developing".
 func (g *Game) developmentLeaderboard() []ui.LeaderboardEntry {
+	scoreFor := func(owner, completedBuildings int, pop *economy.Population, stock *resource.Stockpile) int {
+		if g.factionDefeated(owner) {
+			return 0
+		}
+		return developmentScoreFrom(completedBuildings, pop, stock)
+	}
 	entries := make([]ui.LeaderboardEntry, 0, 1+len(g.ais))
-	entries = append(entries, ui.LeaderboardEntry{Owner: 0, Score: g.developmentScore()})
+	entries = append(entries, ui.LeaderboardEntry{Owner: 0, Score: scoreFor(0, g.completedTownBuildingCount(), g.pop, g.stock)})
 	for _, f := range g.ais {
-		score := developmentScoreFrom(g.completedBuildingCountFor(f.owner), f.pop, f.stock)
+		score := scoreFor(f.owner, g.completedBuildingCountFor(f.owner), f.pop, f.stock)
 		entries = append(entries, ui.LeaderboardEntry{Owner: f.owner, Score: score})
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Score > entries[j].Score })

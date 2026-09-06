@@ -543,6 +543,57 @@ func TestDevelopmentLeaderboard_SingleEntryOutsideDuelMode(t *testing.T) {
 	}
 }
 
+// TestDevelopmentLeaderboard_DefeatedFactionScoresZero is the regression
+// test for a real playtest report ("2 противника уничтожены, но у них
+// высокие очки, а тот кто их уничтожил - имеет самые низкие очки"):
+// g.ais never removes an eliminated faction, and neither its leftover
+// gold nor its Kills tally reset on defeat -- a rich, battle-hardened
+// faction wiped out at its economic peak kept outranking its own killer.
+// Deliberately does NOT use wipeFactionForTest (which resets the
+// stockpile too) -- the whole point here is a defeated faction that
+// still has a fat treasury and a Kills tally sitting untouched.
+func TestDevelopmentLeaderboard_DefeatedFactionScoresZero(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && b.Kind != building.Road && b.Kind != building.StoneWall && b.Kind != building.Gate {
+			b.HP = 0
+		}
+	}
+	g.pruneDestroyedBuildings()
+	f.logi.Serfs = nil
+	f.vills.Villagers = nil
+	f.jacks.Lumberjacks = nil
+	f.fishers.Fishermen = nil
+	f.quarry.Quarrymen = nil
+	f.builders.Builders = nil
+	f.miners.Miners = nil
+	f.sentries.Sentries = nil
+	f.soldiers.Soldiers = nil
+	f.pop.Count = 0
+	f.pop.Kills = 100                  // battle-hardened before dying
+	f.stock.Add(resource.Gold, 100000) // a fat leftover treasury
+	if !g.factionDefeated(f.owner) {
+		t.Fatal("test setup: faction should be fully defeated")
+	}
+
+	board := g.developmentLeaderboard()
+	var gotScore int
+	found := false
+	for _, entry := range board {
+		if entry.Owner == f.owner {
+			gotScore, found = entry.Score, true
+		}
+	}
+	if !found {
+		t.Fatal("defeated faction missing from the leaderboard")
+	}
+	if gotScore != 0 {
+		t.Fatalf("defeated faction's score = %d, want 0 (leftover gold/Kills must not inflate a dead faction's rank)", gotScore)
+	}
+}
+
 // TestDuelGame_FFAResultRequiresEveryBotDefeated is the "все против
 // всех" generalization of TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch:
 // with more than one opponent, defeating only SOME of them must not end
