@@ -878,26 +878,43 @@ func (g *Game) ownedBuildings(owner int) []*building.Building {
 // lumberjack, ...) actually need for their Tick calls to route over that
 // faction's own road network. See ownedBuildings' doc comment for the
 // bug this split fixes.
-// Road is included regardless of Owner, same as isNaturalResourceKind's
-// exemption -- a real bug found from an actual playtest report: an AI
-// faction that's fully defeated leaves its own Road tiles behind
-// (pruneDestroyedBuildings never removes Road, by design), still tagged
-// with the AI's old Owner forever -- nothing ever reassigns it. Once the
-// player takes over that territory (builds their own Tavern/workshops
-// there), road-only pathfinding (Tavern hauling, a worker's own trip to
-// eat) filtered those leftover road tiles out as "not mine", breaking
-// delivery on the conquered island while off-road pathing (soldier
-// feeding, most worker job-pathing, which never filters by Owner at all)
-// kept working fine -- reported as "боевым юнитам доставляется еда
-// слугами" [feeding works] "а рыболов не может пойти поесть" [tavern
-// trips don't], "мистика!". A road is shared infrastructure, not
-// faction property, the same way a tree or ore deposit already is --
-// per the user's own explicit suggestion ("дорога — нейтральна и не
-// принадлежит ни одной из сторон").
+// A FINISHED Road tile is included regardless of Owner, same as
+// isNaturalResourceKind's exemption -- a real bug found from an actual
+// playtest report: an AI faction that's fully defeated leaves its own
+// Road tiles behind (pruneDestroyedBuildings never removes Road, by
+// design), still tagged with the AI's old Owner forever -- nothing ever
+// reassigns it. Once the player takes over that territory (builds their
+// own Tavern/workshops there), road-only pathfinding (Tavern hauling, a
+// worker's own trip to eat) filtered those leftover road tiles out as
+// "not mine", breaking delivery on the conquered island while off-road
+// pathing (soldier feeding, most worker job-pathing, which never filters
+// by Owner at all) kept working fine -- reported as "боевым юнитам
+// доставляется еда слугами" [feeding works] "а рыболов не может пойти
+// поесть" [tavern trips don't], "мистика!". A finished road is shared
+// infrastructure, not faction property, the same way a tree or ore
+// deposit already is -- per the user's own explicit suggestion ("дорога
+// — нейтральна и не принадлежит ни одной из сторон").
+//
+// An UNFINISHED road, though, only counts when it's actually this
+// faction's own -- a real bug found from an actual playtest report ("мои
+// слуги помогают противнику, его слуги - мне"): a blanket Road exemption
+// regardless of ConstructionStage let every faction's builder.Controller
+// see every OTHER faction's still-under-construction road tiles too
+// (builder.startSiteJob picks any candidate with ConstructionStage !=
+// ConstructionNone from this exact list, with no owner check of its own
+// -- every other building kind is already excluded from a foreign
+// faction's list by the b.Owner == owner check above, so Road was the
+// only leak). Confirmed live on an actual save: three different AI
+// factions' builders each finishing the PLAYER's own unfinished road
+// tiles. A finished road needs no owner to already be walkable
+// (pathfind's roadSet/buildingOccupancy check Kind, not who built it) --
+// only an unfinished one is actually "somebody's work in progress", and
+// that somebody must be this faction, not a rival's.
 func (g *Game) ownedBuildingsWithRoads(owner int) []*building.Building {
 	var out []*building.Building
 	for _, b := range g.buildings {
-		if b.Owner == owner || isNaturalResourceKind(b.Kind) || b.Kind == building.Road {
+		ownRoad := b.Kind == building.Road && (b.Owner == owner || b.ConstructionStage == building.ConstructionNone)
+		if b.Owner == owner || isNaturalResourceKind(b.Kind) || ownRoad {
 			out = append(out, b)
 		}
 	}

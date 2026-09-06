@@ -569,6 +569,46 @@ func TestDuelGame_PlayerLogisticsRouteOverTheDefeatedAIsOldRoads(t *testing.T) {
 	}
 }
 
+// TestDuelGame_UnfinishedForeignRoadIsExcludedFromOwnBuildingList is a real
+// bug found from an actual playtest report ("мои слуги помогают
+// противнику, его слуги - мне") and confirmed on the user's own real
+// save: ownedBuildingsWithRoads' blanket Road exemption (needed for
+// connectivity over a defeated AI's finished leftover roads, see
+// TestDuelGame_PlayerLogisticsRouteOverTheDefeatedAIsOldRoads above) used
+// to apply regardless of ConstructionStage, so a STILL-UNFINISHED
+// opponent's road tile leaked into every other faction's own building
+// list too -- builder.Controller.startSiteJob has no owner check of its
+// own (every other building kind is already excluded by the owner check,
+// so Road was the only gap), and happily sent a builder to go finish a
+// rival's construction site. A finished road stays neutral; an
+// unfinished one must not.
+func TestDuelGame_UnfinishedForeignRoadIsExcludedFromOwnBuildingList(t *testing.T) {
+	finishedForeign := &building.Building{Kind: building.Road, X: 1, Y: 0, Owner: 1, ConstructionStage: building.ConstructionNone}
+	unfinishedForeign := &building.Building{Kind: building.Road, X: 2, Y: 0, Owner: 1, ConstructionStage: building.ConstructionFoundation}
+	ownUnfinished := &building.Building{Kind: building.Road, X: 3, Y: 0, Owner: 0, ConstructionStage: building.ConstructionFoundation}
+
+	g := &Game{buildings: []*building.Building{finishedForeign, unfinishedForeign, ownUnfinished}}
+	playerBuildings := g.ownedBuildingsWithRoads(0)
+
+	contains := func(b *building.Building) bool {
+		for _, x := range playerBuildings {
+			if x == b {
+				return true
+			}
+		}
+		return false
+	}
+	if !contains(finishedForeign) {
+		t.Error("a finished road belonging to another faction must still be visible (neutral for connectivity)")
+	}
+	if contains(unfinishedForeign) {
+		t.Error("an UNFINISHED road belonging to another faction leaked into this faction's own building list -- a builder could be sent to go finish it")
+	}
+	if !contains(ownUnfinished) {
+		t.Error("this faction's own unfinished road must still be visible -- it needs to actually get built")
+	}
+}
+
 // TestDuelGame_SaveAndLoadRoundTripsTheAIFaction is the feature the user
 // explicitly confirmed wanting ("Конечно нужно сохранение"), after
 // saveGame previously refused to save a duel game at all rather than
