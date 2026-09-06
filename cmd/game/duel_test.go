@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"image"
 	"math"
 	"testing"
@@ -541,11 +542,25 @@ func TestDuelGame_PlayerLogisticsRouteOverTheDefeatedAIsOldRoads(t *testing.T) {
 // reloaded game keeps ticking without the AI silently freezing.
 func TestDuelGame_SaveAndLoadRoundTripsTheAIFaction(t *testing.T) {
 	g := newDuelGame([]aiDifficulty{AIHard})
-	for i := 0; i < 5000; i++ {
+	// Capped at 2000, not run for a fixed 5000 -- and stopped the instant
+	// the match is actually decided (checkDuelResult), whichever comes
+	// first. A real bug found running this exact test after loadGame
+	// stopped silently accepting another faction's Warehouse (see
+	// TestDuelGame_LoadFailsRatherThanAdoptAnEnemyWarehouse): ticking a
+	// fully undefended player for 5000 ticks against AIHard reliably let
+	// the AI actually reach and destroy the player's own Warehouse
+	// (previously masked -- loadGame just silently adopted the AI's
+	// Warehouse instead of reporting the player had none left). This test
+	// only needs the AI to have made SOME real progress, not to survive
+	// an entire match either way.
+	for i := 0; i < 2000 && g.duelResult == duelResultNone; i++ {
 		g.tickOnce()
 	}
+	if g.duelResult != duelResultNone {
+		t.Fatalf("test setup: the match was already decided (duelResult=%v) before 2000 ticks -- pick a shorter/safer tick count", g.duelResult)
+	}
 	if len(g.ais) == 0 || len(g.ownedBuildings(1)) <= 2 {
-		t.Fatal("test setup: AI hasn't built anything yet after 5000 ticks")
+		t.Fatal("test setup: AI hasn't built anything yet after 2000 ticks")
 	}
 	wantDifficulty := g.ais[0].brain.difficulty
 	wantBuildIndex := g.ais[0].brain.buildIndex
@@ -591,6 +606,52 @@ func TestDuelGame_SaveAndLoadRoundTripsTheAIFaction(t *testing.T) {
 	}
 	if loaded.ais[0].pop.Count == 0 {
 		t.Fatal("the reloaded AI's population dropped to zero within 2000 ticks -- it isn't functioning after load")
+	}
+}
+
+// TestDuelGame_LoadFailsRatherThanAdoptAnEnemyWarehouse is a real bug found
+// from an actual playtest report ("создай слуг от юзера, они начинают
+// ходить по кругу карты без перерыва" -- newly hired serfs wandering the
+// map forever): loadGame used to resolve the player's own warehouse via
+// the owner-blind findWarehouse(buildings), which just returns whichever
+// operational Warehouse comes first in the array. That's harmless in an
+// ordinary single-player save (every building is Owner 0 there anyway),
+// but once the player's OWN Warehouse has been destroyed in a duel match
+// before saving, an AI faction's still-standing Warehouse came first
+// instead -- silently anchoring the player's logistics controller to an
+// enemy building clear across the map. A player with no Warehouse left of
+// their own has no economy to load into, whatever other buildings
+// survive: loadGame must report errNoWarehouseInSave here, not adopt a
+// foreign one.
+func TestDuelGame_LoadFailsRatherThanAdoptAnEnemyWarehouse(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIHard})
+	for i := 0; i < 2000; i++ {
+		g.tickOnce()
+	}
+	if len(g.ownedBuildings(1)) <= 2 {
+		t.Fatal("test setup: AI hasn't built anything yet after 2000 ticks")
+	}
+	// Simulate the player's own Warehouse having been destroyed in combat
+	// before this save happened -- drop every Owner:0 Warehouse, leaving
+	// the AI's (Owner:1) Warehouse as the only one left in the file.
+	var survivors []*building.Building
+	for _, b := range g.buildings {
+		if b.Kind == building.Warehouse && b.Owner == 0 {
+			continue
+		}
+		survivors = append(survivors, b)
+	}
+	g.buildings = survivors
+
+	path := t.TempDir() + "/no_player_warehouse.json"
+	if err := g.saveGame(path, "no warehouse test"); err != nil {
+		t.Fatalf("saveGame failed: %v", err)
+	}
+
+	loaded := newDuelGame([]aiDifficulty{AIHard})
+	err := loaded.loadGame(path)
+	if !errors.Is(err, errNoWarehouseInSave) {
+		t.Fatalf("loadGame error = %v, want errNoWarehouseInSave", err)
 	}
 }
 

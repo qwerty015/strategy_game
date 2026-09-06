@@ -3602,7 +3602,22 @@ func (g *Game) loadGame(path string) error {
 	buildings := referenceBuildings(state.Buildings)
 	buildings, hadTrees := ensureTrees(grid, buildings, len(state.TreeRegrowth) > 0)
 	buildings, _ = ensureFish(grid, buildings, len(state.FishRegrowth) > 0)
-	warehouse := findWarehouse(buildings)
+	// findWarehouseOwnedBy, not findWarehouse: a real bug found from an
+	// actual playtest report ("создай слуг от юзера, они начинают ходить
+	// по кругу карты без перерыва") -- in an ordinary single-player save
+	// every building (including the one warehouse) is Owner 0 by
+	// construction, so this made no difference there, but in a duel save
+	// where the player's OWN Warehouse had been destroyed before saving,
+	// the owner-blind findWarehouse happily returned an AI faction's
+	// Warehouse instead (whichever came first in the array) -- silently
+	// anchoring the player's own logistics controller to an enemy
+	// building on the far side of the map. A newly hired serf spawned
+	// there, found no reachable player-owned job anywhere near it, and
+	// wandered indefinitely. A player with no Warehouse of their own left
+	// has no economy to load into regardless of what other buildings
+	// survive -- errNoWarehouseInSave below is exactly the right outcome
+	// for that, not a silent substitution.
+	warehouse := findWarehouseOwnedBy(buildings, 0)
 	if warehouse == nil {
 		return errNoWarehouseInSave
 	}
