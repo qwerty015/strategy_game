@@ -18,6 +18,26 @@ const MaxHP = 100
 // хп"), twenty hits to bring one down instead of ten.
 const DamagePerHit = 5
 
+// DecayIntervalTicks/DecayAmount are the user's own explicit passive-
+// damage rule for a finished building sitting below full health with
+// nobody repairing it: "если здание не восстанавливать, ХП уменьшается
+// по 1% за 10 тиков". Only ever applied while nothing is actively
+// repairing the building (see cmd/game's decayDamagedBuildings) --
+// the user's own explicit choice, confirmed when asked directly, so an
+// active repair job never has to race a ticking clock.
+const (
+	DecayIntervalTicks = 10
+	DecayAmount        = 1
+
+	// DecayFloor is how low passive decay alone can bring a building --
+	// never destroys it outright. The user's own explicit choice,
+	// confirmed when asked directly ("не может ли здание само
+	// развалиться до 0 без боя" -> нет, есть пол): only real combat
+	// damage (DamagePerHit/UnitDamagePerHit) can push a building the
+	// rest of the way to destruction.
+	DecayFloor = 10
+)
+
 // UnitDamagePerHit is how much HP a single hit removes from a *unit* in
 // direct soldier-vs-soldier combat -- rebalanced from the original 50%
 // (two hits kill) to 20% per the user's own explicit request ("удар

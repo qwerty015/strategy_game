@@ -672,7 +672,7 @@ func (g *Game) tickOnce() {
 			{g.jacks.MaxWaitingHunger(), func() { jackEvents = g.jacks.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
 			{g.fishers.MaxWaitingHunger(), func() { fishEvents = g.fishers.Tick(g.grid, playerBuildings, ledger) }},
 			{g.quarry.MaxWaitingHunger(), func() { quarryEvents = g.quarry.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
-			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
+			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, playerBuildings, g.buildings, g.stock, ledger) }},
 			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
 			{g.sentries.MaxWaitingHunger(), func() {
 				sentryResult = g.sentries.Tick(playerBuildings, g.opposingIntruderTargetsFor(g.sentries), ledger)
@@ -787,6 +787,7 @@ func (g *Game) tickOnce() {
 		for _, f := range g.ais {
 			g.tickAIFaction(f, g.grid)
 		}
+		g.decayDamagedBuildings()
 		g.razeHopelessFactions()
 		g.pruneDestroyedBuildings()
 		g.checkDuelResult()
@@ -5273,6 +5274,68 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 // map: without this exemption, every tree/fish/deposit on the whole map
 // (615 of 619 starting buildings) had HP==0 and was wiped out on the
 // very first tick this function ever ran.
+
+// decayDamagedBuildings applies the user's own explicit passive-damage
+// rule to every finished building sitting below full health with
+// nobody actively repairing it: "если здание не восстанавливать, ХП
+// уменьшается по 1% за 10 тиков" (combat.DecayIntervalTicks/
+// DecayAmount). Never brings a building below combat.DecayFloor --
+// confirmed with the user directly ("может ли здание само развалиться
+// до 0 без боя" -> нет, есть пол): only real combat damage can finish
+// the job. DecayTicks resets to 0 whenever a building isn't currently
+// eligible (full health, destroyed, still under construction, or a
+// builder is actively StateRepairing it right now -- see
+// buildingsUnderActiveRepair), so decay never "banks" progress across a
+// pause and always restarts cleanly once it resumes.
+func (g *Game) decayDamagedBuildings() {
+	repairing := g.buildingsUnderActiveRepair()
+	for _, b := range g.buildings {
+		if b == nil || b.ConstructionStage != building.ConstructionNone {
+			continue
+		}
+		if b.HP <= 0 || b.HP >= building.MaxHP || repairing[b] {
+			b.DecayTicks = 0
+			continue
+		}
+		if b.HP <= combat.DecayFloor {
+			continue
+		}
+		b.DecayTicks++
+		if b.DecayTicks < combat.DecayIntervalTicks {
+			continue
+		}
+		b.DecayTicks = 0
+		b.HP -= combat.DecayAmount
+		if b.HP < combat.DecayFloor {
+			b.HP = combat.DecayFloor
+		}
+	}
+}
+
+// buildingsUnderActiveRepair collects every building any faction's
+// builder is currently, actively repairing (builder.StateRepairing) --
+// see decayDamagedBuildings, which pauses passive decay for exactly
+// these. Deliberately narrower than "a builder is walking toward it"
+// (StateToSite): nothing has actually started yet at that point, so
+// decay keeps running until real work does.
+func (g *Game) buildingsUnderActiveRepair() map[*building.Building]bool {
+	active := make(map[*building.Building]bool)
+	mark := func(bc *builder.Controller) {
+		for _, b := range bc.Builders {
+			if b.State() == builder.StateRepairing {
+				if t := b.TargetSite(); t != nil {
+					active[t] = true
+				}
+			}
+		}
+	}
+	mark(g.builders)
+	for _, f := range g.ais {
+		mark(f.builders)
+	}
+	return active
+}
+
 // razeHopelessFactions auto-defeats an AI faction that has fallen into a
 // state it can structurally never recover from on its own: zero living
 // units of any profession AND less gold banked than a single hire costs.

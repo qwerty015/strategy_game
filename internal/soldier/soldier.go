@@ -338,9 +338,17 @@ func (s *Soldier) NeedsDelivery() bool {
 	return s.SatietyPercent() <= DeliveryThresholdPercent
 }
 
-// Feed resets hunger to zero -- called once a serf's delivery reaches
-// this soldier.
-func (s *Soldier) Feed() { s.ticksSinceMeal = 0 }
+// Feed resets hunger to zero and heals this soldier back to full HP --
+// the user's own explicit request ("ХП юнитов восстанавливается после
+// привала, когда слуга приносит провизию"), confirmed as a full heal (not
+// partial) when asked directly. Called once a serf's delivery reaches
+// this soldier -- see package logistics' soldier food-delivery leg.
+// Doesn't revive a dead soldier: Controller.Tick already removes one at
+// HP<=0 before any of its own logic (including this) can run again.
+func (s *Soldier) Feed() {
+	s.ticksSinceMeal = 0
+	s.HP = combat.MaxHP
+}
 
 // Controller owns every Archer and Swordsman in town.
 type Controller struct {

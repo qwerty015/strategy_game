@@ -10,6 +10,21 @@ import (
 	"strategy_game/internal/world"
 )
 
+// testStock returns a stockpile with generous, effectively-unlimited
+// construction-material amounts -- most of this file's tests aren't
+// about repair economics at all, so what's in it doesn't matter as long
+// as it never withholds a repair job a test isn't deliberately checking
+// affordability for (see TestBuilder_RepairChargesHalfTheConstructionCost/
+// TestBuilder_WithholdsRepairWithoutEnoughMaterials, which build their
+// own stock instead).
+func testStock() *resource.Stockpile {
+	s := resource.NewStockpile(100000)
+	s.Add(resource.Plank, 100000)
+	s.Add(resource.StoneBlock, 100000)
+	s.Add(resource.Iron, 100000)
+	return s
+}
+
 // TestController_IsBlockedByAForeignWall mirrors lumberjack/quarry/miner's
 // identical regression test: obstacles (the whole map) must actually stop
 // a builder at a rival faction's wall, while buildings (the job candidate
@@ -32,7 +47,7 @@ func TestController_IsBlockedByAForeignWall(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, obstacles, ledger)
+		controller.Tick(grid, buildings, obstacles, testStock(), ledger)
 	}
 	if b.state != StateIdle {
 		t.Fatalf("state with the target site behind a foreign wall = %v, want StateIdle (must never cross it)", b.state)
@@ -41,7 +56,7 @@ func TestController_IsBlockedByAForeignWall(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 		if b.state != StateIdle {
 			break
 		}
@@ -73,7 +88,7 @@ func TestBuilder_EatsAtNearestReachableTavern(t *testing.T) {
 	for range HungerInterval + 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 		if b.hungerTick == 0 {
 			ate = true
 			break
@@ -105,7 +120,7 @@ func TestController_DismissalRemovesIdleBuilder(t *testing.T) {
 	if !controller.RequestDismissal(b) || !b.Dismissing() {
 		t.Fatal("RequestDismissal did not mark the live builder")
 	}
-	events := controller.Tick(grid, []*building.Building{warehouse}, []*building.Building{warehouse}, reservations.New())
+	events := controller.Tick(grid, []*building.Building{warehouse}, []*building.Building{warehouse}, testStock(), reservations.New())
 	if got := len(controller.Builders); got != 0 {
 		t.Fatalf("builders after dismissing an idle one = %d, want 0", got)
 	}
@@ -137,7 +152,7 @@ func TestController_DismissalWaitsForCurrentSite(t *testing.T) {
 
 	controller := NewController()
 	b := controller.Hire(warehouse)
-	controller.Tick(grid, buildings, buildings, reservations.New()) // assigns the site
+	controller.Tick(grid, buildings, buildings, testStock(), reservations.New()) // assigns the site
 	if b.state == StateIdle {
 		t.Fatal("builder did not pick up the construction site before dismissal")
 	}
@@ -146,7 +161,7 @@ func TestController_DismissalWaitsForCurrentSite(t *testing.T) {
 	}
 
 	for range building.Types[building.Farm].ConstructionFoundationTicks + building.Types[building.Farm].ConstructionBuildTicks + 20 {
-		controller.Tick(grid, buildings, buildings, reservations.New())
+		controller.Tick(grid, buildings, buildings, testStock(), reservations.New())
 		if len(controller.Builders) == 0 {
 			break
 		}
@@ -188,7 +203,7 @@ func TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving(t *testing.T) {
 		tavern.AddInput(resource.Bread, 1) // keep the Tavern stocked; food is never the constraint here
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 		if len(controller.Builders) == 0 {
 			t.Fatalf("builder died despite a stocked, reachable Tavern (last hunger tick observed: %d)", lastHunger)
 		}
@@ -208,7 +223,7 @@ func TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving(t *testing.T) {
 		tavern.AddInput(resource.Bread, 1)
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 		if b.State() == StateWaitingMaterials {
 			settled = true
 			break
@@ -228,7 +243,7 @@ func TestBuilder_EatsWhileWaitingForMaterialsInsteadOfStarving(t *testing.T) {
 	for range building.Types[building.Mill].ConstructionBuildTicks + 5 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
+		for _, event := range controller.Tick(grid, buildings, buildings, testStock(), ledger) {
 			e := event
 			completed = &e
 		}
@@ -266,7 +281,7 @@ func TestBuilderCompletesConstructionInTwoPhases(t *testing.T) {
 	for range building.Types[building.Mill].ConstructionFoundationTicks + 50 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 		if b.State() == StateWaitingMaterials {
 			break
 		}
@@ -287,7 +302,7 @@ func TestBuilderCompletesConstructionInTwoPhases(t *testing.T) {
 	for range building.Types[building.Mill].ConstructionBuildTicks + 5 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		for _, event := range controller.Tick(grid, buildings, buildings, ledger) {
+		for _, event := range controller.Tick(grid, buildings, buildings, testStock(), ledger) {
 			e := event
 			completed = &e
 		}
@@ -327,7 +342,7 @@ func TestBuilderSkipsWaitingWhenMaterialsAlreadyDelivered(t *testing.T) {
 	for range building.Types[building.Road].ConstructionFoundationTicks + building.Types[building.Road].ConstructionBuildTicks + 30 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 		if len(controller.Builders) == 0 {
 			break
 		}
@@ -365,7 +380,7 @@ func TestOnlyOneBuilderClaimsASite(t *testing.T) {
 	for range 10 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 	}
 
 	claimants := 0
@@ -415,7 +430,7 @@ func TestController_SurvivesManyIdleTicksWithNoWork(t *testing.T) {
 	for range 50 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 	}
 
 	if got := len(controller.Builders); got != 1 {
@@ -441,7 +456,7 @@ func TestBuilder_RepairsADamagedFinishedBuilding(t *testing.T) {
 	for range 200 {
 		ledger := reservations.New()
 		controller.Reserve(ledger)
-		controller.Tick(grid, buildings, buildings, ledger)
+		controller.Tick(grid, buildings, buildings, testStock(), ledger)
 		if damaged.HP == building.MaxHP {
 			break
 		}
@@ -473,9 +488,76 @@ func TestBuilder_PrefersFreshConstructionOverRepair(t *testing.T) {
 
 	ledger := reservations.New()
 	controller.Reserve(ledger)
-	controller.Tick(grid, buildings, buildings, ledger)
+	controller.Tick(grid, buildings, buildings, testStock(), ledger)
 
 	if b.state != StateToSite || b.target != site {
 		t.Fatalf("builder target = %v (state %v), want the fresh construction site first", b.target, b.state)
+	}
+}
+
+// TestBuilder_RepairChargesHalfTheConstructionCost is the regression
+// test for the user's own explicit request ("стоимость ремонта здания
+// == 50% стоимости постройки здания при любом уровне ХП здания отличным
+// от 100%"): committing to a repair job must deduct exactly half the
+// building's full construction material cost from the faction's shared
+// stockpile, in one lump sum, the instant the builder takes the job.
+func TestBuilder_RepairChargesHalfTheConstructionCost(t *testing.T) {
+	grid := world.NewGrid(8, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0, HP: building.MaxHP}
+	damaged := &building.Building{Kind: building.Farm, X: 3, Y: 0, ConstructionStage: building.ConstructionNone, HP: 50}
+	buildings := []*building.Building{warehouse, damaged}
+
+	wantPlank := damaged.RepairMaterialCost(resource.Plank)
+	if wantPlank == 0 {
+		t.Fatal("test setup: Farm's repair cost is 0 Plank, this test needs a nonzero cost to mean anything")
+	}
+	stock := resource.NewStockpile(1000)
+	// Fund every material type the repair needs, not just Plank -- a
+	// real building (Farm included) typically needs StoneBlock too, and
+	// canAffordRepair requires all of them at once.
+	for _, rt := range building.ConstructionMaterialTypes() {
+		stock.Add(rt, damaged.RepairMaterialCost(rt))
+	}
+
+	controller := NewController()
+	controller.Hire(warehouse)
+
+	ledger := reservations.New()
+	controller.Reserve(ledger)
+	controller.Tick(grid, buildings, buildings, stock, ledger)
+
+	if got := stock.Amount(resource.Plank); got != 0 {
+		t.Fatalf("stock Plank right after committing to repair = %d, want 0 (exactly %d charged up front)", got, wantPlank)
+	}
+	for _, rt := range building.ConstructionMaterialTypes() {
+		if got := stock.Amount(rt); got != 0 {
+			t.Fatalf("stock %v right after committing to repair = %d, want 0 (fully charged up front)", rt, got)
+		}
+	}
+}
+
+// TestBuilder_WithholdsRepairWithoutEnoughMaterials confirms an idle
+// builder does not walk over to (and get stuck at) a damaged building
+// the faction can't currently afford to repair -- it must simply stay
+// idle instead.
+func TestBuilder_WithholdsRepairWithoutEnoughMaterials(t *testing.T) {
+	grid := world.NewGrid(8, 4)
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0, HP: building.MaxHP}
+	damaged := &building.Building{Kind: building.Farm, X: 3, Y: 0, ConstructionStage: building.ConstructionNone, HP: 50}
+	buildings := []*building.Building{warehouse, damaged}
+	stock := resource.NewStockpile(1000) // nothing banked at all
+
+	controller := NewController()
+	b := controller.Hire(warehouse)
+
+	ledger := reservations.New()
+	controller.Reserve(ledger)
+	controller.Tick(grid, buildings, buildings, stock, ledger)
+
+	if b.state != StateIdle {
+		t.Fatalf("builder state = %v, want StateIdle -- repair must not start without the materials to pay for it", b.state)
+	}
+	if damaged.HP != 50 {
+		t.Fatalf("damaged.HP = %d, want unchanged at 50 -- nothing should have started repairing it yet", damaged.HP)
 	}
 }

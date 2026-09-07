@@ -389,6 +389,17 @@ type Building struct {
 	// migration.
 	HP int
 
+	// DecayTicks counts simulation ticks toward the next passive-decay
+	// step for a damaged (0 < HP < MaxHP), unrepaired, finished building
+	// -- see cmd/game's decayDamagedBuildings and combat.DecayIntervalTicks/
+	// DecayAmount/DecayFloor. Reset to 0 whenever the building isn't
+	// currently eligible to decay (full health, destroyed, still under
+	// construction, or a builder is actively repairing it right now), so
+	// decay never "banks" partial progress across a pause and always
+	// starts counting fresh once it resumes. Zero value is exactly
+	// "hasn't started counting yet", so an old save needs no migration.
+	DecayTicks int
+
 	// ProductionQueue is how many of each item type the player has asked
 	// an Armory to produce (Bow/LeatherArmor/Sword) -- see cmd/game's
 	// tickArmories and the queue buttons in internal/ui/panels.go. nil for
@@ -452,6 +463,23 @@ func (b *Building) ConstructionMaterialCost(t resource.Type) int {
 	default:
 		return 0
 	}
+}
+
+// RepairMaterialCost is how much of resource type t a builder's repair
+// job costs, from a faction's shared stockpile -- the user's own
+// explicit request ("стоимость ремонта здания == 50% стоимости
+// постройки здания при любом уровне ХП здания отличным от 100%"): a
+// flat half of the full ConstructionMaterialCost, rounded up, regardless
+// of how damaged the building actually is. Deliberately a separate,
+// lump-sum stockpile cost rather than routing through InputBuffer the
+// way fresh construction delivery does -- a WatchTower's InputBuffer
+// already holds its own stone ammunition (see package sentry), so
+// reusing that same buffer for repair material would be genuinely
+// ambiguous, the exact conflict the original (materials-free) repair
+// design was written to sidestep. See cmd/game's builder package
+// integration for where this is actually charged.
+func (b *Building) RepairMaterialCost(t resource.Type) int {
+	return (b.ConstructionMaterialCost(t) + 1) / 2
 }
 
 // ConstructionMaterialsReady reports whether every required Plank/

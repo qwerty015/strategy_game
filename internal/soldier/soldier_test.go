@@ -48,6 +48,19 @@ func TestNeedsDelivery_TriggersAtThirtyPercentSatiety(t *testing.T) {
 	}
 }
 
+// TestFeed_RestoresHPToFull is the regression test for the user's own
+// explicit request ("ХП юнитов восстанавливается после привала, когда
+// слуга приносит провизию"), confirmed as a full heal (not partial) when
+// asked directly.
+func TestFeed_RestoresHPToFull(t *testing.T) {
+	s := New(Swordsman, 0, 0)
+	s.HP = 1
+	s.Feed()
+	if s.HP != combat.MaxHP {
+		t.Fatalf("HP after Feed() = %d, want %d (full heal)", s.HP, combat.MaxHP)
+	}
+}
+
 func TestController_StarvationStillKills(t *testing.T) {
 	grid := world.NewGrid(4, 4)
 	c := NewController()

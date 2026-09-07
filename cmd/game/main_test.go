@@ -17,6 +17,7 @@ import (
 	"strategy_game/internal/miner"
 	"strategy_game/internal/quarry"
 	"strategy_game/internal/render"
+	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
 	"strategy_game/internal/sentry"
@@ -1814,5 +1815,86 @@ func TestDevelopmentScore_CombinesBuildingsPopulationKillsAndGold(t *testing.T) 
 	want := 1*10 + 4*5 + 2*20 + 7 // 1 finished building, 4 population, 2 kills, 7 gold
 	if got := game.developmentScore(); got != want {
 		t.Fatalf("developmentScore() = %d, want %d", got, want)
+	}
+}
+
+// TestDecayDamagedBuildings_ReducesHPAfterTheInterval is the regression
+// test for the user's own explicit request ("если здание не
+// восстанавливать, ХП уменьшается по 1% за 10 тиков"): a damaged,
+// unattended, finished building loses combat.DecayAmount HP once
+// combat.DecayIntervalTicks of decayDamagedBuildings calls have passed,
+// not before.
+func TestDecayDamagedBuildings_ReducesHPAfterTheInterval(t *testing.T) {
+	b := &building.Building{Kind: building.Farm, X: 0, Y: 0, HP: 50, ConstructionStage: building.ConstructionNone}
+	g := &Game{buildings: []*building.Building{b}, builders: builder.NewController()}
+
+	for i := 0; i < combat.DecayIntervalTicks-1; i++ {
+		g.decayDamagedBuildings()
+	}
+	if b.HP != 50 {
+		t.Fatalf("HP = %d after %d ticks, want unchanged at 50 (interval not reached yet)", b.HP, combat.DecayIntervalTicks-1)
+	}
+	g.decayDamagedBuildings()
+	if want := 50 - combat.DecayAmount; b.HP != want {
+		t.Fatalf("HP = %d after %d ticks, want %d", b.HP, combat.DecayIntervalTicks, want)
+	}
+}
+
+// TestDecayDamagedBuildings_NeverGoesBelowTheFloor is the regression
+// test for the user's own explicit choice, confirmed when asked
+// directly ("может ли здание само развалиться до 0 без боя" -> нет,
+// есть пол): passive decay alone must never destroy a building.
+func TestDecayDamagedBuildings_NeverGoesBelowTheFloor(t *testing.T) {
+	b := &building.Building{Kind: building.Farm, X: 0, Y: 0, HP: combat.DecayFloor + 1, ConstructionStage: building.ConstructionNone}
+	g := &Game{buildings: []*building.Building{b}, builders: builder.NewController()}
+
+	for i := 0; i < combat.DecayIntervalTicks*20; i++ {
+		g.decayDamagedBuildings()
+	}
+	if b.HP != combat.DecayFloor {
+		t.Fatalf("HP = %d after a long unattended wait, want it to settle exactly at DecayFloor (%d), never below", b.HP, combat.DecayFloor)
+	}
+}
+
+// TestDecayDamagedBuildings_PausesWhileABuilderIsActivelyRepairing is
+// the regression test for the user's own explicit choice, confirmed
+// when asked directly ("продолжается ли пока строитель уже активно
+// чинит здание" -> останавливается пока чинят): decay must not race an
+// active repair job.
+func TestDecayDamagedBuildings_PausesWhileABuilderIsActivelyRepairing(t *testing.T) {
+	warehouse := &building.Building{Kind: building.Warehouse, X: 0, Y: 0, HP: building.MaxHP}
+	damaged := &building.Building{Kind: building.Farm, X: 3, Y: 0, HP: 50, ConstructionStage: building.ConstructionNone}
+	stock := resource.NewStockpile(1000)
+	for _, rt := range building.ConstructionMaterialTypes() {
+		stock.Add(rt, damaged.RepairMaterialCost(rt))
+	}
+	g := &Game{
+		buildings: []*building.Building{warehouse, damaged},
+		builders:  builder.NewController(),
+		grid:      world.NewGrid(8, 4),
+		stock:     stock,
+	}
+	b := g.builders.Hire(warehouse)
+
+	// Walk the builder to the site, stopping the instant it actually
+	// starts repairing (StateRepairing) -- well before RepairTicks (40)
+	// would let it finish.
+	for i := 0; i < 20 && b.State() != builder.StateRepairing; i++ {
+		ledger := reservations.New()
+		g.builders.Reserve(ledger)
+		g.builders.Tick(g.grid, g.buildings, g.buildings, g.stock, ledger)
+	}
+	if b.State() != builder.StateRepairing || b.TargetSite() != damaged {
+		t.Fatal("test setup: builder never started actively repairing the damaged building")
+	}
+
+	// Run decay alone, many times over -- well past DecayIntervalTicks --
+	// without advancing the builder any further. HP must stay exactly
+	// where it was: decay must not race an active repair job.
+	for i := 0; i < combat.DecayIntervalTicks*5; i++ {
+		g.decayDamagedBuildings()
+	}
+	if damaged.HP != 50 {
+		t.Fatalf("HP = %d after decay ran during an active repair, want unchanged at 50", damaged.HP)
 	}
 }

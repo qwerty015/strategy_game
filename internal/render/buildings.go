@@ -278,6 +278,24 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			vector.FillRect(screen, barX, barY, barWidth*progress, barHeight, color.RGBA{R: 255, G: 255, B: 0, A: 220}, false)
 		}
 
+		// HP bar: drawn only for a finished building sitting below full
+		// health -- per the user's own explicit request ("полоса с ХП у
+		// зданий, появляется только у зданий у которых хп < 100%"). Any
+		// kind, not just production buildings (a StoneWall/Gate needs
+		// this exactly as much) -- placed at the TOP of the footprint so
+		// it never collides with the production-progress bar above,
+		// which already owns the bottom edge.
+		if b.ConstructionStage == building.ConstructionNone && b.HP > 0 && b.HP < building.MaxHP {
+			barSpan := math.Max(float64(bt.Footprint), visualBuildingHeight(b.Kind))
+			barWidth := float32(barSpan * tilePixels)
+			barX := float32(sx + (tilePixels-barSpan*tilePixels)/2)
+			barHeight := float32(3 * tilePixels / TileSize)
+			barY := float32(sy) - barHeight - float32(1*tilePixels/TileSize)
+			hpFrac := float32(b.HP) / float32(building.MaxHP)
+			vector.FillRect(screen, barX, barY, barWidth, barHeight, color.RGBA{R: 70, G: 15, B: 15, A: 210}, false)
+			vector.FillRect(screen, barX, barY, barWidth*hpFrac, barHeight, color.RGBA{R: 220, G: 60, B: 50, A: 235}, false)
+		}
+
 		// A production building with no resident worker at all (as opposed
 		// to one merely away eating) is tinted red across its whole
 		// footprint, so an empty workplace reads at a glance instead of

@@ -433,7 +433,7 @@ func (g *Game) tickAIFaction(f *faction, grid *world.Grid) {
 	jackEvents := f.jacks.Tick(grid, buildings, g.buildings, ledger)
 	fishEvents := f.fishers.Tick(grid, buildings, ledger)
 	quarryEvents := f.quarry.Tick(grid, buildings, g.buildings, ledger)
-	builderEvents := f.builders.Tick(grid, buildings, g.buildings, ledger)
+	builderEvents := f.builders.Tick(grid, buildings, g.buildings, f.stock, ledger)
 	minerEvents := f.miners.Tick(grid, buildings, g.buildings, ledger)
 	sentryResult := f.sentries.Tick(buildings, g.opposingIntruderTargetsFor(f.sentries), ledger)
 	// g.buildings (the WHOLE map), not the per-faction buildings above, for

@@ -28,12 +28,15 @@ const (
 
 	// RepairTicks is how long a builder spends at a damaged, finished
 	// building before it's back to building.MaxHP -- see StateRepairing.
-	// Repair costs no delivered materials (unlike fresh construction):
-	// the amounts involved (one combat.DamagePerHit-sized dent, 10% at a
-	// time) didn't seem worth reusing InputBuffer[Plank]/[StoneBlock] for,
-	// especially since a WatchTower already uses InputBuffer[StoneBlock]
-	// for its own ammunition -- mixing the two would be genuinely
-	// ambiguous, not just extra bookkeeping.
+	// Repair costs building.RepairMaterialCost (50% of the full
+	// construction cost, the user's own explicit request) charged as a
+	// single lump sum straight from the faction's shared stockpile the
+	// instant a builder commits to the job (startRepairJob) -- not
+	// delivered gradually into InputBuffer the way fresh construction
+	// is: a WatchTower's InputBuffer already holds its own stone
+	// ammunition (see package sentry), so reusing that same buffer for
+	// repair material would be genuinely ambiguous, not just extra
+	// bookkeeping.
 	RepairTicks = 40
 )
 
@@ -330,7 +333,7 @@ func (c *Controller) MaxWaitingHunger() int {
 // the WHOLE map's buildings, used only for the physical pathfinding route
 // -- see lumberjack.Controller.Tick's identical obstacles parameter and
 // its own doc comment for the real playtest bug this fixes.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, ledger *reservations.Ledger) []Event {
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, stock *resource.Stockpile, ledger *reservations.Ledger) []Event {
 	var events []Event
 	remaining := c.Builders[:0]
 	for _, b := range c.Builders {
@@ -361,7 +364,7 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, obst
 			if b.state == StateIdle {
 				// A fresh building always takes priority over patching an
 				// old one -- only tried once startSiteJob found nothing.
-				c.startRepairJob(b, grid, buildings, obstacles)
+				c.startRepairJob(b, grid, buildings, obstacles, stock)
 			}
 		case StateToSite:
 			if !siteUsable(buildings, b.target) && !repairUsable(buildings, b.target) {
@@ -629,16 +632,22 @@ func (c *Controller) siteReserved(site *building.Building, except *Builder) bool
 // startRepairJob finds the nearest reachable damaged, finished building
 // not already claimed by another builder (siteReserved doubles as the
 // reservation check here too: b.target means "the site or building this
-// builder is currently walking to or working on" either way). Only
-// tried once startSiteJob found no fresh construction -- see its call
-// site in Tick.
-func (c *Controller) startRepairJob(b *Builder, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building) {
+// builder is currently walking to or working on" either way) that the
+// faction can actually afford to repair right now -- see
+// building.RepairMaterialCost and canAffordRepair. Only tried once
+// startSiteJob found no fresh construction -- see its call site in Tick.
+// Payment is charged immediately, the instant this builder commits to
+// the job (payForRepair), not gradually while walking there or once
+// repair finishes -- simplest to reason about, at the small risk of
+// wasting the charge if this builder then starves or is reassigned
+// before arriving (an edge case, not worth a refund path for).
+func (c *Controller) startRepairJob(b *Builder, grid *world.Grid, buildings []*building.Building, obstacles []*building.Building, stock *resource.Stockpile) {
 	start := pathfind.Point{X: b.X, Y: b.Y}
 	bestLength := int(^uint(0) >> 1)
 	var bestSite *building.Building
 	var bestPath []pathfind.Point
 	for _, candidate := range buildings {
-		if candidate == nil || !repairUsable(buildings, candidate) || c.siteReserved(candidate, b) {
+		if candidate == nil || !repairUsable(buildings, candidate) || c.siteReserved(candidate, b) || !canAffordRepair(stock, candidate) {
 			continue
 		}
 		path, ok := pathfind.FindLandPath(grid, obstacles, start, pathfind.Point{X: candidate.X, Y: candidate.Y})
@@ -650,9 +659,32 @@ func (c *Controller) startRepairJob(b *Builder, grid *world.Grid, buildings []*b
 	if bestSite == nil {
 		return
 	}
+	payForRepair(stock, bestSite)
 	b.target = bestSite
 	b.setPath(bestPath)
 	b.state = StateToSite
+}
+
+// canAffordRepair/payForRepair check and then charge building.
+// RepairMaterialCost (50% of full construction cost) for every
+// material type against the faction's shared stockpile -- see
+// startRepairJob's own doc comment on when/why this is a lump sum
+// rather than gradual serf delivery.
+func canAffordRepair(stock *resource.Stockpile, target *building.Building) bool {
+	for _, t := range building.ConstructionMaterialTypes() {
+		if stock.Amount(t) < target.RepairMaterialCost(t) {
+			return false
+		}
+	}
+	return true
+}
+
+func payForRepair(stock *resource.Stockpile, target *building.Building) {
+	for _, t := range building.ConstructionMaterialTypes() {
+		if cost := target.RepairMaterialCost(t); cost > 0 {
+			stock.Remove(t, cost)
+		}
+	}
 }
 
 // routeTo/routeToBuilding only ever pathfind -- their single building-list
