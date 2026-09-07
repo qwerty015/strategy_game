@@ -386,6 +386,7 @@ func newDuelGame(difficulties []aiDifficulty) *Game {
 		sentries:       sentry.NewController(),
 		soldiers:       soldier.NewController(),
 		ais:            ais,
+		duelIsthmuses:  isthmuses,
 		formationLines: 2,
 		treeSeed:       defaultTreeSeed,
 		fishSeed:       defaultFishSeed,

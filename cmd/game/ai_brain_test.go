@@ -1,9 +1,11 @@
 package main
 
 import (
+	"image"
 	"testing"
 
 	"strategy_game/internal/building"
+	"strategy_game/internal/resource"
 	"strategy_game/internal/soldier"
 )
 
@@ -67,10 +69,13 @@ func TestNearestRealBuildingOwnedBy_NilWhenNothingRealLeft(t *testing.T) {
 // standing forever because nothing ever attacked them again).
 func TestAIConsiderAttack_KeepsHuntingAfterTheWarehouseFalls(t *testing.T) {
 	g := newDuelGame([]aiDifficulty{AIHard, AIHard})
-	f := g.ais[0]        // owner 1, AIHard -> attackSquadSize() == 3
+	f := g.ais[0]        // owner 1, AIHard -> attackSquadSize()==3, garrisonMinimum()==4
 	opponent := g.ais[1] // owner 2
 
-	for i := 0; i < 3; i++ {
+	// garrisonMinimum() idle soldiers stay home by design (see
+	// aiDefendBase's own doc comment) -- enough to satisfy that AND
+	// still clear attackSquadSize with soldiers actually free to march.
+	for i := 0; i < f.brain.difficulty.garrisonMinimum()+f.brain.difficulty.attackSquadSize(); i++ {
 		f.soldiers.Spawn(soldier.Archer, f.logi.Warehouse.X, f.logi.Warehouse.Y)
 	}
 
@@ -112,4 +117,205 @@ func TestAIConsiderAttack_KeepsHuntingAfterTheWarehouseFalls(t *testing.T) {
 		}
 	}
 	t.Fatal("no soldier was routed toward the opponent's last remaining building once its warehouse was destroyed")
+}
+
+// TestAIConsiderAttack_WithholdsGarrisonBeforeMarching is the regression
+// test for the user's own report of a completely undefended base ("я
+// напал на зелёного с юга, его юнит был на севере... к базе не
+// подошёл"): aiConsiderAttack used to march literally every living
+// soldier the instant attackSquadSize was reached, leaving nothing
+// behind. One soldier short of garrisonMinimum+attackSquadSize must not
+// attack at all.
+func TestAIConsiderAttack_WithholdsGarrisonBeforeMarching(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIHard, AIHard})
+	f := g.ais[0]
+	n := f.brain.difficulty.garrisonMinimum() + f.brain.difficulty.attackSquadSize() - 1
+	for i := 0; i < n; i++ {
+		f.soldiers.Spawn(soldier.Archer, f.logi.Warehouse.X, f.logi.Warehouse.Y)
+	}
+
+	f.brain.tick(g, f, g.grid)
+
+	for _, s := range f.soldiers.Soldiers {
+		if len(s.RemainingPath()) != 0 || s.HasFactionTarget() {
+			t.Fatal("should not have attacked at all -- one soldier short once the garrison is withheld")
+		}
+	}
+}
+
+// TestAIConsiderAttack_MarchesOnlyTheSurplusAboveGarrison confirms the
+// exact count: with garrisonMinimum+attackSquadSize idle soldiers on
+// hand, exactly attackSquadSize of them march, not every last one.
+func TestAIConsiderAttack_MarchesOnlyTheSurplusAboveGarrison(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIHard, AIHard})
+	f := g.ais[0]
+	garrison := f.brain.difficulty.garrisonMinimum()
+	squad := f.brain.difficulty.attackSquadSize()
+	for i := 0; i < garrison+squad; i++ {
+		f.soldiers.Spawn(soldier.Archer, f.logi.Warehouse.X, f.logi.Warehouse.Y)
+	}
+
+	f.brain.tick(g, f, g.grid)
+
+	marching := 0
+	for _, s := range f.soldiers.Soldiers {
+		if len(s.RemainingPath()) != 0 {
+			marching++
+		}
+	}
+	if marching != squad {
+		t.Fatalf("marching = %d, want exactly attackSquadSize (%d) -- garrisonMinimum (%d) should stay home", marching, squad, garrison)
+	}
+}
+
+// TestAiDefendBase_SendsAGarrisonSoldierAtANearbyThreat is the
+// end-to-end regression test for the user's own report: an idle
+// defender within defenseAlertRadius of an intruding opposing soldier
+// must actually be ordered to engage it.
+func TestAiDefendBase_SendsAGarrisonSoldierAtANearbyThreat(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy, AIEasy})
+	f := g.ais[0]
+	enemy := g.ais[1]
+
+	wh := f.logi.Warehouse
+	threat := enemy.soldiers.Spawn(soldier.Swordsman, wh.X+3, wh.Y)
+	threat.Owner = enemy.owner
+	defender := f.soldiers.Spawn(soldier.Archer, wh.X, wh.Y)
+	defender.Owner = f.owner
+
+	g.aiDefendBase(f)
+
+	if !defender.HasFactionTarget() {
+		t.Fatal("aiDefendBase should have ordered the idle defender to engage the nearby threat")
+	}
+}
+
+// TestAiDefendBase_IgnoresAThreatBeyondTheAlertRadius confirms the
+// radius is actually enforced, not "any threat anywhere on the map".
+func TestAiDefendBase_IgnoresAThreatBeyondTheAlertRadius(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy, AIEasy})
+	f := g.ais[0]
+	enemy := g.ais[1]
+
+	wh := f.logi.Warehouse
+	radius := f.brain.difficulty.defenseAlertRadius()
+	threat := enemy.soldiers.Spawn(soldier.Swordsman, wh.X+radius+20, wh.Y)
+	threat.Owner = enemy.owner
+	defender := f.soldiers.Spawn(soldier.Archer, wh.X, wh.Y)
+	defender.Owner = f.owner
+
+	g.aiDefendBase(f)
+
+	if defender.HasFactionTarget() {
+		t.Fatal("a threat well beyond defenseAlertRadius should not have triggered a defense order")
+	}
+}
+
+// TestAiBuildDefenses_FortifiesBothOfItsOwnCrossings is the regression
+// test for the user's own report that the AI "не выстраивает защиту":
+// a fresh faction, given enough banked material, must build a StoneWall
+// line across both of its own bordering isthmus crossings.
+func TestAiBuildDefenses_FortifiesBothOfItsOwnCrossings(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+	f.stock.Add(resource.Plank, 500)
+	f.stock.Add(resource.StoneBlock, 500)
+
+	g.aiBuildDefenses(f, g.grid)
+
+	q := quadrantAssignmentOrder[f.owner]
+	for _, idx := range duelIsthmusIndicesFor(q) {
+		rect := g.duelIsthmuses[idx]
+		found := false
+		for _, b := range g.buildings {
+			if b.Owner == f.owner && b.Kind == building.StoneWall && (image.Point{X: b.X, Y: b.Y}).In(rect) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("crossing %v was not fortified with a wall", rect)
+		}
+	}
+}
+
+// TestAiFortifyIsthmus_PromotesTheMiddleSegmentToAGateOnceFinished
+// confirms the two-step wall-then-gate flow: a fresh line of StoneWall
+// segments must never contain a Gate yet, and once every segment is
+// (simulated as) finished, a second call upgrades exactly the middle one
+// -- so the faction's own soldiers can still use this crossing while
+// every other faction is blocked, same as GatePassableTo already
+// guarantees for a player-built gate.
+func TestAiFortifyIsthmus_PromotesTheMiddleSegmentToAGateOnceFinished(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+	q := quadrantAssignmentOrder[f.owner]
+	rect := g.duelIsthmuses[duelIsthmusIndicesFor(q)[0]]
+
+	g.aiFortifyIsthmus(f, rect)
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && b.Kind == building.Gate {
+			t.Fatal("a Gate should not appear before any wall segment has finished construction")
+		}
+	}
+
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && b.Kind == building.StoneWall && (image.Point{X: b.X, Y: b.Y}).In(rect) {
+			b.ConstructionStage = building.ConstructionNone
+		}
+	}
+	g.aiFortifyIsthmus(f, rect)
+
+	gates := 0
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && b.Kind == building.Gate {
+			gates++
+		}
+	}
+	if gates != 1 {
+		t.Fatalf("gates = %d, want exactly 1 once the wall line is finished", gates)
+	}
+}
+
+// TestAiBuildVariantFor_IsDeterministicAndVariesByOwner is the
+// regression test for "базы все как под копирку": the same owner must
+// always get the same profile (replaying a save/seed must not change
+// what got built), but different bot owners must not all collapse onto
+// the same one.
+func TestAiBuildVariantFor_IsDeterministicAndVariesByOwner(t *testing.T) {
+	first := aiBuildVariantFor(1)
+	second := aiBuildVariantFor(1) // a fresh call, same owner -- must reproduce the same answer
+	if first != second {
+		t.Fatal("aiBuildVariantFor must be a pure, deterministic function of owner")
+	}
+	seen := map[int]bool{}
+	for owner := 1; owner <= 3; owner++ {
+		if v := aiBuildVariantFor(owner); v < 0 || v >= len(aiBuildVariants) {
+			t.Fatalf("aiBuildVariantFor(%d) = %d, out of range [0,%d)", owner, v, len(aiBuildVariants))
+		} else {
+			seen[v] = true
+		}
+	}
+	if len(seen) < 2 {
+		t.Fatal("expected at least two distinct build-order profiles across 3 bot owners")
+	}
+}
+
+// TestAiExpandEconomy_KeepsBuildingPastTheEndOfTheCuratedList is the
+// regression test for "не развивается": aiBuildNext used to stop
+// permanently once its fixed list was fully placed, no matter how much
+// material and gold kept piling up unused.
+func TestAiExpandEconomy_KeepsBuildingPastTheEndOfTheCuratedList(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIHard})
+	f := g.ais[0]
+	order := aiBuildVariants[f.brain.buildVariant]
+	f.brain.buildIndex = len(order) // pretend the curated list is already fully placed
+	f.stock.Add(resource.Plank, 500)
+	f.stock.Add(resource.StoneBlock, 500)
+
+	f.brain.aiBuildNext(g, f, g.grid)
+
+	if f.brain.buildIndex != len(order)+1 {
+		t.Fatalf("buildIndex = %d, want %d -- aiBuildNext should have placed one aiExpansionOrder building instead of stopping cold", f.brain.buildIndex, len(order)+1)
+	}
 }

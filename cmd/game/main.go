@@ -234,6 +234,15 @@ type Game struct {
 	// cmd/game/ai_brain.go's aiBrain for the rest of this mode.
 	ais []*faction
 
+	// duelIsthmuses is growQuadrantWaterCross's own returned geometry,
+	// captured once at map generation instead of recomputed later --
+	// nil outside "N против ИИ". aiBuildDefenses (cmd/game/ai_brain.go)
+	// uses this to fortify each AI faction's own two bordering
+	// crossings (see quadrantAssignmentOrder for which two rectangles
+	// belong to which quadrant/owner) without re-deriving the map's own
+	// water-cross math a second time.
+	duelIsthmuses []image.Rectangle
+
 	// leftScrollBuild/leftScrollHire are the first-visible-card index for
 	// the Build/Hire tab lists, per the user's explicit request to make
 	// the left panel scrollable rather than keep shrinking cards forever
