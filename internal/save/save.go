@@ -120,6 +120,9 @@ type GameState struct {
 	// load when this is false, the same as they always were before this
 	// field existed.
 	IsDuelGame bool
+	// Match history belongs to the save, never to the previously loaded world.
+	DefeatedAnnounced map[int]bool `json:",omitempty"`
+	LastAttackerOwner map[int]int  `json:",omitempty"`
 
 	// AIDifficulty selects the AI's decision-speed/attack-squad-size
 	// tuning on load (see cmd/game's aiDifficulty). Meaningless unless

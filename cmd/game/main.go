@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"log"
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -3923,6 +3924,8 @@ func (g *Game) commitDialogSave() {
 func (g *Game) buildSaveState(name string) save.GameState {
 	state := save.GameState{
 		Name:               name,
+		DefeatedAnnounced:  maps.Clone(g.aiDefeatedAnnounced),
+		LastAttackerOwner:  maps.Clone(g.lastAttackerOwner),
 		GridWidth:          g.grid.Width,
 		GridHeight:         g.grid.Height,
 		Tiles:              g.grid.Tiles(),
@@ -4063,6 +4066,8 @@ func (g *Game) loadGame(path string) error {
 	// entirely once a match is decided), but resetting it explicitly
 	// here costs nothing and documents the invariant.
 	g.duelResult = duelResultNone
+	g.aiDefeatedAnnounced = maps.Clone(state.DefeatedAnnounced)
+	g.lastAttackerOwner = maps.Clone(state.LastAttackerOwner)
 
 	// g.ais is reconstructed before any unit restoration below --
 	// restoreUnits dispatches every Owner>0 UnitState into its matching
