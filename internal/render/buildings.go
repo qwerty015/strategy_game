@@ -265,6 +265,7 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 		}
 
 		drawProductionWorkEffect(screen, b.Kind, b.ProgressTicks, sx, sy, tilePixels)
+		drawBuildingDamageFire(screen, b, sx, sy, tilePixels)
 		if bt.Recipe.TicksToProduce > 0 {
 			progress := float32(b.ProgressTicks) / float32(bt.Recipe.TicksToProduce)
 			if progress > 1 {
@@ -424,6 +425,7 @@ func drawWalls(screen *ebiten.Image, buildings []*building.Building, cam *Camera
 		// modular masonry without changing road, terrain or building bounds.
 		overlap := tilePixels * 0.04
 		drawFootprintAtScale(screen, art, sx-overlap, sy-overlap, 1, tilePixels+overlap*2)
+		drawBuildingDamageFire(screen, b, sx, sy, tilePixels)
 	}
 }
 

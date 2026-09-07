@@ -54,10 +54,11 @@ func directoryExists(path string) bool {
 const TileSize = 64
 
 var (
-	Grass   = mustLoadGround("generated/terrain_grass.png")
-	Fertile = mustLoadGround("generated/terrain_fertile.png") // tilled farmland
-	Forest  = mustLoadGround("generated/terrain_forest.png")  // grass + trees, one tile
-	Stone   = mustLoadGround("generated/terrain_stone.png")
+	BuildingFireFrames = mustLoadAtlasFrames("generated/building_fire.png")
+	Grass              = mustLoadGround("generated/terrain_grass.png")
+	Fertile            = mustLoadGround("generated/terrain_fertile.png") // tilled farmland
+	Forest             = mustLoadGround("generated/terrain_forest.png")  // grass + trees, one tile
+	Stone              = mustLoadGround("generated/terrain_stone.png")
 	// StoneDeposit is the mineable boulder cluster placed on top of stone terrain.
 	StoneDeposit = mustLoad("generated/terrain_stone_deposit.png")
 	// Ore deposits are distinct transparent clusters layered over the ground.
