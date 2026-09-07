@@ -594,6 +594,81 @@ func TestDevelopmentLeaderboard_DefeatedFactionScoresZero(t *testing.T) {
 	}
 }
 
+// crippleFactionUnits empties every unit roster (but leaves buildings and
+// stock untouched) -- the shared setup for razeHopelessFactions' two
+// tests below, mirroring wipeFactionForTest's field list without also
+// touching HP/stock, since here that's exactly what's under test.
+func crippleFactionUnits(f *faction) {
+	f.logi.Serfs = nil
+	f.vills.Villagers = nil
+	f.jacks.Lumberjacks = nil
+	f.fishers.Fishermen = nil
+	f.quarry.Quarrymen = nil
+	f.builders.Builders = nil
+	f.miners.Miners = nil
+	f.sentries.Sentries = nil
+	f.soldiers.Soldiers = nil
+}
+
+// TestRazeHopelessFactions_AutoDefeatsAZeroPopulationZeroGoldFaction is
+// the regression test for a real playtest report: two AI factions on one
+// save had lost every living unit and every last gold coin, yet kept a
+// handful of harmless leftover buildings standing for the rest of the
+// match -- structurally unable to ever hire again (nothing left to earn
+// gold with, not even enough banked to hire one more serf), but not
+// factionDefeated either. The user's own call on how to resolve this:
+// "если уже без шансов - все здания автоматически уничтожаются и он
+// объявляется побежденным".
+func TestRazeHopelessFactions_AutoDefeatsAZeroPopulationZeroGoldFaction(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+	crippleFactionUnits(f)
+	f.stock = resource.NewStockpile(stockpileCapacity) // 0 gold, cannot afford even one hire
+
+	if g.factionDefeated(f.owner) {
+		t.Fatal("test setup: faction should not already read as defeated -- its buildings are still standing")
+	}
+
+	g.tickOnce()
+
+	if !g.factionDefeated(f.owner) {
+		t.Fatal("razeHopelessFactions should have auto-defeated a faction with 0 units and less gold than one hire costs")
+	}
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && b.Kind != building.Road && b.Kind != building.StoneWall && b.Kind != building.Gate {
+			t.Fatalf("building %v of the hopeless faction is still standing after razeHopelessFactions", b.Kind)
+		}
+	}
+}
+
+// TestRazeHopelessFactions_LeavesAFactionAloneIfItCanStillAffordAHire is
+// the counterpart negative case: zero population alone must not be
+// enough to auto-raze a faction that still has a real chance to hire its
+// way back (enough banked gold for at least one more unit) -- only the
+// conjunction of both is actually hopeless.
+func TestRazeHopelessFactions_LeavesAFactionAloneIfItCanStillAffordAHire(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+	crippleFactionUnits(f)
+	f.stock = resource.NewStockpile(stockpileCapacity)
+	f.stock.Add(resource.Gold, unitHireCost)
+
+	g.tickOnce()
+
+	if g.factionDefeated(f.owner) {
+		t.Fatal("a faction that can still afford one more hire must not be auto-razed")
+	}
+	found := false
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && b.Kind != building.Road && b.Kind != building.StoneWall && b.Kind != building.Gate {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the faction's real buildings should not have been razed")
+	}
+}
+
 // TestDuelGame_FFAResultRequiresEveryBotDefeated is the "все против
 // всех" generalization of TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch:
 // with more than one opponent, defeating only SOME of them must not end

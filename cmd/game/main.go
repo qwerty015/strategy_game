@@ -759,6 +759,7 @@ func (g *Game) tickOnce() {
 		for _, f := range g.ais {
 			g.tickAIFaction(f, g.grid)
 		}
+		g.razeHopelessFactions()
 		g.pruneDestroyedBuildings()
 		g.checkDuelResult()
 
@@ -5159,6 +5160,48 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 // (615 of 619 starting buildings) had HP==0 and was wiped out on the
 // very first tick this function ever ran. They're exempted here exactly
 // like Road/StoneWall/Gate, which never disappear at HP<=0 either.
+// razeHopelessFactions auto-defeats an AI faction that has fallen into a
+// state it can structurally never recover from on its own: zero living
+// units of any profession AND less gold banked than a single hire costs.
+// Every hire (aiHireServes/aiHireBuilder/aiStaffBuildings) costs exactly
+// unitHireCost gold, and with zero population nothing this faction owns
+// can ever earn another unit of ANY resource -- every gathering/
+// production building sits idle without an assigned worker, and there is
+// nobody left to assign one. Once both conditions hold at once, they
+// hold forever; nothing in a later tick can change either number back.
+//
+// Per a real playtest report (a duel-mode save where two crippled AI
+// factions sat for the rest of the match with a handful of harmless
+// leftover buildings nobody had bothered finishing off, silently
+// outscoring the actual leader on lifetime Kills alone): "если уже без
+// шансов - все здания автоматически уничтожаются и он объявляется
+// побежденным". Setting HP to 0 here (matching combat-destroyed
+// buildings) and letting pruneDestroyedBuildings' own removal run right
+// after reuses its existing warehouse-re-anchor/logistics-teardown code
+// path verbatim, instead of a second, parallel removal path -- and
+// leaves checkAIFactionDefeats to notice and announce the elimination
+// exactly as it already does for a combat kill.
+func (g *Game) razeHopelessFactions() {
+	for _, f := range g.ais {
+		if g.factionDefeated(f.owner) {
+			continue // already counted defeated, nothing left to raze
+		}
+		if g.factionUnitCount(f.owner) != 0 || f.stock.Amount(resource.Gold) >= unitHireCost {
+			continue
+		}
+		for _, b := range g.buildings {
+			if b.Owner != f.owner || isNaturalResourceKind(b.Kind) {
+				continue
+			}
+			switch b.Kind {
+			case building.Road, building.StoneWall, building.Gate:
+				continue
+			}
+			b.HP = 0
+		}
+	}
+}
+
 func (g *Game) pruneDestroyedBuildings() {
 	alive := g.buildings[:0]
 	changed := false
