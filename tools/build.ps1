@@ -23,6 +23,7 @@ $spriteDestination = Join-Path $assetsDir 'sprites'
 $iconSource = Join-Path $repoRoot 'assets\app.png'
 $iconResource = $null
 $iconResourceCreated = $false
+$savedSettings = $null
 
 function Write-Step([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
@@ -70,10 +71,19 @@ try {
 		throw "Icon resource already exists; check it before building: $iconResource"
 	}
     if (Test-Path -LiteralPath $binDir) {
+		# Preferences are user data, unlike the generated executable/assets.
+		$settingsPath = Join-Path $binDir 'settings.json'
+		$savedSettings = $null
+		if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
+			$savedSettings = [System.IO.File]::ReadAllBytes($settingsPath)
+		}
         Write-Step 'Cleaning bin\\'
         Remove-Item -LiteralPath $binDir -Recurse -Force
     }
     New-Item -ItemType Directory -Path $binDir | Out-Null
+	if ($null -ne $savedSettings) {
+		[System.IO.File]::WriteAllBytes((Join-Path $binDir 'settings.json'), $savedSettings)
+	}
 
 	Write-Step 'Preparing application icon'
 	$iconResourceCreated = $true

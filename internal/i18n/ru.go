@@ -7,7 +7,8 @@ import (
 
 func init() {
 	register(RU, Catalog{
-		WindowTitle: "Земли ремесла",
+		WindowTitle:        "Земли ремесла",
+		SettingsSaveFailed: "Не удалось сохранить настройки. Проверьте доступ к папке игры.",
 
 		Population:                   "Население",
 		DeathsLabel:                  "Смертей",

@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strategy_game/internal/settings"
 
 	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/audio/vorbis"
@@ -64,13 +65,13 @@ func directoryExists(path string) bool {
 // Default volumes: music sits well under the sound effects so hammering/
 // chopping/mining reads as the foreground, the loop as background color.
 const (
-	defaultMusicVolume = 0.25
-	defaultSFXVolume   = 0.55
+	defaultMusicVolume = settings.DefaultMusicVolume
+	defaultSFXVolume   = settings.DefaultSFXVolume
 )
 
 var (
-	musicVolume = defaultMusicVolume
-	sfxVolume   = defaultSFXVolume
+	musicVolume = settings.Startup().MusicVolume
+	sfxVolume   = settings.Startup().SFXVolume
 )
 
 var (
@@ -142,7 +143,9 @@ func init() {
 	musicPlayer = loadMusicLoop(assetDir, "village.wav")
 	if musicPlayer != nil {
 		musicPlayer.SetVolume(musicVolume)
-		musicPlayer.Play()
+		if musicVolume > 0 {
+			musicPlayer.Play()
+		}
 	}
 }
 

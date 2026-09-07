@@ -192,9 +192,9 @@ func (g *Game) updatePauseMenu() error {
 	case point.In(layout.exit):
 		g.dialog = ui.DialogConfirmExit
 	case point.In(layout.languages[0]):
-		i18n.SetLang(i18n.RU)
+		g.setPreferredLanguage(i18n.RU)
 	case point.In(layout.languages[1]):
-		i18n.SetLang(i18n.EN)
+		g.setPreferredLanguage(i18n.EN)
 	default:
 		for index, rect := range layout.speeds {
 			if point.In(rect) {
@@ -204,13 +204,13 @@ func (g *Game) updatePauseMenu() error {
 		}
 		for index, rect := range layout.musicVolume {
 			if point.In(rect) {
-				audio.SetMusicVolume(volumeLevels[index])
+				g.setPreferredVolume(true, volumeLevels[index])
 				return nil
 			}
 		}
 		for index, rect := range layout.sfxVolume {
 			if point.In(rect) {
-				audio.SetSFXVolume(volumeLevels[index])
+				g.setPreferredVolume(false, volumeLevels[index])
 				return nil
 			}
 		}

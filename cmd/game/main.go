@@ -36,6 +36,7 @@ import (
 	"strategy_game/internal/resource"
 	"strategy_game/internal/save"
 	"strategy_game/internal/sentry"
+	"strategy_game/internal/settings"
 	"strategy_game/internal/soldier"
 	"strategy_game/internal/ui"
 	"strategy_game/internal/villagers"
@@ -6405,7 +6406,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
-	i18n.SetLang(i18n.RU)
+	i18n.SetLang(i18n.Lang(settings.Startup().Language))
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
 	setApplicationIcon()

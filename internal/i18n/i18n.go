@@ -22,7 +22,8 @@ const Default = RU
 
 // Catalog holds every translatable string used by the running game.
 type Catalog struct {
-	WindowTitle string
+	SettingsSaveFailed string
+	WindowTitle        string
 
 	Population                   string
 	DeathsLabel                  string

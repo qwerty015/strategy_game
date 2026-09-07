@@ -7,7 +7,8 @@ import (
 
 func init() {
 	register(EN, Catalog{
-		WindowTitle: "Lands of Craft",
+		WindowTitle:        "Lands of Craft",
+		SettingsSaveFailed: "Could not save settings. Check access to the game folder.",
 
 		Population:                   "Population",
 		DeathsLabel:                  "Deaths",

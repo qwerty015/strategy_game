@@ -11,4 +11,5 @@
 *.out
 /.gocache/
 /bin/
+/settings.json
 /cmd/game/appicon_windows_*.syso

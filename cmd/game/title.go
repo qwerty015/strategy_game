@@ -217,7 +217,7 @@ func (g *Game) updateFrontScreen() error {
 	switch g.screen {
 	case screenTitle:
 		if language, ok := titleLanguageAt(mx, my, frontWidth, frontHeight); ok {
-			i18n.SetLang(language)
+			g.setPreferredLanguage(language)
 			return nil
 		}
 		switch action, ok := titleActionAt(mx, my, frontWidth, frontHeight); {
