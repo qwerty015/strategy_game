@@ -426,14 +426,14 @@ func (g *Game) tickAIFaction(f *faction, grid *world.Grid) {
 	quarryEvents := f.quarry.Tick(grid, buildings, g.buildings, ledger)
 	builderEvents := f.builders.Tick(grid, buildings, g.buildings, ledger)
 	minerEvents := f.miners.Tick(grid, buildings, g.buildings, ledger)
-	sentryResult := f.sentries.Tick(buildings, nil, g.opposingIntruderTargetsFor(f.sentries), ledger)
+	sentryResult := f.sentries.Tick(buildings, g.opposingIntruderTargetsFor(f.sentries), ledger)
 	// g.buildings (the WHOLE map), not the per-faction buildings above, for
 	// the obstacle-avoidance param specifically -- see soldier.Controller.
 	// Tick's doc comment and the identical choice in Update's player tick
 	// block for why: an attacking faction's soldiers must actually be
 	// blocked by an opponent's walls/gates, which means those need to be
 	// in the obstacle list at all.
-	soldierResult := f.soldiers.Tick(grid, g.buildings, nil, g.opposingBuildingsFor(f.soldiers), g.opposingSoldiersFor(f.soldiers), g.opposingIntruderTargetsForSoldiers(f.soldiers))
+	soldierResult := f.soldiers.Tick(grid, g.buildings, g.opposingBuildingsFor(f.soldiers), g.opposingSoldiersFor(f.soldiers), g.opposingIntruderTargetsForSoldiers(f.soldiers))
 
 	f.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryResult.Deaths + soldierResult.Deaths
 	f.pop.UnitsDismissed += serfResult.Dismissed
@@ -442,6 +442,20 @@ func (g *Game) tickAIFaction(f *faction, grid *world.Grid) {
 	// this fixes.
 	f.pop.Kills += soldierResult.Kills + sentryResult.Kills
 	f.pop.EnemyBuildingsDestroyed += soldierResult.BuildingsDestroyed
+	// The map's one shared, profession-free death animation (see
+	// internal/render's DeathEffect) -- per the user's own report ("у
+	// меня есть спрайт 3х кадровый смерти любого юнита... не вижу его в
+	// последних коммитах"): real combat deaths/kills never triggered it
+	// before, only the (now removed) sandbox debug enemy did.
+	for _, p := range soldierResult.DeathPositions {
+		g.addDeathEffect(p.X, p.Y)
+	}
+	for _, p := range soldierResult.KillPositions {
+		g.addDeathEffect(p.X, p.Y)
+	}
+	for _, p := range sentryResult.KillPositions {
+		g.addDeathEffect(p.X, p.Y)
+	}
 
 	for _, event := range jackEvents {
 		switch event.Kind {

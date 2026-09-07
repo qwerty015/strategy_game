@@ -15,10 +15,7 @@ import (
 // building.
 const soldierHeight = 0.90
 
-// DrawSoldiers renders every living Archer/Swordsman on the map. The walking
-// loop is replaced by a short profession-specific attack loop only after an
-// actual hit lands (Soldier.AttackVisual), so aiming or waiting never looks
-// like repeated combat.
+// DrawSoldiers renders every living Archer/Swordsman on the map.
 // opponent -- see DrawSerfs's identical parameter doc comment. Most
 // important for this Draw call of all nine: without a way to tell an
 // opponent's soldier apart from the player's own, combat itself is
@@ -30,9 +27,9 @@ func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera
 		if sd == nil || !sd.Alive() || !visible.Intersects(sd.X, sd.Y, 1) {
 			continue
 		}
-		frames, attackFrames := assets.ArcherWalkFrames, assets.ArcherAttackFrames
+		frames := assets.ArcherWalkFrames
 		if sd.Profession == soldier.Swordsman {
-			frames, attackFrames = assets.SwordsmanWalkFrames, assets.SwordsmanAttackFrames
+			frames = assets.SwordsmanWalkFrames
 		}
 
 		sx, sy := cam.TileToScreen(sd.X, sd.Y)
@@ -40,31 +37,12 @@ func DrawSoldiers(screen *ebiten.Image, soldiers []*soldier.Soldier, cam *Camera
 		path := sd.RemainingPath()
 		frame := walkingFrame(path, sd.X+sd.Y)
 		flip := facingLeft(sd.X, path)
-		if targetX, _, progress, attacking := sd.AttackVisual(); attacking {
-			frames = attackFrames
-			frame = soldierAttackFrame(progress)
-			flip = targetX < sd.X
-		}
 		drawStandingFacingScaled(screen, frames[frame], sx, sy, soldierHeight, tilePixels, color.White, flip)
 		drawSoldierHealth(screen, sx, sy, tilePixels, sd.HP)
 	}
 }
 
-// soldierAttackFrame maps the visual attack interval to wind-up, impact and
-// recovery. Keeping the thresholds here makes the atlas ordering explicit and
-// independent from the simulation tick rate.
-func soldierAttackFrame(progress float64) int {
-	switch {
-	case progress < 0.34:
-		return 0
-	case progress < 0.68:
-		return 1
-	default:
-		return 2
-	}
-}
-
-// drawSoldierHealth mirrors drawEnemyHealth: hidden at full health so an
+// drawSoldierHealth hides the bar at full health so an untouched soldier
 // untouched soldier adds no HUD noise.
 func drawSoldierHealth(screen *ebiten.Image, sx, sy, tilePixels float64, hp int) {
 	if hp >= combat.MaxHP {

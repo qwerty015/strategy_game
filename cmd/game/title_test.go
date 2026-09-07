@@ -268,6 +268,38 @@ func TestNewGameFlow_DuelModeStartsASecondFaction(t *testing.T) {
 	}
 }
 
+// TestNewGameFlow_ResetsAccumulatedKillsCounter is the regression test
+// for a real playtest concern ("проверь чтоб новая игра обнуляла
+// счетчик... я проиграл 4 катки в которой вынес всех, чтоб на последней
+// на старте он мне не показал 100+ убийств на старте"): pop.Kills is a
+// lifetime-for-this-save counter by design (like Deaths/BuildingsRemoved
+// -- it correctly keeps accumulating across save/reload of the SAME
+// slot), but starting a genuinely NEW match (either mode, from the
+// title screen's "Новая игра" flow) must not carry a previous match's
+// tally over -- both startFreeMapGame and startDuelGame replace the
+// entire *Game (*g = *fresh) with one built via NewGame()/newDuelGame(),
+// both of which construct a brand new &economy.Population{}.
+func TestNewGameFlow_ResetsAccumulatedKillsCounter(t *testing.T) {
+	g := NewGame()
+	g.pop.Kills = 100 // simulate a previous match's accumulated tally
+
+	g.screen = screenTitle
+	g.enterModeSelect()
+	g.startFreeMapGame()
+	if g.pop.Kills != 0 {
+		t.Fatalf("pop.Kills after starting a new free-map game = %d, want 0", g.pop.Kills)
+	}
+
+	g.pop.Kills = 100
+	g.screen = screenTitle
+	g.enterModeSelect()
+	g.screen = screenDifficultySelect
+	g.startDuelGame([]aiDifficulty{AIHard})
+	if g.pop.Kills != 0 {
+		t.Fatalf("pop.Kills after starting a new duel game = %d, want 0", g.pop.Kills)
+	}
+}
+
 // TestNewGameFlow_DuelModeWithMultipleOpponentsPicksOneDifficultyEach
 // covers "4х4" (always maxDuelOpponents == 3 bots, per the user's
 // explicit "оставь только режим 'Свободный' и '4х4'") end to end: per the

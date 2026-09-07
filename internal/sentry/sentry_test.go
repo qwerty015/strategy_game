@@ -4,26 +4,18 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
-	"strategy_game/internal/enemy"
 	"strategy_game/internal/reservations"
 	"strategy_game/internal/resource"
 )
 
-// tickController runs one simulation step exactly like cmd/game does: a
-// fresh ledger, seeded from this controller's own in-flight Sentries,
-// then Tick.
-func tickController(c *Controller, buildings []*building.Building, enemies []*enemy.Enemy) {
-	ledger := reservations.New()
-	c.Reserve(ledger)
-	c.Tick(buildings, enemies, nil, ledger)
-}
-
-// tickControllerWithIntruders is tickController plus a "1×1 против ИИ"
+// tickControllerWithIntruders runs one simulation step exactly like
+// cmd/game does: a fresh ledger, seeded from this controller's own
+// in-flight Sentries, then Tick with a "1×1 против ИИ"
 // intruders list -- see IntruderTarget's doc comment.
 func tickControllerWithIntruders(c *Controller, buildings []*building.Building, intruders []IntruderTarget) {
 	ledger := reservations.New()
 	c.Reserve(ledger)
-	c.Tick(buildings, nil, intruders, ledger)
+	c.Tick(buildings, intruders, ledger)
 }
 
 func straightRoad(fromX, toX, y int) []*building.Building {
@@ -32,39 +24,6 @@ func straightRoad(fromX, toX, y int) []*building.Building {
 		roads = append(roads, &building.Building{Kind: building.Road, X: x, Y: y})
 	}
 	return roads
-}
-
-func TestSentry_FiresAtEnemyInRangeAndConsumesStone(t *testing.T) {
-	tower := &building.Building{Kind: building.WatchTower, X: 10, Y: 10, ConstructionStage: building.ConstructionNone}
-	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
-
-	c := NewController()
-	c.Spawn(tower)
-
-	e := enemy.New(tower.X+1, tower.Y) // within WatchTowerRange
-
-	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
-
-	// Firing consumes the stone immediately, but per the user's explicit
-	// bug report ("раньше было сперва противник погибает, а потом летит
-	// камень в него") the kill itself lands only once the stone visually
-	// arrives, not the instant it's thrown.
-	if !e.Alive() {
-		t.Fatal("enemy died on the very tick it was fired at -- the kill must wait for the stone to visually arrive")
-	}
-	if tower.InputBuffer[resource.StoneBlock] != building.BufferCapacity-1 {
-		t.Fatalf("tower stone = %d, want %d (one shot consumed immediately, even though the kill hasn't landed yet)", tower.InputBuffer[resource.StoneBlock], building.BufferCapacity-1)
-	}
-
-	for range shotVisualLifetime {
-		tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
-	}
-
-	// Per the user's explicit request, a stone hit is a kill -- unlike a
-	// building, which still only takes combat.DamagePerHit.
-	if e.Alive() {
-		t.Fatalf("enemy HP after the stone's full flight time = %d, want dead (one hit kills)", e.HP)
-	}
 }
 
 // TestSentry_FiresAtOpposingFactionIntruderAndKillsIt is a real gap found
@@ -130,7 +89,7 @@ func TestController_Tick_ReportsKillOnIntruderKill(t *testing.T) {
 	tick := func() TickResult {
 		ledger := reservations.New()
 		c.Reserve(ledger)
-		return c.Tick([]*building.Building{tower}, nil, []IntruderTarget{intruder}, ledger)
+		return c.Tick([]*building.Building{tower}, []IntruderTarget{intruder}, ledger)
 	}
 
 	if result := tick(); result.Kills != 0 {
@@ -163,20 +122,25 @@ func TestSentry_KillNeverLandsBeforeTheStoneVisuallyArrives(t *testing.T) {
 
 	c := NewController()
 	guard := c.Spawn(tower)
-	e := enemy.New(tower.X+1, tower.Y)
+	alive := true
+	intruder := IntruderTarget{
+		X: tower.X + 1, Y: tower.Y,
+		Alive: func() bool { return alive },
+		Kill:  func() { alive = false },
+	}
 
-	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
+	tickControllerWithIntruders(c, []*building.Building{tower}, []IntruderTarget{intruder})
 
 	for range shotVisualLifetime + 2 {
 		_, _, _, _, _, stillInFlight := guard.ShotVisual()
-		if stillInFlight && !e.Alive() {
-			t.Fatal("enemy is dead while ShotVisual() still reports the stone in flight -- death happened before the stone visually arrived")
+		if stillInFlight && !alive {
+			t.Fatal("intruder is dead while ShotVisual() still reports the stone in flight -- death happened before the stone visually arrived")
 		}
-		tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
+		tickControllerWithIntruders(c, []*building.Building{tower}, []IntruderTarget{intruder})
 	}
 
-	if e.Alive() {
-		t.Fatal("enemy is still alive well after the stone's flight time -- the kill never landed at all")
+	if alive {
+		t.Fatal("intruder is still alive well after the stone's flight time -- the kill never landed at all")
 	}
 }
 
@@ -187,12 +151,17 @@ func TestSentry_DoesNotFireOutOfRange(t *testing.T) {
 	c := NewController()
 	c.Spawn(tower)
 
-	e := enemy.New(tower.X+WatchTowerRange+1, tower.Y) // just outside range
+	alive := true
+	intruder := IntruderTarget{
+		X: tower.X + WatchTowerRange + 1, Y: tower.Y, // just outside range
+		Alive: func() bool { return alive },
+		Kill:  func() { alive = false },
+	}
 
-	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
+	tickControllerWithIntruders(c, []*building.Building{tower}, []IntruderTarget{intruder})
 
-	if e.HP != enemy.MaxHP {
-		t.Fatalf("enemy HP = %d, want unchanged %d (out of range)", e.HP, enemy.MaxHP)
+	if !alive {
+		t.Fatal("intruder was killed despite being out of range")
 	}
 	if got := tower.InputBuffer[resource.StoneBlock]; got != building.BufferCapacity {
 		t.Fatalf("tower stone = %d, want unchanged %d (never fired)", got, building.BufferCapacity)
@@ -206,22 +175,26 @@ func TestSentry_DoesNotFireWithoutStone(t *testing.T) {
 	c := NewController()
 	c.Spawn(tower)
 
-	e := enemy.New(tower.X+1, tower.Y)
+	alive := true
+	intruder := IntruderTarget{
+		X: tower.X + 1, Y: tower.Y,
+		Alive: func() bool { return alive },
+		Kill:  func() { alive = false },
+	}
 
-	tickController(c, []*building.Building{tower}, []*enemy.Enemy{e})
+	tickControllerWithIntruders(c, []*building.Building{tower}, []IntruderTarget{intruder})
 
-	if e.HP != enemy.MaxHP {
-		t.Fatalf("enemy HP = %d, want unchanged %d (no stone to fire)", e.HP, enemy.MaxHP)
+	if !alive {
+		t.Fatal("intruder was killed despite the tower having no stone to fire")
 	}
 }
 
 // TestSentry_RespectsShotCooldown uses two separate targets so the
-// cooldown itself is what's under test -- with the kill now deferred
-// until the stone lands (see TestSentry_FiresAtEnemyInRangeAndConsumesStone),
-// reusing a single target could otherwise pass for the wrong reason.
-// ShotCooldownTicks (20) comfortably outlasts shotVisualLifetime (6), so
-// the first stone has always landed well before the cooldown that same
-// shot started could ever let a second one fly.
+// cooldown itself is what's under test -- with the kill deferred until
+// the stone lands, reusing a single target could otherwise pass for the
+// wrong reason. ShotCooldownTicks (20) comfortably outlasts
+// shotVisualLifetime, so the first stone has always landed well before
+// the cooldown that same shot started could ever let a second one fly.
 func TestSentry_RespectsShotCooldown(t *testing.T) {
 	tower := &building.Building{Kind: building.WatchTower, X: 10, Y: 10, ConstructionStage: building.ConstructionNone}
 	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
@@ -229,13 +202,15 @@ func TestSentry_RespectsShotCooldown(t *testing.T) {
 	c := NewController()
 	c.Spawn(tower)
 
-	first := enemy.New(tower.X+1, tower.Y)
-	second := enemy.New(tower.X+1, tower.Y+1)
-	enemies := []*enemy.Enemy{first, second}
+	firstAlive, secondAlive := true, true
+	intruders := []IntruderTarget{
+		{X: tower.X + 1, Y: tower.Y, Alive: func() bool { return firstAlive }, Kill: func() { firstAlive = false }},
+		{X: tower.X + 1, Y: tower.Y + 1, Alive: func() bool { return secondAlive }, Kill: func() { secondAlive = false }},
+	}
 
 	// First tick fires at one of the two (both equidistant); consumes the
 	// stone and starts the cooldown, but the kill hasn't landed yet.
-	tickController(c, []*building.Building{tower}, enemies)
+	tickControllerWithIntruders(c, []*building.Building{tower}, intruders)
 	if got := tower.InputBuffer[resource.StoneBlock]; got != building.BufferCapacity-1 {
 		t.Fatalf("tower stone after first tick = %d, want %d (one shot fired)", got, building.BufferCapacity-1)
 	}
@@ -244,17 +219,17 @@ func TestSentry_RespectsShotCooldown(t *testing.T) {
 	// two dies; the cooldown from that same shot is still far from over,
 	// so no second shot has gone out yet.
 	for range shotVisualLifetime {
-		tickController(c, []*building.Building{tower}, enemies)
+		tickControllerWithIntruders(c, []*building.Building{tower}, intruders)
 	}
 	deaths := 0
-	if !first.Alive() {
+	if !firstAlive {
 		deaths++
 	}
-	if !second.Alive() {
+	if !secondAlive {
 		deaths++
 	}
 	if deaths != 1 {
-		t.Fatalf("exactly one of the two enemies should be dead by now, got %d", deaths)
+		t.Fatalf("exactly one of the two intruders should be dead by now, got %d", deaths)
 	}
 	if got := tower.InputBuffer[resource.StoneBlock]; got != building.BufferCapacity-1 {
 		t.Fatalf("tower stone right after the first kill landed = %d, want still %d (still cooling down, no second shot yet)", got, building.BufferCapacity-1)
@@ -265,24 +240,27 @@ func TestSentry_RespectsShotCooldown(t *testing.T) {
 	// once that second stone's own flight time elapses too. A generous
 	// margin covers both: the remaining cooldown plus a full new flight.
 	for range ShotCooldownTicks + shotVisualLifetime {
-		tickController(c, []*building.Building{tower}, enemies)
+		tickControllerWithIntruders(c, []*building.Building{tower}, intruders)
 	}
-	if first.Alive() || second.Alive() {
-		t.Fatal("both enemies should be dead after the cooldown elapsed and the second stone landed")
+	if firstAlive || secondAlive {
+		t.Fatal("both intruders should be dead after the cooldown elapsed and the second stone landed")
 	}
 }
 
-func TestSentry_IgnoresDeadEnemies(t *testing.T) {
+func TestSentry_IgnoresDeadIntruders(t *testing.T) {
 	tower := &building.Building{Kind: building.WatchTower, X: 10, Y: 10, ConstructionStage: building.ConstructionNone}
 	tower.AddInput(resource.StoneBlock, building.BufferCapacity)
 
 	c := NewController()
 	c.Spawn(tower)
 
-	dead := enemy.New(tower.X+1, tower.Y)
-	dead.HP = 0
+	intruder := IntruderTarget{
+		X: tower.X + 1, Y: tower.Y,
+		Alive: func() bool { return false }, // already dead
+		Kill:  func() {},
+	}
 
-	tickController(c, []*building.Building{tower}, []*enemy.Enemy{dead})
+	tickControllerWithIntruders(c, []*building.Building{tower}, []IntruderTarget{intruder})
 
 	if got := tower.InputBuffer[resource.StoneBlock]; got != building.BufferCapacity {
 		t.Fatalf("tower stone = %d, want unchanged %d (target already dead)", got, building.BufferCapacity)
@@ -301,7 +279,7 @@ func TestSentry_WalksToTavernWhenHungryAndBack(t *testing.T) {
 	s := c.Sentries[0]
 
 	for range HungerInterval + 200 {
-		tickController(c, buildings, nil)
+		tickControllerWithIntruders(c, buildings, nil)
 		if s.Working() && s.X == tower.X && s.Y == tower.Y {
 			break
 		}

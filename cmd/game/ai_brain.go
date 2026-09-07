@@ -658,7 +658,7 @@ func (g *Game) aiHireSoldiers(f *faction) {
 func (b *aiBrain) aiConsiderAttack(g *Game, f *faction) {
 	idle := 0
 	for _, s := range f.soldiers.Soldiers {
-		if s.Alive() && !s.HasAttackOrder() && !s.HasFactionTarget() && len(s.RemainingPath()) == 0 {
+		if s.Alive() && !s.HasFactionTarget() && len(s.RemainingPath()) == 0 {
 			idle++
 		}
 	}

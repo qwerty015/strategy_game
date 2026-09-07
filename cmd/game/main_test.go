@@ -10,7 +10,6 @@ import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/combat"
 	"strategy_game/internal/economy"
-	"strategy_game/internal/enemy"
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/i18n"
 	"strategy_game/internal/logistics"
@@ -1796,58 +1795,6 @@ func TestEnclosedGatherWorkerTip(t *testing.T) {
 	}
 	if tip, blocked = game.enclosedGatherWorkerTip(); blocked {
 		t.Fatalf("automatic gate should clear enclosure tip, got %+v", tip)
-	}
-}
-
-// TestCommandSelectedEnemyTo_IssuesAMoveOrder exercises the user's
-// explicit "выбрал противника, кликнул ПКМ, противник идёт туда" flow
-// end to end through the real screen-coordinate path (camera.ScreenToTile
-// -> Enemy.MoveTo), the same call chain handleMouse's right-click branch
-// uses -- not just internal/enemy's own unit test, which never touches
-// cmd/game's plumbing at all.
-func TestCommandSelectedEnemyTo_IssuesAMoveOrder(t *testing.T) {
-	grid := world.NewGrid(10, 10)
-	game := &Game{
-		grid:    grid,
-		camera:  render.NewCamera(),
-		enemies: []*enemy.Enemy{enemy.New(0, 0)},
-	}
-	e := game.enemies[0]
-	game.selection = ui.Selection{Kind: ui.SelectionEnemy, Enemy: e}
-
-	sx, sy := game.camera.TileToScreen(5, 5)
-	game.commandSelectedEnemyTo(int(sx), int(sy))
-
-	if len(e.RemainingPath()) == 0 {
-		t.Fatal("RemainingPath() is empty after commandSelectedEnemyTo -- no move order was issued")
-	}
-}
-
-// TestPruneDeadEnemies_CountsAKillRegardlessOfWhatFinishedIt covers the
-// user's explicit request for a kill counter on the empty-selection town
-// summary panel: pruneDeadEnemies is the one place every dead enemy
-// (Sentry's stone or a soldier's blow, doesn't matter which) actually gets
-// processed each tick, so it's where Population.Kills increments.
-func TestPruneDeadEnemies_CountsAKillRegardlessOfWhatFinishedIt(t *testing.T) {
-	dead := enemy.New(3, 3)
-	dead.HP = 0
-	alive := enemy.New(7, 7)
-	game := &Game{
-		pop:            &economy.Population{},
-		enemies:        []*enemy.Enemy{dead, alive},
-		sightedEnemies: map[*enemy.Enemy]bool{dead: true},
-	}
-
-	game.pruneDeadEnemies()
-
-	if game.pop.Kills != 1 {
-		t.Fatalf("pop.Kills = %d, want 1", game.pop.Kills)
-	}
-	if len(game.enemies) != 1 || game.enemies[0] != alive {
-		t.Fatalf("enemies after prune = %v, want only the still-alive one", game.enemies)
-	}
-	if game.sightedEnemies[dead] {
-		t.Fatal("sightedEnemies still references the pruned enemy")
 	}
 }
 

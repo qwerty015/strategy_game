@@ -22,7 +22,6 @@ import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/combat"
 	"strategy_game/internal/economy"
-	"strategy_game/internal/enemy"
 	"strategy_game/internal/fishing"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/i18n"
@@ -251,28 +250,6 @@ type Game struct {
 	// Not persisted: it's an input-mode preference, the same "not real
 	// world state" reasoning as the camera's zoom-drag state.
 	formationLines int
-
-	// sightedEnemies is edge-triggered bookkeeping for checkEnemySightings
-	// -- which live enemies have already alerted the player, so the
-	// message/speed-reset fires once per sighting, not every tick while
-	// the enemy lingers within range. Not persisted -- the same "debug/
-	// session-only" reasoning as the enemies field itself.
-	sightedEnemies map[*enemy.Enemy]bool
-
-	// attackMarkerTarget draws the red square over a soldier group's
-	// current attack target (see commandSoldierGroupAttack/
-	// render.DrawAttackMarker), cleared once it dies. Not persisted -- see
-	// the enemies field's doc comment just below for why debug/
-	// session-only combat state generally isn't.
-	attackMarkerTarget *enemy.Enemy
-
-	// enemies is the debug test-attacker roster (see cmd/game's F10 spawn
-	// and internal/enemy's doc comment) -- deliberately not part of
-	// save.GameState, the same "not real world state" reasoning already
-	// applied to weather/advisor state (see AGENTS.md): it's a testing
-	// tool for the defensive buildings/HP/repair foundation, not a
-	// released feature.
-	enemies []*enemy.Enemy
 
 	// deathEffects is presentation-only: it records a final position after a
 	// unit has died, then the renderer plays the shared soul/skeleton loop.
@@ -558,14 +535,6 @@ func (g *Game) Update() error {
 		g.openPauseMenu()
 		return nil
 	}
-	// F10 is a debug-only hotkey, not a released feature -- see the Game
-	// struct's enemies field and internal/enemy's doc comment. It exists
-	// purely so this round's WatchTower/Sentry/HP/repair foundation can
-	// be exercised in a real session before a genuine attacker exists.
-	if g.dialog == ui.DialogNone && inpututil.IsKeyJustPressed(ebiten.KeyF10) {
-		g.spawnDebugEnemyAtCursor()
-		return nil
-	}
 	g.playedFrames++
 	g.deathEffects = render.AdvanceDeathEffects(g.deathEffects)
 	g.handleCameraPan()
@@ -680,7 +649,7 @@ func (g *Game) tickOnce() {
 			{g.builders.MaxWaitingHunger(), func() { builderEvents = g.builders.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
 			{g.miners.MaxWaitingHunger(), func() { minerEvents = g.miners.Tick(g.grid, playerBuildings, g.buildings, ledger) }},
 			{g.sentries.MaxWaitingHunger(), func() {
-				sentryResult = g.sentries.Tick(playerBuildings, g.enemies, g.opposingIntruderTargetsFor(g.sentries), ledger)
+				sentryResult = g.sentries.Tick(playerBuildings, g.opposingIntruderTargetsFor(g.sentries), ledger)
 			}},
 		}
 		sort.SliceStable(steps, func(i, j int) bool { return steps[i].hunger > steps[j].hunger })
@@ -701,17 +670,7 @@ func (g *Game) tickOnce() {
 		// them. See soldier.Controller.Tick's doc comment and
 		// pathfind.FindLandPathForFaction. opposingBuildingsFor still
 		// supplies the enemy's buildings separately for targeting.
-		soldierResult := g.soldiers.Tick(g.grid, g.buildings, g.enemies, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers), g.opposingIntruderTargetsForSoldiers(g.soldiers))
-		// Enemies strike back after every Sentry has had a chance to fire
-		// this tick -- see internal/enemy's Tick. A dead one (HP reaching
-		// 0 from a Sentry's own shot, applied above) is pruned right away
-		// so no controller ever sees a stale target next tick.
-		enemy.Tick(g.enemies, g.buildings)
-		g.pruneDeadEnemies()
-		g.checkEnemySightings()
-		if g.attackMarkerTarget != nil && !g.attackMarkerTarget.Alive() {
-			g.attackMarkerTarget = nil
-		}
+		soldierResult := g.soldiers.Tick(g.grid, g.buildings, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers), g.opposingIntruderTargetsForSoldiers(g.soldiers))
 		g.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryResult.Deaths + soldierResult.Deaths
 		g.pop.UnitsDismissed += serfResult.Dismissed
 		// Real cross-faction kills/building destructions -- see
@@ -720,6 +679,21 @@ func (g *Game) tickOnce() {
 		// убито врагов не считает юнитов").
 		g.pop.Kills += soldierResult.Kills + sentryResult.Kills
 		g.pop.EnemyBuildingsDestroyed += soldierResult.BuildingsDestroyed
+		// The map's one shared, profession-free death animation (see
+		// internal/render's DeathEffect) -- per the user's own report ("у
+		// меня есть спрайт 3х кадровый смерти любого юнита... не вижу его
+		// в последних коммитах"): real combat deaths/kills never
+		// triggered it before, only the (now removed) sandbox debug enemy
+		// did.
+		for _, p := range soldierResult.DeathPositions {
+			g.addDeathEffect(p.X, p.Y)
+		}
+		for _, p := range soldierResult.KillPositions {
+			g.addDeathEffect(p.X, p.Y)
+		}
+		for _, p := range sentryResult.KillPositions {
+			g.addDeathEffect(p.X, p.Y)
+		}
 		for _, event := range jackEvents {
 			switch event.Kind {
 			case lumberjack.TreeCut:
@@ -1581,42 +1555,28 @@ func (g *Game) handleMouse() {
 				return
 			}
 		}
-		// Per the user's explicit request: select the (debug) enemy, then
-		// right-click a map tile to send it walking there -- the route
-		// draws the same way every other unit's does (ui.DrawSelectedRoute).
-		// A right-click elsewhere on the map still clears the selection as
-		// usual below; this only intercepts clicks that land on the map
-		// itself while an Enemy is selected, so panel buttons still work.
-		if g.selection.Kind == ui.SelectionEnemy && g.selection.Enemy != nil && image.Pt(mx, my).In(g.layout.MapRect()) {
-			g.commandSelectedEnemyTo(mx, my)
-			return
-		}
 		// Per the user's explicit request: a selected soldier group's
-		// right-click either orders an attack (cursor landed on a live
-		// enemy -- red square marker) or a formation move (empty tile) --
-		// see commandSoldierGroupAttack/commandSoldierGroupTo.
+		// right-click either orders an attack (cursor landed on an
+		// opposing target) or a formation move (empty tile) -- see
+		// commandSoldierGroupAttackFaction/commandSoldierGroupTo.
 		//
 		// opposingBuildingAt/opposingSoldierAt/opposingIntruderAt are
 		// checked too -- a real bug found from an actual playtest report
 		// ("клик боевым юнитом на постройку противника - перемещает
 		// юнитов, но не уничтожает постройку врага", later widened to
 		// "клик боевым юнитом на любого юнита/постройку противника,
-		// должен переходить в режим атаки"): only the sandbox debug enemy
-		// had an attack-order path here; clicking ANY opposing faction
-		// target in "N против ИИ" (building, rival soldier, or any other
-		// unit) fell straight through to a plain move order, which never
-		// actually set anything to fight. See
+		// должен переходить в режим атаки"): clicking ANY opposing
+		// faction target in "N против ИИ" (building, rival soldier, or
+		// any other unit) fell straight through to a plain move order,
+		// which never actually set anything to fight. See
 		// commandSoldierGroupAttackFaction/AttackFactionOrder and its two
 		// siblings below.
 		if g.selection.Kind == ui.SelectionSoldierGroup && len(g.selection.SoldierGroup) > 0 && image.Pt(mx, my).In(g.layout.MapRect()) {
 			tx, ty := g.camera.ScreenToTile(mx, my)
-			enemyTarget := g.enemyAt(tx, ty)
 			buildingTarget := g.opposingBuildingAt(tx, ty)
 			soldierTarget := g.opposingSoldierAt(tx, ty)
 			intruderTarget, hasIntruderTarget := g.opposingIntruderAt(tx, ty)
 			switch {
-			case enemyTarget != nil:
-				g.commandSoldierGroupAttack(enemyTarget)
 			case buildingTarget != nil:
 				g.commandSoldierGroupAttackFaction(buildingTarget)
 			case soldierTarget != nil:
@@ -2735,12 +2695,6 @@ func (g *Game) selectionAt(mx, my int) ui.Selection {
 		sd := g.soldiers.Soldiers[i]
 		if sd.X == tx && sd.Y == ty && sd.Alive() {
 			return ui.Selection{Kind: ui.SelectionSoldierGroup, SoldierGroup: g.soldierGroupNear(sd), SoldierGroupAnchor: sd}
-		}
-	}
-	for i := len(g.enemies) - 1; i >= 0; i-- {
-		e := g.enemies[i]
-		if e.X == tx && e.Y == ty && e.Alive() {
-			return ui.Selection{Kind: ui.SelectionEnemy, Enemy: e}
 		}
 	}
 	// Opposing (any Owner != 0) buildings and units, read-only -- per the
@@ -4109,7 +4063,6 @@ func (g *Game) loadGame(path string) error {
 	g.miners = miner.NewController()
 	g.sentries = sentry.NewController()
 	g.soldiers = soldier.NewController()
-	g.enemies = nil // debug-only roster, never persisted -- see the Game struct field's doc comment
 	g.deathEffects = nil
 	if len(state.Units) == 0 {
 		// Saves from before unit persistence did not contain a roster.
@@ -5184,49 +5137,6 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 	return nil
 }
 
-// commandSelectedEnemyTo issues a move order for the currently selected
-// Enemy to the tile under the cursor -- the user's explicit "выбрал
-// противника, кликнул на точку ПКМ, противник идёт туда" request. Meant
-// to carry over to future player-controlled combat units the same way:
-// select, then right-click a point to walk there, plain map input rather
-// than an enemy-specific hack.
-func (g *Game) commandSelectedEnemyTo(mx, my int) {
-	tx, ty := g.camera.ScreenToTile(mx, my)
-	g.selection.Enemy.MoveTo(g.grid, g.buildings, tx, ty)
-}
-
-// spawnDebugEnemyAtCursor places one enemy.Enemy on the tile under the
-// cursor -- see the F10 key handler in Update.
-func (g *Game) spawnDebugEnemyAtCursor() {
-	mx, my := ebiten.CursorPosition()
-	tx, ty := g.camera.ScreenToTile(mx, my)
-	if !g.grid.InBounds(tx, ty) {
-		return
-	}
-	g.enemies = append(g.enemies, enemy.New(tx, ty))
-}
-
-// pruneDeadEnemies drops every enemy whose HP reached 0 this tick (a
-// Sentry's shot, applied inside g.sentries.Tick just before this runs).
-// Unlike a real building or unit, a dead debug enemy has nothing else to
-// clean up -- it was never part of buildings/save state to begin with.
-func (g *Game) pruneDeadEnemies() {
-	alive := g.enemies[:0]
-	for _, e := range g.enemies {
-		if e.Alive() {
-			alive = append(alive, e)
-			continue
-		}
-		g.addDeathEffect(e.X, e.Y)
-		delete(g.sightedEnemies, e)
-		// One kill per enemy actually processed here, regardless of
-		// whether a Sentry's stone or a soldier's blow finished it off
-		// -- see Population.Kills' doc comment.
-		g.pop.Kills++
-	}
-	g.enemies = alive
-}
-
 // pruneDestroyedBuildings removes any building (other than Road/
 // StoneWall/Gate, matching the "1×1 против ИИ" win condition's own
 // exclusion -- see factionDefeated) whose HP has been brought to 0
@@ -6148,15 +6058,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	for _, f := range g.ais {
 		g.drawSoldierStackCounts(screen, f.soldiers.Soldiers)
 	}
-	render.DrawEnemies(screen, g.enemies, g.camera)
-	if g.attackMarkerTarget != nil && g.attackMarkerTarget.Alive() {
-		render.DrawAttackMarker(screen, g.camera, g.attackMarkerTarget.X, g.attackMarkerTarget.Y)
-	}
 	render.DrawSentryProjectiles(screen, g.sentries.Sentries, g.camera)
-	render.DrawSoldierProjectiles(screen, g.soldiers.Soldiers, g.camera)
 	for _, f := range g.ais {
 		render.DrawSentryProjectiles(screen, f.sentries.Sentries, g.camera)
-		render.DrawSoldierProjectiles(screen, f.soldiers.Soldiers, g.camera)
 	}
 	render.DrawDeathEffects(screen, g.deathEffects, g.camera)
 	// Foreground layers (porches/fences/eaves) intentionally come after units;

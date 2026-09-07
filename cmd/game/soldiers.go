@@ -3,9 +3,6 @@ package main
 import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/combat"
-	"strategy_game/internal/economy"
-	"strategy_game/internal/enemy"
-	"strategy_game/internal/i18n"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/soldier"
 )
@@ -68,66 +65,13 @@ func absInt(n int) int {
 	return n
 }
 
-// enemyDetectionRadius is how far (Chebyshev) an enemy can be from a
-// soldier and still trigger checkEnemySightings' alert -- per the user's
-// clarifying answer to "обнаружение на радиусе ~6-8 клеток", picked at
-// the recommended midpoint.
-const enemyDetectionRadius = 8
-
-// checkEnemySightings alerts the player and drops the simulation speed to
-// Normal (1x) the first time a live enemy comes within
-// enemyDetectionRadius of any soldier -- per the user's explicit request
-// ("при появлении... враг - советник говорит юзеру об этом, сбрасываем
-// скорость в х1"). Edge-triggered per enemy (g.sightedEnemies) so it
-// fires once per sighting, not every tick while the enemy lingers in
-// range; the entry is cleared in pruneDeadEnemies once the enemy dies, so
-// a later respawn/re-sighting alerts again.
-func (g *Game) checkEnemySightings() {
-	if len(g.enemies) == 0 || len(g.soldiers.Soldiers) == 0 {
-		return
-	}
-	if g.sightedEnemies == nil {
-		g.sightedEnemies = map[*enemy.Enemy]bool{}
-	}
-	for _, e := range g.enemies {
-		if !e.Alive() || g.sightedEnemies[e] {
-			continue
-		}
-		for _, sd := range g.soldiers.Soldiers {
-			if !sd.Alive() {
-				continue
-			}
-			if absInt(sd.X-e.X) > enemyDetectionRadius || absInt(sd.Y-e.Y) > enemyDetectionRadius {
-				continue
-			}
-			g.sightedEnemies[e] = true
-			g.sim.SetSpeed(economy.Normal)
-			g.statusMsg = i18n.T().AdvisorTipEnemySighted
-			break
-		}
-	}
-}
-
-// enemyAt returns the living enemy standing on (tx, ty), if any -- used by
-// the soldier group's right-click handling to tell an attack order apart
-// from a plain move order.
-func (g *Game) enemyAt(tx, ty int) *enemy.Enemy {
-	for i := len(g.enemies) - 1; i >= 0; i-- {
-		e := g.enemies[i]
-		if e.X == tx && e.Y == ty && e.Alive() {
-			return e
-		}
-	}
-	return nil
-}
-
 // commandSoldierGroupTo is a right-click on an empty map tile while a
 // SelectionSoldierGroup is active: the click point becomes the center of a
 // g.formationLines-rank formation (per the user's "чтобы юнитов можно было
 // расположить в 1/2/3 линии"), and every soldier in the group gets a
 // MoveTo to its own slot in that grid -- see soldierFormationPositions.
 // Cancels any standing attack order the whole group had (Soldier.MoveTo
-// already does this per-soldier) and clears the red attack marker.
+// already does this per-soldier).
 func (g *Game) commandSoldierGroupTo(mx, my int) {
 	tx, ty := g.camera.ScreenToTile(mx, my)
 	group := g.selection.SoldierGroup
@@ -136,19 +80,6 @@ func (g *Game) commandSoldierGroupTo(mx, my int) {
 		p := positions[i]
 		sd.MoveTo(g.grid, g.buildings, p.X, p.Y)
 	}
-	g.attackMarkerTarget = nil
-}
-
-// commandSoldierGroupAttack is a right-click landing on a live enemy while
-// a SelectionSoldierGroup is active: every soldier in the group gets a
-// standing AttackOrder against it, and the red square marker (per the
-// user's explicit "отмечает противника красной рамкой") tracks it until it
-// dies -- see the tick loop's attackMarkerTarget liveness check.
-func (g *Game) commandSoldierGroupAttack(target *enemy.Enemy) {
-	for _, sd := range g.selection.SoldierGroup {
-		sd.AttackOrder(g.grid, g.buildings, target)
-	}
-	g.attackMarkerTarget = target
 }
 
 // opposingBuildingAt returns the opposing faction's building (any tile of

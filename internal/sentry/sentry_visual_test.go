@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"strategy_game/internal/building"
-	"strategy_game/internal/enemy"
 	"strategy_game/internal/resource"
 )
 
@@ -17,9 +16,10 @@ func TestSentryShotVisualStartsOnlyAfterSuccessfulShot(t *testing.T) {
 	}
 	controller := NewController()
 	guard := controller.Spawn(tower)
-	target := enemy.New(11, 12)
+	alive := true
+	target := IntruderTarget{X: 11, Y: 12, Alive: func() bool { return alive }, Kill: func() { alive = false }}
 
-	tickController(controller, []*building.Building{tower}, []*enemy.Enemy{target})
+	tickControllerWithIntruders(controller, []*building.Building{tower}, []IntruderTarget{target})
 	fromX, fromY, targetX, targetY, progress, ok := guard.ShotVisual()
 	if !ok {
 		t.Fatal("ShotVisual() = unavailable after a successful stone shot")

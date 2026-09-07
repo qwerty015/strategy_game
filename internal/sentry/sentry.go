@@ -9,7 +9,6 @@ package sentry
 import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/combat"
-	"strategy_game/internal/enemy"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/meal"
 	"strategy_game/internal/pathfind"
@@ -38,7 +37,7 @@ const (
 	ShotCooldownTicks = 20
 
 	// shotVisualLifetime is how many simulation ticks the stone is "in
-	// flight" before the kill lands (see shotPendingTarget). Lowered from
+	// flight" before the kill lands (see shotPendingIntruder). Lowered from
 	// 6 to 1 -- the user found that over 6 ticks a moving target could
 	// take several steps, so the stone visually landed on one tile while
 	// the kill (and death animation) happened on another: "камень падает
@@ -82,24 +81,16 @@ type Sentry struct {
 	// renderer to show the most recent sling stone in flight. Not persisted
 	// across save/load, the same as shotCooldown above.
 	//
-	// shotPendingTarget is the one exception to "visual-only": the user
+	// shotPendingIntruder is the one exception to "visual-only": the user
 	// explicitly asked for the kill itself to land when the stone visually
 	// arrives, not the instant it's thrown ("раньше было сперва противник
 	// погибает, а потом летит камень в него" -- an observed real bug). See
-	// Controller.Tick, which zeroes shotPendingTarget's HP the tick
+	// Controller.Tick, which calls shotPendingIntruder.Kill() the tick
 	// shotVisualTicks reaches 0. A target that's already dead by then (killed
 	// by something else in the meantime) is a harmless no-op.
 	shotVisualTicks          int
 	shotTargetX, shotTargetY int
-	shotPendingTarget        *enemy.Enemy
-
-	// shotPendingIntruder is shotPendingTarget's "1×1 против ИИ"
-	// counterpart -- see IntruderTarget's doc comment. Exactly one of
-	// shotPendingTarget/shotPendingIntruder is set at a time, matching
-	// the mutually-exclusive convention soldier.factionTarget already
-	// uses for the same "debug enemy vs. real opposing faction"
-	// distinction.
-	shotPendingIntruder *IntruderTarget
+	shotPendingIntruder      *IntruderTarget
 
 	// Starving mirrors package villagers' field of the same name: true
 	// once HungerInterval has passed and there was nowhere to actually go
@@ -308,45 +299,35 @@ func (c *Controller) MaxWaitingHunger() int {
 // TickResult summarizes one Controller.Tick call. Deaths is this
 // controller's own Sentries lost to starvation; Kills is opposing units
 // (see IntruderTarget) a WatchTower's stone actually finished off this
-// tick -- a real playtest report ("счетчик убито врагов не считает
-// юнитов, нужно считать убитых с помощью башни или убитых боевыми
-// юнитами") found economy.Population.Kills never counted a WatchTower's
-// real cross-faction kills at all, only the sandbox-only debug
-// enemy.Enemy (see cmd/game's pruneDeadEnemies) -- this is the WatchTower
-// half of that fix (see package soldier's identical TickResult for the
-// combat-unit half). No BuildingsDestroyed counter here: a WatchTower's
-// intruders list only ever wraps opposing units, never buildings -- see
-// cmd/game's intruderTargetsFrom.
+// tick. KillPositions carries the tile of each such kill, for cmd/game's
+// addDeathEffect -- the map's one shared, profession-free death
+// animation (see internal/render's DeathEffect). No BuildingsDestroyed
+// counter here: a WatchTower's intruders list only ever wraps opposing
+// units, never buildings -- see cmd/game's intruderTargetsFrom.
 type TickResult struct {
 	Deaths, Kills int
+	KillPositions []pathfind.Point
 }
 
 // Tick advances hunger, movement and combat for every Sentry. Call once
 // per simulation tick, after every controller sharing ledger has had a
-// chance to Reserve its own pre-existing in-flight units. enemies is the
-// current debug enemy roster (see cmd/game) -- a Sentry only ever reads
-// it, never mutates the slice itself, though it does lower a target's HP
-// in place. intruders is this Sentry's "1×1 против ИИ" targets -- see
-// IntruderTarget's doc comment; nil/empty outside that mode.
-func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) TickResult {
+// chance to Reserve its own pre-existing in-flight units. intruders is
+// this Sentry's "1×1 против ИИ" targets -- see IntruderTarget's doc
+// comment; nil/empty outside that mode.
+func (c *Controller) Tick(buildings []*building.Building, intruders []IntruderTarget, ledger *reservations.Ledger) TickResult {
 	var result TickResult
 	remaining := c.Sentries[:0]
 	for _, s := range c.Sentries {
 		if s.shotVisualTicks > 0 {
 			s.shotVisualTicks--
-			if s.shotVisualTicks == 0 {
-				if s.shotPendingTarget != nil {
-					// The stone has visually arrived -- this is when it
-					// actually kills, not when it was thrown. See
-					// shotPendingTarget's doc comment.
-					s.shotPendingTarget.HP = 0
-					s.shotPendingTarget = nil
-				}
-				if s.shotPendingIntruder != nil {
-					s.shotPendingIntruder.Kill()
-					s.shotPendingIntruder = nil
-					result.Kills++
-				}
+			if s.shotVisualTicks == 0 && s.shotPendingIntruder != nil {
+				// The stone has visually arrived -- this is when it
+				// actually kills, not when it was thrown. See
+				// shotPendingIntruder's doc comment.
+				s.shotPendingIntruder.Kill()
+				s.shotPendingIntruder = nil
+				result.Kills++
+				result.KillPositions = append(result.KillPositions, pathfind.Point{X: s.shotTargetX, Y: s.shotTargetY})
 			}
 		}
 		s.ticksSinceMeal++
@@ -354,23 +335,23 @@ func (c *Controller) Tick(buildings []*building.Building, enemies []*enemy.Enemy
 			result.Deaths++
 			continue
 		}
-		c.tick(s, buildings, enemies, intruders, ledger)
+		c.tick(s, buildings, intruders, ledger)
 		remaining = append(remaining, s)
 	}
 	c.Sentries = remaining
 	return result
 }
 
-func (c *Controller) tick(s *Sentry, buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) {
+func (c *Controller) tick(s *Sentry, buildings []*building.Building, intruders []IntruderTarget, ledger *reservations.Ledger) {
 	switch s.ph {
 	case working:
-		c.tickWorking(s, buildings, enemies, intruders, ledger)
+		c.tickWorking(s, buildings, intruders, ledger)
 	case toTavern, toHome:
 		tickWalking(s, buildings)
 	}
 }
 
-func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, enemies []*enemy.Enemy, intruders []IntruderTarget, ledger *reservations.Ledger) {
+func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, intruders []IntruderTarget, ledger *reservations.Ledger) {
 	if hunger.NeedsMeal(s.ticksSinceMeal) {
 		if tavern, meal, path, ok := nearestTavernWithFood(buildings, pathfind.Point{X: s.Home.X, Y: s.Home.Y}, ledger, &c.meals); ok {
 			s.Starving = false
@@ -384,26 +365,24 @@ func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, enem
 		}
 		s.Starving = true
 	}
-	c.engage(s, enemies, intruders)
+	c.engage(s, intruders)
 }
 
-// engage fires at the nearest living target (debug enemy or opposing-
-// faction intruder, whichever is actually closer) within WatchTowerRange,
-// once per ShotCooldownTicks, consuming one stone from the tower's
-// InputBuffer per shot -- a silent no-op with nothing in range, no stone
-// left, or still on cooldown.
+// engage fires at the nearest living opposing-faction intruder within
+// WatchTowerRange, once per ShotCooldownTicks, consuming one stone from
+// the tower's InputBuffer per shot -- a silent no-op with nothing in
+// range, no stone left, or still on cooldown.
 //
 // Per the user's explicit request ("1 попадание камня в противника его
 // убивает"), a hit is a kill -- unlike a building, which still takes
 // combat.DamagePerHit (10%) per hit from the same stone. A stone sling is
 // lethal to a person but only chips a wall. The kill itself, though,
-// lands only once the stone visually arrives (see shotPendingTarget/
-// shotPendingIntruder and Controller.Tick), not the instant it's thrown
-// here -- a real bug the user caught in-game ("раньше было сперва
-// противник погибает, а потом летит камень в него"): the target must
-// stay alive and interactable for the roughly WatchTowerRange*
-// TicksPerTile ticks the stone is airborne.
-func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy, intruders []IntruderTarget) {
+// lands only once the stone visually arrives (see shotPendingIntruder and
+// Controller.Tick), not the instant it's thrown here -- a real bug the
+// user caught in-game ("раньше было сперва противник погибает, а потом
+// летит камень в него"): the target must stay alive and interactable for
+// the roughly WatchTowerRange*TicksPerTile ticks the stone is airborne.
+func (c *Controller) engage(s *Sentry, intruders []IntruderTarget) {
 	if s.shotCooldown > 0 {
 		s.shotCooldown--
 		return
@@ -411,34 +390,24 @@ func (c *Controller) engage(s *Sentry, enemies []*enemy.Enemy, intruders []Intru
 	if s.Home == nil {
 		return
 	}
-	enemyTarget := nearestEnemyInRange(s.Home.X, s.Home.Y, enemies)
-	intruderTarget, intruderDist, intruderOK := nearestIntruderInRange(s.Home.X, s.Home.Y, intruders)
-
-	var targetX, targetY int
-	var pendingEnemy *enemy.Enemy
-	var pendingIntruder *IntruderTarget
-	switch {
-	case enemyTarget != nil && (!intruderOK || abs(enemyTarget.X-s.Home.X)+abs(enemyTarget.Y-s.Home.Y) <= intruderDist):
-		targetX, targetY, pendingEnemy = enemyTarget.X, enemyTarget.Y, enemyTarget
-	case intruderOK:
-		targetX, targetY, pendingIntruder = intruderTarget.X, intruderTarget.Y, intruderTarget
-	default:
+	intruderTarget, _, ok := nearestIntruderInRange(s.Home.X, s.Home.Y, intruders)
+	if !ok {
 		return
 	}
 	if !s.Home.TakeInput(resource.StoneBlock, 1) {
 		return
 	}
-	s.shotTargetX, s.shotTargetY = targetX, targetY
-	s.shotPendingTarget = pendingEnemy
-	s.shotPendingIntruder = pendingIntruder
+	s.shotTargetX, s.shotTargetY = intruderTarget.X, intruderTarget.Y
+	s.shotPendingIntruder = intruderTarget
 	s.shotVisualTicks = shotVisualLifetime
 	s.shotCooldown = ShotCooldownTicks
 }
 
-// nearestIntruderInRange mirrors nearestEnemyInRange for IntruderTarget --
-// see its doc comment for the range convention. Returns the candidate's
-// own tile distance too, so engage can compare it directly against a
-// simultaneously-in-range enemy.Enemy candidate's distance.
+// nearestIntruderInRange returns the closest living intruder within
+// WatchTowerRange tiles of (cx, cy) -- a plain square radius per-axis
+// (Chebyshev distance), matching the user's "5 клеток в любую сторону"
+// description, not a circular/Euclidean one. Also returns the
+// candidate's own tile distance. ok is false if none qualify.
 func nearestIntruderInRange(cx, cy int, intruders []IntruderTarget) (target *IntruderTarget, dist int, ok bool) {
 	bestDist := 0
 	for i := range intruders {
@@ -456,29 +425,6 @@ func nearestIntruderInRange(cx, cy int, intruders []IntruderTarget) (target *Int
 		}
 	}
 	return target, bestDist, ok
-}
-
-// nearestEnemyInRange returns the closest living enemy within
-// WatchTowerRange tiles of (cx, cy) -- a plain square radius per-axis
-// (Chebyshev distance), matching the user's "5 клеток в любую сторону"
-// description, not a circular/Euclidean one. nil if none qualify.
-func nearestEnemyInRange(cx, cy int, enemies []*enemy.Enemy) *enemy.Enemy {
-	var best *enemy.Enemy
-	bestDist := 0
-	for _, e := range enemies {
-		if !e.Alive() {
-			continue
-		}
-		dx, dy := abs(e.X-cx), abs(e.Y-cy)
-		if dx > WatchTowerRange || dy > WatchTowerRange {
-			continue
-		}
-		dist := dx + dy
-		if best == nil || dist < bestDist {
-			best, bestDist = e, dist
-		}
-	}
-	return best
 }
 
 func abs(n int) int {

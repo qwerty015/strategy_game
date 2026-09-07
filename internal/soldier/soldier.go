@@ -3,15 +3,14 @@
 // this game they never walk to a Tavern themselves when hungry -- food is
 // delivered to them by a serf instead (package logistics); see
 // NeedsDelivery/Feed. They are entirely player-directed (select, then
-// right-click a point to walk there or an enemy to attack), the same
-// control model as the debug enemy (package enemy) -- neither profession
-// picks its own destination or target.
+// right-click a point to walk there, or an opposing faction's building/
+// unit to attack) -- neither profession picks its own destination or
+// target.
 package soldier
 
 import (
 	"strategy_game/internal/building"
 	"strategy_game/internal/combat"
-	"strategy_game/internal/enemy"
 	"strategy_game/internal/hunger"
 	"strategy_game/internal/pathfind"
 	"strategy_game/internal/world"
@@ -56,29 +55,6 @@ const (
 	// rule stay in one place if it's ever tuned again.
 	ArcherCooldownTicks    = 0
 	SwordsmanCooldownTicks = 0
-
-	// attackVisualLifetime keeps a landed blow on screen for exactly one
-	// tick before a lethal hit's deferred kill (see pendingKillTarget)
-	// resolves -- per the user's explicit "1 тик удар/стрела 1, 2 тик -
-	// второй удар/стрела и всё, 3 тик уже анимация смерти юнита": with
-	// ArcherCooldownTicks/SwordsmanCooldownTicks == 0, hit 1 lands tick 1,
-	// hit 2 (lethal) lands tick 2, and this being 1 means the deferred
-	// kill resolves exactly tick 3 -- the whole exchange takes 3 ticks
-	// (1.5s at 1x speed), not the 8 ticks a longer lifetime produced.
-	// Was 6 (a full three-frame wind-up/impact/recovery animation); at 1
-	// the renderer only ever samples AttackVisual() at progress == 1, so
-	// an Archer's arrow now appears already at the target rather than
-	// visibly flying there -- an accepted trade-off for hitting this
-	// exact tick timeline.
-	attackVisualLifetime = 1
-
-	// EngageRange is the distance (Chebyshev) at which a soldier with no
-	// standing attack order automatically opens fire on the nearest enemy,
-	// without waiting for a player right-click -- per the user's explicit
-	// "при враге в 2 клетки от группы/юнита - вступать в бой". Deliberately
-	// smaller than either AttackRange, so a soldier already has the enemy
-	// well within striking distance the instant it engages.
-	EngageRange = 2
 )
 
 // FactionEngageRange mirrors EngageRange for cross-faction auto-combat --
@@ -89,9 +65,7 @@ const FactionEngageRange = 2
 // factionTarget is a soldier's current cross-faction combat target -- a
 // rival building, soldier, or any other opposing unit (see intruder,
 // combat.IntruderTarget), used only by "1×1 против ИИ" mode. Exactly one
-// field is non-nil, or all nil for "no target". Deliberately separate
-// from attackTarget/AttackOrder above, which stays the sandbox-only debug
-// enemy.Enemy mechanism, untouched by any of this.
+// field is non-nil, or all nil for "no target".
 type factionTarget struct {
 	building *building.Building
 	soldier  *Soldier
@@ -191,8 +165,7 @@ func nearestFactionTarget(x, y int, buildings []*building.Building, soldiers []*
 }
 
 // Soldier is one Archer or Swordsman. HP is exported (0-100, see
-// combat.MaxHP) so an attacker can lower it directly, the same convention
-// enemy.Enemy already uses.
+// combat.MaxHP) so an attacker can lower it directly.
 type Soldier struct {
 	Profession Profession
 	X, Y       int
@@ -212,47 +185,9 @@ type Soldier struct {
 	pathIdx   int
 	tileTicks int
 
-	// attackTarget is the standing attack order (see AttackOrder): keep
-	// approaching and hitting this enemy while it stays alive, even if it
-	// moves out of range in the meantime. nil means no attack order --
-	// the soldier just executes whatever MoveTo path it has, if any.
-	attackTarget   *enemy.Enemy
 	attackCooldown int
 
-	// attackVisualTicks and attackTargetX/Y are transient renderer data set
-	// only when a hit really lands. They are intentionally not saved.
-	attackVisualTicks            int
-	attackTargetX, attackTargetY int
-
-	// pendingKillTarget is set only when a landed hit would reduce the
-	// target to 0 HP or below: the kill itself is deferred until the
-	// attack's own visual (arrow flight for an Archer, sword swing for a
-	// Swordsman) actually reaches the target, the tick attackVisualTicks
-	// reaches 0 -- the same "don't show a death before its own visual
-	// arrives" fix already applied to the sentry's stone throw (see
-	// package sentry's shotPendingTarget). A user-reported real bug: with
-	// instant HP application an Archer's target could die on-screen
-	// several ticks before the arrow visually reached it. A hit that
-	// wouldn't be lethal has no such artifact to avoid -- it still
-	// applies instantly, so damage feedback stays immediate; only the
-	// killing blow needs to wait.
-	pendingKillTarget *enemy.Enemy
-
 	ticksSinceMeal int
-}
-
-// AttackVisual reports a freshly landed strike for the map renderer. progress
-// runs from the wind-up to recovery over a short fixed duration; it is absent
-// while merely moving toward a target or waiting on cooldown.
-func (s *Soldier) AttackVisual() (targetX, targetY int, progress float64, ok bool) {
-	if s == nil || s.attackVisualTicks <= 0 {
-		return 0, 0, 0, false
-	}
-	progress = float64(attackVisualLifetime-s.attackVisualTicks+1) / float64(attackVisualLifetime)
-	if progress > 1 {
-		progress = 1
-	}
-	return s.attackTargetX, s.attackTargetY, progress, true
 }
 
 // New creates a soldier at (x, y) with full health, no orders.
@@ -280,38 +215,18 @@ func (s *Soldier) cooldownTicks() int {
 
 // MoveTo cancels any standing attack order and starts walking toward
 // (x, y) over land -- buildings and water block it, the same free-roaming
-// movement rule package enemy/builder/lumberjack already use, not the
-// road network serfs need. Reports whether a route was found; a false
-// result leaves any route already in progress untouched.
+// movement rule package builder/lumberjack already use, not the road
+// network serfs need. Reports whether a route was found; a false result
+// leaves any route already in progress untouched.
 func (s *Soldier) MoveTo(grid *world.Grid, buildings []*building.Building, x, y int) bool {
 	path, ok := pathfind.FindLandPathForFaction(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: x, Y: y}, s.Owner)
 	if !ok {
 		return false
 	}
-	s.attackTarget = nil
 	s.faction = factionTarget{}
 	s.path, s.pathIdx, s.tileTicks = path, 0, 0
 	return true
 }
-
-// AttackOrder marks target as this soldier's standing order: approach and
-// keep attacking while it's alive, re-approaching on its own if the
-// target drifts out of range (see Controller.tick). A nil or already-dead
-// target simply clears any existing attack order.
-func (s *Soldier) AttackOrder(grid *world.Grid, buildings []*building.Building, target *enemy.Enemy) {
-	if target == nil || !target.Alive() {
-		s.attackTarget = nil
-		return
-	}
-	s.faction = factionTarget{}
-	s.attackTarget = target
-	s.approach(grid, buildings)
-}
-
-// HasAttackOrder reports whether the soldier currently has a standing
-// attack order (for the inspector/UI, and so cmd/game knows a red target
-// marker is still relevant).
-func (s *Soldier) HasAttackOrder() bool { return s.attackTarget != nil }
 
 // HasFactionTarget reports whether the soldier currently has a
 // cross-faction combat target ("1×1 против ИИ" mode -- see
@@ -330,18 +245,16 @@ func (s *Soldier) HasFactionTarget() bool { return s.faction.alive() }
 // A real bug found from an actual playtest report ("клик боевым юнитом
 // на постройку противника - перемещает юнитов, но не уничтожает
 // постройку врага"): right-clicking an opposing faction's building used
-// to have no attack-order path at all -- only the sandbox debug
-// enemy.Enemy had one (AttackOrder above) -- so cmd/game's click handler
-// fell through to a plain move order every time, which could walk a
-// squad right up to a building without ever actually setting a target to
+// to have no attack-order path at all, so cmd/game's click handler fell
+// through to a plain move order every time, which could walk a squad
+// right up to a building without ever actually setting a target to
 // fight. A nil or already-destroyed target simply clears any existing
-// order, matching AttackOrder's own convention.
+// order.
 func (s *Soldier) AttackFactionOrder(target *building.Building) {
 	if target == nil || target.HP <= 0 {
 		s.faction = factionTarget{}
 		return
 	}
-	s.attackTarget = nil
 	s.faction = factionTarget{building: target}
 }
 
@@ -355,7 +268,6 @@ func (s *Soldier) AttackFactionSoldierOrder(target *Soldier) {
 		s.faction = factionTarget{}
 		return
 	}
-	s.attackTarget = nil
 	s.faction = factionTarget{soldier: target}
 }
 
@@ -369,22 +281,7 @@ func (s *Soldier) AttackFactionIntruderOrder(target combat.IntruderTarget) {
 		s.faction = factionTarget{}
 		return
 	}
-	s.attackTarget = nil
 	s.faction = factionTarget{intruder: &target}
-}
-
-func (s *Soldier) approach(grid *world.Grid, buildings []*building.Building) {
-	if s.attackTarget == nil {
-		return
-	}
-	if inRange(s.X, s.Y, s.attackTarget.X, s.attackTarget.Y, s.AttackRange()) {
-		s.path, s.pathIdx, s.tileTicks = nil, 0, 0
-		return
-	}
-	path, ok := pathfind.FindLandPathForFaction(grid, buildings, pathfind.Point{X: s.X, Y: s.Y}, pathfind.Point{X: s.attackTarget.X, Y: s.attackTarget.Y}, s.Owner)
-	if ok {
-		s.path, s.pathIdx, s.tileTicks = path, 0, 0
-	}
 }
 
 // inRange reports whether (bx, by) is within a square (Chebyshev) radius
@@ -448,9 +345,8 @@ func (c *Controller) Spawn(profession Profession, x, y int) *Soldier {
 }
 
 // Restore recreates a soldier from a save snapshot, preserving position,
-// health and hunger. An in-progress attack order is deliberately not
-// restored (package enemy's own debug roster isn't saved either, see
-// AGENTS.md) -- a restored soldier simply starts idle.
+// health and hunger -- a restored soldier simply starts idle, with no
+// standing order restored.
 func (c *Controller) Restore(profession Profession, x, y, hungerTicks, hp int) *Soldier {
 	s := New(profession, x, y)
 	if hungerTicks < 0 {
@@ -464,15 +360,28 @@ func (c *Controller) Restore(profession Profession, x, y, hungerTicks, hp int) *
 	return s
 }
 
-// Tick advances movement, standing-attack-order pursuit, and combat for
-// every living soldier; a starved soldier is removed from the roster and
-// counted in the returned death total. enemies is used only for
-// auto-engage against the sandbox debug enemy (see EngageRange) --
-// nil/empty is fine when there's nothing to fight there. opposingBuildings,
-// opposingSoldiers and opposingIntruders are this soldier's cross-faction
-// targets for "1×1 против ИИ" mode (see TickFactionCombat's doc comment,
-// and combat.IntruderTarget for opposingIntruders -- any opposing unit
-// that isn't itself a rival Soldier) -- also nil/empty outside that mode.
+// TickResult summarizes one Controller.Tick call. Deaths is this
+// controller's own soldiers lost to starvation or a rival's hit landed
+// earlier in the same overall simulation tick (see the roster-removal
+// check at the top of the loop below). Kills and BuildingsDestroyed
+// count opposing-faction targets these soldiers actually finished off in
+// cross-faction ("1×1 против ИИ") combat this tick (see package sentry's
+// identical TickResult for the WatchTower half) -- Kills counts a rival
+// Soldier or any other opposing unit (combat.IntruderTarget);
+// BuildingsDestroyed is a separate counter for a destroyed building.
+// DeathPositions/KillPositions carry the tile of each such event, for
+// cmd/game's addDeathEffect -- the map's one shared, profession-free
+// death animation (see internal/render's DeathEffect).
+type TickResult struct {
+	Deaths, Kills, BuildingsDestroyed int
+	DeathPositions, KillPositions     []pathfind.Point
+}
+
+// Call once per simulation tick. opposingBuildings, opposingSoldiers and
+// opposingIntruders are this soldier's cross-faction targets for "1×1
+// против ИИ" mode (see TickFactionCombat's doc comment, and
+// combat.IntruderTarget for opposingIntruders -- any opposing unit that
+// isn't itself a rival Soldier) -- nil/empty outside that mode.
 //
 // buildings is this soldier's movement obstacle list, not a target list --
 // unlike every other controller's Tick, it must be the WHOLE map's
@@ -486,26 +395,7 @@ func (c *Controller) Restore(profession Profession, x, y, hungerTicks, hp int) *
 // simply never see the defender's walls as obstacles at all, gate or no
 // gate. See pathfind.FindLandPathForFaction for how a foreign Gate still
 // blocks like a solid wall once it IS in the list.
-// TickResult summarizes one Controller.Tick call. Deaths is this
-// controller's own soldiers lost to starvation. Kills and
-// BuildingsDestroyed count opposing-faction targets these soldiers
-// actually finished off in cross-faction ("1×1 против ИИ") combat this
-// tick -- a real playtest report ("счетчик убито врагов не считает
-// юнитов, нужно считать убитых с помощью башни или убитых боевыми
-// юнитами") found that economy.Population.Kills only ever incremented
-// for the sandbox-only debug enemy.Enemy (see cmd/game's
-// pruneDeadEnemies), never for a real opponent's soldier/unit killed in
-// duel mode -- this is the soldier half of that fix (see package
-// sentry's identical TickResult for the WatchTower half). Kills counts a
-// rival Soldier or any other opposing unit (combat.IntruderTarget);
-// BuildingsDestroyed is the new, separate counter the same report asked
-// for ("введи новый счетчик: 'Разрушено построек'").
-type TickResult struct {
-	Deaths, Kills, BuildingsDestroyed int
-}
-
-// Call once per simulation tick.
-func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enemies []*enemy.Enemy, opposingBuildings []*building.Building, opposingSoldiers []*Soldier, opposingIntruders []combat.IntruderTarget) TickResult {
+func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, opposingBuildings []*building.Building, opposingSoldiers []*Soldier, opposingIntruders []combat.IntruderTarget) TickResult {
 	var result TickResult
 	remaining := c.Soldiers[:0]
 	for _, s := range c.Soldiers {
@@ -526,45 +416,29 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 		// below already does for a starved soldier.
 		if !s.Alive() {
 			result.Deaths++
+			result.DeathPositions = append(result.DeathPositions, pathfind.Point{X: s.X, Y: s.Y})
 			continue
-		}
-		if s.attackVisualTicks > 0 {
-			s.attackVisualTicks--
-			if s.attackVisualTicks == 0 && s.pendingKillTarget != nil {
-				s.pendingKillTarget.HP = 0
-				s.pendingKillTarget = nil
-			}
 		}
 		s.ticksSinceMeal++
 		if hunger.Dead(s.ticksSinceMeal) {
 			result.Deaths++
+			result.DeathPositions = append(result.DeathPositions, pathfind.Point{X: s.X, Y: s.Y})
 			continue
 		}
-		// len(s.path) == 0 is the real fix for a bug the user reported:
-		// without it, a soldier could never be moved away from an enemy
-		// it just fought -- MoveTo clears attackTarget and starts a
-		// path, but the very next tick this same check saw attackTarget
-		// == nil again (the enemy is almost always still within
-		// EngageRange right after a melee exchange) and immediately
-		// re-issued an AttackOrder, whose approach() then saw the
-		// soldier already in range and cleared the just-started path
-		// right back out from under the player. Gating on an empty path
-		// too means auto-engage only ever claims a soldier that is
-		// truly idle (no standing order AND no move already under way),
-		// so an explicit MoveTo/formation order always gets to actually
-		// run; only once it finishes (or the soldier was idle to begin
-		// with) does auto-engage get another look.
-		if s.attackTarget == nil && len(s.path) == 0 {
-			if target := nearestEnemyWithin(s.X, s.Y, enemies, EngageRange); target != nil {
-				s.AttackOrder(grid, buildings, target)
-			}
-		}
-		if s.attackTarget == nil && !s.faction.alive() && len(s.path) == 0 {
+		// len(s.path) == 0 gates auto-engage on a truly idle soldier (no
+		// standing order AND no move already under way), so an explicit
+		// MoveTo/formation order always gets to actually run; only once
+		// it finishes (or the soldier was idle to begin with) does
+		// auto-engage get another look.
+		if !s.faction.alive() && len(s.path) == 0 {
 			if t, ok := nearestFactionTarget(s.X, s.Y, opposingBuildings, opposingSoldiers, opposingIntruders, FactionEngageRange); ok {
 				s.faction = t
 			}
 		}
-		killedUnit, killedBuilding := c.tick(grid, buildings, s)
+		killedUnit, killedBuilding, killX, killY := c.tick(grid, buildings, s)
+		if killedUnit || killedBuilding {
+			result.KillPositions = append(result.KillPositions, pathfind.Point{X: killX, Y: killY})
+		}
 		if killedUnit {
 			result.Kills++
 		}
@@ -577,89 +451,28 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, enem
 	return result
 }
 
-// nearestEnemyWithin returns the closest living enemy to (x, y) within a
-// square (Chebyshev) radius, or nil if none qualifies.
-func nearestEnemyWithin(x, y int, enemies []*enemy.Enemy, radius int) *enemy.Enemy {
-	var best *enemy.Enemy
-	bestDist := -1
-	for _, e := range enemies {
-		if e == nil || !e.Alive() || !inRange(x, y, e.X, e.Y, radius) {
-			continue
-		}
-		d := abs(x-e.X) + abs(y-e.Y)
-		if bestDist == -1 || d < bestDist {
-			best, bestDist = e, d
-		}
-	}
-	return best
-}
-
-// tick returns whether this call's combat resolution landed the killing
-// blow on an opposing unit or building, respectively -- see TickResult's
-// doc comment. Always (false, false) for the sandbox-only
-// tickDebugEnemyCombat path, which cmd/game's pruneDeadEnemies counts
-// separately.
-func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool) {
+// tick advances movement and runs cross-faction combat resolution for s,
+// if it currently has a live faction target -- see factionTarget's doc
+// comment. killX/killY are only meaningful when killedUnit or
+// killedBuilding is true (see TickResult.KillPositions).
+func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool, killX, killY int) {
 	tickMovement(s)
-	if s.attackTarget != nil {
-		c.tickDebugEnemyCombat(grid, buildings, s)
-		return false, false
-	}
 	if s.faction.alive() {
 		return c.tickFactionCombat(grid, buildings, s)
 	}
-	return false, false
-}
-
-// tickDebugEnemyCombat is the original (sandbox-only) attackTarget combat
-// resolution, unchanged in behaviour -- split out verbatim so tick can
-// also run the parallel cross-faction path below without the two ever
-// running in the same call (a soldier only ever has one kind of order at
-// a time).
-func (c *Controller) tickDebugEnemyCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) {
-	if !s.attackTarget.Alive() {
-		s.attackTarget = nil
-		return
-	}
-	if !inRange(s.X, s.Y, s.attackTarget.X, s.attackTarget.Y, s.AttackRange()) {
-		// The target drifted out of range (or the previous approach path
-		// finished short) -- keep chasing on its own, no new player click
-		// needed.
-		if len(s.path) == 0 {
-			s.approach(grid, buildings)
-		}
-		return
-	}
-	// In range: stop moving and fight.
-	s.path, s.pathIdx, s.tileTicks = nil, 0, 0
-	if s.attackCooldown > 0 {
-		s.attackCooldown--
-		return
-	}
-	s.attackTargetX, s.attackTargetY = s.attackTarget.X, s.attackTarget.Y
-	s.attackVisualTicks = attackVisualLifetime
-	s.attackCooldown = s.cooldownTicks()
-	if s.attackTarget.HP <= combat.UnitDamagePerHit {
-		// Lethal -- defer the actual kill to when the visual lands (see
-		// pendingKillTarget's doc comment) instead of applying it here.
-		s.pendingKillTarget = s.attackTarget
-		s.attackTarget = nil
-		return
-	}
-	s.attackTarget.HP = combat.ApplyDamage(s.attackTarget.HP, combat.UnitDamagePerHit)
+	return false, false, 0, 0
 }
 
 // tickFactionCombat pursues and fights s.faction -- the "1×1 против ИИ"
-// cross-faction target (see factionTarget's doc comment). Mirrors
-// tickDebugEnemyCombat's shape (approach if out of range, stop and hit on
-// cooldown once in range) but applies damage instantly, with no
-// pendingKillTarget-style deferred visual: cross-faction combat has no
-// rendered attack animation yet in this first pass (a deliberate,
+// cross-faction target (see factionTarget's doc comment): approach if
+// out of range, stop and hit once in range and off cooldown. Applies
+// damage instantly, with no deferred-visual step: cross-faction combat
+// has no rendered attack animation yet in this first pass (a deliberate,
 // documented scope cut -- see AGENTS.md).
-func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool) {
+func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool, killX, killY int) {
 	if !s.faction.alive() {
 		s.faction = factionTarget{}
-		return false, false
+		return false, false, 0, 0
 	}
 	tx, ty := s.faction.pos()
 	if !inRange(s.X, s.Y, tx, ty, s.AttackRange()) {
@@ -669,25 +482,26 @@ func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.B
 				s.path, s.pathIdx, s.tileTicks = path, 0, 0
 			}
 		}
-		return false, false
+		return false, false, 0, 0
 	}
 	s.path, s.pathIdx, s.tileTicks = nil, 0, 0
 	if s.attackCooldown > 0 {
 		s.attackCooldown--
-		return false, false
+		return false, false, 0, 0
 	}
 	s.attackCooldown = s.cooldownTicks()
 	wasBuilding := s.faction.building != nil
 	s.faction.hit()
 	if !s.faction.alive() {
 		s.faction = factionTarget{}
+		killX, killY = tx, ty
 		if wasBuilding {
 			killedBuilding = true
 		} else {
 			killedUnit = true
 		}
 	}
-	return killedUnit, killedBuilding
+	return killedUnit, killedBuilding, killX, killY
 }
 
 // tickMovement advances s one step along its current path every
