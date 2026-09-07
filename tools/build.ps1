@@ -20,6 +20,9 @@ $spriteSource = Join-Path $repoRoot 'internal\assets'
 $audioSource = Join-Path $repoRoot 'assets\audio'
 $assetsDir = Join-Path $binDir 'assets'
 $spriteDestination = Join-Path $assetsDir 'sprites'
+$iconSource = Join-Path $repoRoot 'assets\app.png'
+$iconResource = $null
+$iconResourceCreated = $false
 
 function Write-Step([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
@@ -54,11 +57,28 @@ if ($binDir -ne $expectedBinDir) {
 
 Push-Location $repoRoot
 try {
+	if (-not (Test-Path -LiteralPath $iconSource -PathType Leaf)) {
+		throw "Application icon is missing: $iconSource"
+	}
+	$targetOS = (& go env GOOS).Trim()
+	$targetArch = (& go env GOARCH).Trim()
+	if ($targetOS -ne 'windows' -or $targetArch -notin @('amd64', '386', 'arm64')) {
+		throw 'build.ps1 requires a Windows Go target (amd64, 386 or arm64).'
+	}
+	$iconResource = Join-Path $repoRoot "cmd\game\appicon_windows_$targetArch.syso"
+	if (Test-Path -LiteralPath $iconResource) {
+		throw "Icon resource already exists; check it before building: $iconResource"
+	}
     if (Test-Path -LiteralPath $binDir) {
         Write-Step 'Cleaning bin\\'
         Remove-Item -LiteralPath $binDir -Recurse -Force
     }
     New-Item -ItemType Directory -Path $binDir | Out-Null
+
+	Write-Step 'Preparing application icon'
+	$iconResourceCreated = $true
+	& go run ./tools/iconbuild $iconSource $iconResource (Join-Path $binDir 'app.ico') $targetArch
+	if ($LASTEXITCODE -ne 0) { throw 'Icon generation failed.' }
 
     Write-Step 'Compiling strategy_game.exe'
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -80,6 +100,7 @@ try {
 
     Write-Step 'Copying external audio'
     New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
+	Copy-Item -LiteralPath $iconSource -Destination (Join-Path $assetsDir 'app.png')
     Copy-RequiredDirectory $audioSource $assetsDir
 
     $sizeMB = [Math]::Round((Get-Item -LiteralPath $exePath).Length / 1MB, 1)
@@ -91,5 +112,8 @@ try {
     Write-Host ''
     Write-Host 'Keep the complete bin\ folder together when distributing the game.'
 } finally {
+	if ($iconResourceCreated -and (Test-Path -LiteralPath $iconResource)) {
+		Remove-Item -LiteralPath $iconResource -Force
+	}
     Pop-Location
 }

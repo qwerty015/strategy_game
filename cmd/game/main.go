@@ -6408,6 +6408,7 @@ func main() {
 	i18n.SetLang(i18n.RU)
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
+	setApplicationIcon()
 	ebiten.SetFullscreen(true)
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetWindowTitle(i18n.T().WindowTitle)
