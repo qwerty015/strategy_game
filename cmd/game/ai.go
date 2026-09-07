@@ -340,31 +340,31 @@ func intruderTargetsFrom(
 	var out []sentry.IntruderTarget
 	for _, s := range logi.Serfs {
 		s := s
-		out = append(out, sentry.IntruderTarget{X: s.X, Y: s.Y, Alive: s.Alive, Kill: s.Kill, Owner: owner})
+		out = append(out, sentry.IntruderTarget{X: s.X, Y: s.Y, Position: func() (int, int) { return s.X, s.Y }, Alive: s.Alive, Kill: s.Kill, Owner: owner})
 	}
 	for _, v := range vills.Villagers {
 		v := v
-		out = append(out, sentry.IntruderTarget{X: v.X, Y: v.Y, Alive: v.Alive, Kill: v.Kill, Owner: owner})
+		out = append(out, sentry.IntruderTarget{X: v.X, Y: v.Y, Position: func() (int, int) { return v.X, v.Y }, Alive: v.Alive, Kill: v.Kill, Owner: owner})
 	}
 	for _, j := range jacks.Lumberjacks {
 		j := j
-		out = append(out, sentry.IntruderTarget{X: j.X, Y: j.Y, Alive: j.Alive, Kill: j.Kill, Owner: owner})
+		out = append(out, sentry.IntruderTarget{X: j.X, Y: j.Y, Position: func() (int, int) { return j.X, j.Y }, Alive: j.Alive, Kill: j.Kill, Owner: owner})
 	}
 	for _, f := range fishers.Fishermen {
 		f := f
-		out = append(out, sentry.IntruderTarget{X: f.X, Y: f.Y, Alive: f.Alive, Kill: f.Kill, Owner: owner})
+		out = append(out, sentry.IntruderTarget{X: f.X, Y: f.Y, Position: func() (int, int) { return f.X, f.Y }, Alive: f.Alive, Kill: f.Kill, Owner: owner})
 	}
 	for _, q := range quarry.Quarrymen {
 		q := q
-		out = append(out, sentry.IntruderTarget{X: q.X, Y: q.Y, Alive: q.Alive, Kill: q.Kill, Owner: owner})
+		out = append(out, sentry.IntruderTarget{X: q.X, Y: q.Y, Position: func() (int, int) { return q.X, q.Y }, Alive: q.Alive, Kill: q.Kill, Owner: owner})
 	}
 	for _, b := range builders.Builders {
 		b := b
-		out = append(out, sentry.IntruderTarget{X: b.X, Y: b.Y, Alive: b.Alive, Kill: b.Kill, Owner: owner})
+		out = append(out, sentry.IntruderTarget{X: b.X, Y: b.Y, Position: func() (int, int) { return b.X, b.Y }, Alive: b.Alive, Kill: b.Kill, Owner: owner})
 	}
 	for _, m := range miners.Miners {
 		m := m
-		out = append(out, sentry.IntruderTarget{X: m.X, Y: m.Y, Alive: m.Alive, Kill: m.Kill, Owner: owner})
+		out = append(out, sentry.IntruderTarget{X: m.X, Y: m.Y, Position: func() (int, int) { return m.X, m.Y }, Alive: m.Alive, Kill: m.Kill, Owner: owner})
 	}
 	for _, sd := range soldiers.Soldiers {
 		sd := sd
@@ -373,7 +373,8 @@ func intruderTargetsFrom(
 		}
 		out = append(out, sentry.IntruderTarget{
 			X: sd.X, Y: sd.Y,
-			Alive: sd.Alive,
+			Position: func() (int, int) { return sd.X, sd.Y },
+			Alive:    sd.Alive,
 			// Instant kill regardless of the soldier's current HP -- the
 			// user's own explicit combat rebalance request ("удар башни
 			// по юниту - 100% хп"), same one-hit rule a WatchTower's

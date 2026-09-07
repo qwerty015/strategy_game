@@ -85,9 +85,12 @@ func Repair(hp, amount int) int {
 // its other soldiers (and, for a Soldier, its buildings) -- an unarmed
 // enemy serf/villager/lumberjack/... was untouchable by either.
 type IntruderTarget struct {
-	X, Y  int
-	Alive func() bool
-	Kill  func()
+	X, Y int
+	// Position follows moving targets across simulation ticks.
+	// X/Y are the fallback for stationary targets and legacy callers.
+	Position func() (int, int)
+	Alive    func() bool
+	Kill     func()
 
 	// Owner is the faction this unit belongs to -- set by whichever
 	// cmd/game helper builds the target list (see intruderTargetsFrom),
@@ -95,4 +98,11 @@ type IntruderTarget struct {
 	// killing blow be credited to the right attacker (see cmd/game's
 	// lastAttackerOwner) instead of only ever guessed at by geography.
 	Owner int
+}
+
+func (t IntruderTarget) Pos() (int, int) {
+	if t.Position != nil {
+		return t.Position()
+	}
+	return t.X, t.Y
 }

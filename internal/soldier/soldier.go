@@ -116,7 +116,7 @@ func (t factionTarget) pos() (int, int) {
 	case t.soldier != nil:
 		return t.soldier.X, t.soldier.Y
 	case t.intruder != nil:
-		return t.intruder.X, t.intruder.Y
+		return t.intruder.Pos()
 	default:
 		return 0, 0
 	}
@@ -175,7 +175,8 @@ func nearestFactionTarget(x, y int, buildings []*building.Building, soldiers []*
 		if in.Alive == nil || !in.Alive() {
 			continue
 		}
-		consider(in.X, in.Y, factionTarget{intruder: in})
+		x, y := in.Pos()
+		consider(x, y, factionTarget{intruder: in})
 	}
 	return t, ok
 }
