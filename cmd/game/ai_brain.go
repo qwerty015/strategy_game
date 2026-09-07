@@ -970,6 +970,7 @@ func (g *Game) aiFortifyIsthmus(f *faction, rect image.Rectangle) {
 		site := building.NewConstructionSite(building.StoneWall, p.X, p.Y)
 		site.Owner = f.owner
 		g.buildings = append(g.buildings, site)
+		g.removeRoadUnderneath(p.X, p.Y)
 	}
 	g.invalidateConnectionCache()
 }
@@ -1228,6 +1229,38 @@ func nearestRealBuildingIn(buildings []*building.Building, owner, x, y int) *bui
 		}
 		switch b.Kind {
 		case building.Road, building.StoneWall, building.Gate:
+			continue
+		}
+		dist := squaredDistance(x, y, b.X, b.Y)
+		if nearest == nil || dist < bestDist {
+			nearest, bestDist = b, dist
+		}
+	}
+	return nearest
+}
+
+// nearestAnyBuildingOwnedBy is nearestRealBuildingOwnedBy's looser
+// cousin -- accepts a Road/StoneWall/Gate as a last-resort anchor too
+// (still excluded from "real" for factionDefeated/attack-targeting
+// purposes, but a legitimate physical presence on the map, worth
+// reconstructing a faction around on load). A real bug found from an
+// actual save (a "4х4" match where two AI factions had lost every real
+// building in combat but still had their own defensive perimeter --
+// aiBuildDefenses' walls/gates -- standing): loadGame's straggler
+// fallback only ever tried nearestRealBuildingOwnedBy, found nothing,
+// and dropped the faction from g.ais entirely -- exactly the class of
+// bug af3f9b5 already fixed once for the Warehouse-specific case, now
+// recurring for a faction whose only surviving structures are its own
+// walls. The practical fallout: opposingBuildingsFor only ever gathers
+// candidates from factions actually present in g.ais, so a wall like
+// this became permanently unattackable after any reload -- right-
+// clicking it with a soldier group fell through to a plain move order
+// every time, since opposingBuildingAt could never find it.
+func (g *Game) nearestAnyBuildingOwnedBy(owner, x, y int) *building.Building {
+	var nearest *building.Building
+	bestDist := -1
+	for _, b := range g.buildings {
+		if b == nil || b.Owner != owner || isNaturalResourceKind(b.Kind) {
 			continue
 		}
 		dist := squaredDistance(x, y, b.X, b.Y)

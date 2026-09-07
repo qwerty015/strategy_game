@@ -2070,6 +2070,7 @@ func (g *Game) commitWallPath(path []building.Point) bool {
 		site := building.NewConstructionSite(building.StoneWall, point.X, point.Y)
 		g.reserveConstructionMaterials(site)
 		g.buildings = append(g.buildings, site)
+		g.removeRoadUnderneath(point.X, point.Y)
 		if shortage == nil {
 			if tip, missing := advisor.ConstructionMaterialShortage(site); missing {
 				shortage = &tip
@@ -2090,6 +2091,25 @@ func (g *Game) wallPieceAt(x, y int) bool {
 		}
 	}
 	return false
+}
+
+// removeRoadUnderneath removes a finished Road building sitting at
+// exactly (x, y), if any -- building.CanPlace now deliberately allows a
+// fresh StoneWall to be placed on top of a finished Road tile instead of
+// rejecting the whole placement outright (per the user's own explicit
+// request, "разреши строительство стены поверх участка дороги... дорога
+// не является чем-то запрещенным"), but CanPlace itself never mutates
+// anything -- every wall-committing call site (commitWallPath below,
+// aiFortifyIsthmus in ai_brain.go) must call this right after actually
+// placing the wall there, or the same tile would end up holding two
+// buildings at once.
+func (g *Game) removeRoadUnderneath(x, y int) {
+	for i, b := range g.buildings {
+		if b != nil && b.Kind == building.Road && b.ConstructionStage == building.ConstructionNone && b.X == x && b.Y == y {
+			g.buildings = append(g.buildings[:i], g.buildings[i+1:]...)
+			return
+		}
+	}
 }
 
 // placeGateAt upgrades an already finished, straight wall piece in place. The
@@ -4030,6 +4050,16 @@ func (g *Game) loadGame(path string) error {
 				// done, and it's still correctly skipped below exactly
 				// as before.
 				anchor := g.nearestRealBuildingOwnedBy(fs.Owner, 0, 0)
+				if anchor == nil {
+					// Nothing "real" left (Warehouse, Barracks, ...), but a
+					// faction can still have its own defensive perimeter
+					// standing (aiBuildDefenses' walls/gates) with nothing
+					// else -- see nearestAnyBuildingOwnedBy's own doc
+					// comment for the real bug this recovers from. Only
+					// truly nothing at all (not even a wall) still means
+					// "skip", same as before.
+					anchor = g.nearestAnyBuildingOwnedBy(fs.Owner, 0, 0)
+				}
 				if anchor == nil {
 					continue
 				}

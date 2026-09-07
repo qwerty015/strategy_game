@@ -377,3 +377,104 @@ func TestAiExpandEconomy_KeepsBuildingPastTheEndOfTheCuratedList(t *testing.T) {
 		t.Fatalf("buildIndex = %d, want %d -- aiBuildNext should have placed one aiExpansionOrder building instead of stopping cold", f.brain.buildIndex, len(order)+1)
 	}
 }
+
+// TestAiFortifyIsthmus_ReplacesAnExistingRoadTile is the regression test
+// for a real playtest report ("разреши строительство стены поверх
+// участка дороги... дорога не является чем-то запрещенным"):
+// aiBuildDefenses could permanently fail to fortify a crossing whenever
+// an earlier-built Road tile (the faction's own logistics network, or a
+// guard tower's own access road) already happened to sit on the wall's
+// own line -- CanPlace rejected the WHOLE straight line the instant any
+// one tile overlapped it, and nothing ever removed that road to retry.
+func TestAiFortifyIsthmus_ReplacesAnExistingRoadTile(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+	q := quadrantAssignmentOrder[f.owner]
+	rect := g.duelIsthmuses[duelIsthmusIndicesFor(q)[0]]
+
+	// The first tile of the wall's own line, matching aiFortifyIsthmus'
+	// own axis choice exactly.
+	roadX, roadY := rect.Min.X, rect.Min.Y
+	if rect.Dx() >= rect.Dy() {
+		roadX = rect.Min.X + rect.Dx()/2
+	} else {
+		roadY = rect.Min.Y + rect.Dy()/2
+	}
+	road := &building.Building{Kind: building.Road, X: roadX, Y: roadY, Owner: f.owner, HP: building.MaxHP, ConstructionStage: building.ConstructionNone}
+	g.buildings = append(g.buildings, road)
+
+	g.aiFortifyIsthmus(f, rect)
+
+	var wallHere, roadHere bool
+	for _, b := range g.buildings {
+		if b.X != roadX || b.Y != roadY {
+			continue
+		}
+		if b.Kind == building.StoneWall {
+			wallHere = true
+		}
+		if b.Kind == building.Road {
+			roadHere = true
+		}
+	}
+	if !wallHere {
+		t.Fatal("the wall segment over the pre-existing road was never placed -- the crossing stayed unfortified")
+	}
+	if roadHere {
+		t.Fatal("the road tile should have been replaced by the wall, not left alongside it")
+	}
+}
+
+// TestDuelGame_ReloadKeepsAWallsOnlyStragglerFactionAttackable is the
+// regression test for a real playtest report ("почему ПКМ на вражеской
+// стене не уничтожает постройку?"): a faction reduced to nothing but its
+// own defensive perimeter (aiBuildDefenses' walls/gates -- no Warehouse,
+// no other real building, no units) used to be dropped from g.ais
+// entirely on reload, since loadGame's straggler-anchor fallback only
+// ever tried nearestRealBuildingOwnedBy (which deliberately excludes
+// Road/StoneWall/Gate). Its walls then became permanently unattackable:
+// opposingBuildingsFor only ever gathers candidates from factions
+// actually present in g.ais.
+func TestDuelGame_ReloadKeepsAWallsOnlyStragglerFactionAttackable(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+	f.stock.Add(resource.Plank, 500)
+	f.stock.Add(resource.StoneBlock, 500)
+	g.aiBuildDefenses(f, g.grid)
+
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && b.Kind != building.StoneWall && b.Kind != building.Gate && b.Kind != building.Road {
+			b.HP = 0
+		}
+	}
+	g.pruneDestroyedBuildings()
+	crippleFactionUnits(f)
+	f.stock = resource.NewStockpile(stockpileCapacity)
+
+	var wall *building.Building
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && b.Kind == building.StoneWall {
+			wall = b
+			break
+		}
+	}
+	if wall == nil {
+		t.Fatal("test setup: expected at least one StoneWall to survive the wipe")
+	}
+
+	path := t.TempDir() + "/straggler.json"
+	if err := g.saveGame(path, "straggler test"); err != nil {
+		t.Fatalf("saveGame: %v", err)
+	}
+
+	loaded := newDuelGame([]aiDifficulty{AIEasy})
+	if err := loaded.loadGame(path); err != nil {
+		t.Fatalf("loadGame: %v", err)
+	}
+	if len(loaded.ais) == 0 {
+		t.Fatal("g.ais is empty after reload -- the walls-only straggler faction was dropped entirely")
+	}
+	if target := loaded.opposingBuildingAt(wall.X, wall.Y); target == nil {
+		t.Fatal("the surviving wall is no longer a valid attack target after reload")
+	}
+}

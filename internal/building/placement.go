@@ -41,6 +41,22 @@ func CanPlace(g *world.Grid, existing []*Building, kind Kind, x, y int) bool {
 		if b == nil {
 			continue
 		}
+		// A StoneWall may replace a finished Road tile it lands on -- per
+		// the user's own explicit request ("разреши строительство стены
+		// поверх участка дороги... дорога не является чем-то запрещенным,
+		// даже в жизни на ней можно строить"): a real gap found from
+		// aiBuildDefenses failing to fortify an isthmus crossing whenever
+		// an earlier-built Road tile (the AI's own logistics network, or
+		// a guard tower's access road) already happened to cross it --
+		// CanPlace rejected the ENTIRE straight wall line the instant any
+		// one of its tiles overlapped that Road, leaving the crossing
+		// permanently unfortified. The caller is responsible for actually
+		// removing the overlapped Road once it commits the wall (see
+		// aiFortifyIsthmus/commitWallPath) -- CanPlace only ever reports
+		// whether a placement WOULD be legal, it never mutates existing.
+		if kind == StoneWall && b.Kind == Road && b.ConstructionStage == ConstructionNone {
+			continue
+		}
 		otherSize := Types[b.Kind].Footprint
 		if footprintsOverlap(x, y, bt.Footprint, b.X, b.Y, otherSize) {
 			return false
