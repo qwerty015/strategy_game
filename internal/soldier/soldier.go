@@ -93,6 +93,22 @@ func (t factionTarget) alive() bool {
 	}
 }
 
+// owner reports which faction the current target belongs to -- used to
+// credit a killing blow to the right attacker (see cmd/game's
+// lastAttackerOwner) instead of only ever guessed at by geography.
+func (t factionTarget) owner() int {
+	switch {
+	case t.building != nil:
+		return t.building.Owner
+	case t.soldier != nil:
+		return t.soldier.Owner
+	case t.intruder != nil:
+		return t.intruder.Owner
+	default:
+		return 0
+	}
+}
+
 func (t factionTarget) pos() (int, int) {
 	switch {
 	case t.building != nil:
@@ -371,10 +387,17 @@ func (c *Controller) Restore(profession Profession, x, y, hungerTicks, hp int) *
 // BuildingsDestroyed is a separate counter for a destroyed building.
 // DeathPositions/KillPositions carry the tile of each such event, for
 // cmd/game's addDeathEffect -- the map's one shared, profession-free
-// death animation (see internal/render's DeathEffect).
+// death animation (see internal/render's DeathEffect). KillOwners is
+// KillPositions' own parallel slice (same order, same length) naming
+// which faction owned whatever just died -- cmd/game folds every entry
+// into lastAttackerOwner, crediting a faction's eventual defeat to
+// whoever actually landed the last real blow on it instead of only ever
+// guessing by geography (see nearestSurvivingFactionTo's own doc
+// comment on the playtest report this replaces).
 type TickResult struct {
 	Deaths, Kills, BuildingsDestroyed int
 	DeathPositions, KillPositions     []pathfind.Point
+	KillOwners                        []int
 }
 
 // Call once per simulation tick. opposingBuildings, opposingSoldiers and
@@ -435,9 +458,10 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, oppo
 				s.faction = t
 			}
 		}
-		killedUnit, killedBuilding, killX, killY := c.tick(grid, buildings, s)
+		killedUnit, killedBuilding, killX, killY, killedOwner := c.tick(grid, buildings, s)
 		if killedUnit || killedBuilding {
 			result.KillPositions = append(result.KillPositions, pathfind.Point{X: killX, Y: killY})
+			result.KillOwners = append(result.KillOwners, killedOwner)
 		}
 		if killedUnit {
 			result.Kills++
@@ -453,14 +477,14 @@ func (c *Controller) Tick(grid *world.Grid, buildings []*building.Building, oppo
 
 // tick advances movement and runs cross-faction combat resolution for s,
 // if it currently has a live faction target -- see factionTarget's doc
-// comment. killX/killY are only meaningful when killedUnit or
-// killedBuilding is true (see TickResult.KillPositions).
-func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool, killX, killY int) {
+// comment. killX/killY/killedOwner are only meaningful when killedUnit
+// or killedBuilding is true (see TickResult.KillPositions/KillOwners).
+func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool, killX, killY, killedOwner int) {
 	tickMovement(s)
 	if s.faction.alive() {
 		return c.tickFactionCombat(grid, buildings, s)
 	}
-	return false, false, 0, 0
+	return false, false, 0, 0, 0
 }
 
 // tickFactionCombat pursues and fights s.faction -- the "1×1 против ИИ"
@@ -469,10 +493,10 @@ func (c *Controller) tick(grid *world.Grid, buildings []*building.Building, s *S
 // damage instantly, with no deferred-visual step: cross-faction combat
 // has no rendered attack animation yet in this first pass (a deliberate,
 // documented scope cut -- see AGENTS.md).
-func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool, killX, killY int) {
+func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.Building, s *Soldier) (killedUnit, killedBuilding bool, killX, killY, killedOwner int) {
 	if !s.faction.alive() {
 		s.faction = factionTarget{}
-		return false, false, 0, 0
+		return false, false, 0, 0, 0
 	}
 	tx, ty := s.faction.pos()
 	if !inRange(s.X, s.Y, tx, ty, s.AttackRange()) {
@@ -482,17 +506,18 @@ func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.B
 				s.path, s.pathIdx, s.tileTicks = path, 0, 0
 			}
 		}
-		return false, false, 0, 0
+		return false, false, 0, 0, 0
 	}
 	s.path, s.pathIdx, s.tileTicks = nil, 0, 0
 	if s.attackCooldown > 0 {
 		s.attackCooldown--
-		return false, false, 0, 0
+		return false, false, 0, 0, 0
 	}
 	s.attackCooldown = s.cooldownTicks()
 	wasBuilding := s.faction.building != nil
 	s.faction.hit()
 	if !s.faction.alive() {
+		killedOwner = s.faction.owner()
 		s.faction = factionTarget{}
 		killX, killY = tx, ty
 		if wasBuilding {
@@ -501,7 +526,7 @@ func (c *Controller) tickFactionCombat(grid *world.Grid, buildings []*building.B
 			killedUnit = true
 		}
 	}
-	return killedUnit, killedBuilding, killX, killY
+	return killedUnit, killedBuilding, killX, killY, killedOwner
 }
 
 // tickMovement advances s one step along its current path every

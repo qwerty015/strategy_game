@@ -54,3 +54,43 @@ func TestPruneDestroyedBuildings_LeavesAnUnrelatedFactionsWarehouseAlone(t *test
 		t.Fatalf("unrelated faction's registered warehouses = %v, want untouched [%v]", fSurvivor.logi.Warehouses, survivor)
 	}
 }
+
+// TestPruneDestroyedBuildings_RemovesADestroyedWallOrGate is the
+// regression test for a real playtest report ("это чужая стена с
+// чужими воротами, я должен иметь возможность её уничтожить!"): a
+// StoneWall/Gate reduced to 0 HP in combat used to be exempted from
+// pruning right alongside Road, so it stayed on the map forever --
+// still physically blocking movement (pathfind's occupancy checks never
+// look at HP) while also becoming permanently unattackable
+// (opposingBuildingAt skips any HP<=0 candidate). Road stays exempt --
+// it's never a combat target at all.
+func TestPruneDestroyedBuildings_RemovesADestroyedWallOrGate(t *testing.T) {
+	wall := &building.Building{Kind: building.StoneWall, Owner: 1, X: 0, Y: 0, HP: 0}
+	gate := &building.Building{Kind: building.Gate, Owner: 1, X: 1, Y: 0, HP: 0}
+	road := &building.Building{Kind: building.Road, Owner: 1, X: 2, Y: 0, HP: 0}
+	aliveWall := &building.Building{Kind: building.StoneWall, Owner: 1, X: 3, Y: 0, HP: building.MaxHP}
+	g := &Game{buildings: []*building.Building{wall, gate, road, aliveWall}}
+
+	g.pruneDestroyedBuildings()
+
+	for _, b := range g.buildings {
+		if b == wall || b == gate {
+			t.Fatalf("destroyed %v is still on the map after pruneDestroyedBuildings", b.Kind)
+		}
+	}
+	foundRoad, foundAliveWall := false, false
+	for _, b := range g.buildings {
+		if b == road {
+			foundRoad = true
+		}
+		if b == aliveWall {
+			foundAliveWall = true
+		}
+	}
+	if !foundRoad {
+		t.Fatal("a Road at HP<=0 must stay exempt -- it's never a combat target in the first place")
+	}
+	if !foundAliveWall {
+		t.Fatal("a StoneWall with real HP left must not be removed")
+	}
+}

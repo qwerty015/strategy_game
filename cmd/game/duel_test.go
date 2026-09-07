@@ -669,6 +669,46 @@ func TestRazeHopelessFactions_LeavesAFactionAloneIfItCanStillAffordAHire(t *test
 	}
 }
 
+// TestRazeHopelessFactions_AlsoRazesTheFactionsOwnWalls is the
+// follow-up regression test for the player's own explicit request ("у
+// стен должен быть хозяин... после того как противник уничтожен - его
+// стены также уничтожаются автоматически если у него нет возможности
+// восстановиться"): a hopeless faction's StoneWall/Gate must be razed
+// along with everything else it owns, not left standing forever as an
+// abandoned, ownerless-in-practice obstacle. Road stays exempt --
+// shared infrastructure, not this faction's alone to lose.
+func TestRazeHopelessFactions_AlsoRazesTheFactionsOwnWalls(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+	f.stock.Add(resource.Plank, 500)
+	f.stock.Add(resource.StoneBlock, 500)
+	g.aiBuildDefenses(f, g.grid)
+
+	hadWall := false
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && (b.Kind == building.StoneWall || b.Kind == building.Gate) {
+			hadWall = true
+		}
+	}
+	if !hadWall {
+		t.Fatal("test setup: expected aiBuildDefenses to have placed at least one wall/gate")
+	}
+
+	crippleFactionUnits(f)
+	f.stock = resource.NewStockpile(stockpileCapacity)
+
+	g.tickOnce()
+
+	if !g.factionDefeated(f.owner) {
+		t.Fatal("faction should have been auto-defeated")
+	}
+	for _, b := range g.buildings {
+		if b.Owner == f.owner && (b.Kind == building.StoneWall || b.Kind == building.Gate) {
+			t.Fatalf("wall/gate %v of the hopeless faction is still standing after razeHopelessFactions", b.Kind)
+		}
+	}
+}
+
 // TestDuelGame_FFAResultRequiresEveryBotDefeated is the "все против
 // всех" generalization of TestDuelGame_VictoryScreenAppearsAndFreezesTheMatch:
 // with more than one opponent, defeating only SOME of them must not end
@@ -724,6 +764,32 @@ func TestCheckAIFactionDefeats_AnnouncesOnceWithAHeuristicVictor(t *testing.T) {
 	g.checkAIFactionDefeats()
 	if g.advisorVisible != nil || len(g.advisorQueue) != 0 {
 		t.Fatalf("faction 1's defeat was announced again -- want silence, it was already reported once")
+	}
+}
+
+// TestCheckAIFactionDefeats_CreditsWhoeverLandedTheLastRealBlow is the
+// regression test for the user's own explicit request ("измени механику
+// кто кого разгромил: разгромил не тот кто ближе, а тот, кто нанес
+// последний урон после которого противника не стало") -- confirmed
+// wrong twice in one real session by the old geography-only heuristic
+// ("Красные разгромили синих", "Зелёные разгромили красных", neither
+// matching who the player had actually just killed with their own
+// soldiers). recordLastAttacker is what a real combat tick feeds from
+// soldier.TickResult/sentry.TickResult's own KillOwners -- called
+// directly here to isolate the attribution decision itself from a full
+// combat simulation.
+func TestCheckAIFactionDefeats_CreditsWhoeverLandedTheLastRealBlow(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy, AIEasy})
+	g.recordLastAttacker(2, []int{1}) // owner 2 just landed a real kill on owner 1
+	wipeFactionForTest(g, 1)
+	g.tickOnce() // prunes owner 1's buildings so factionDefeated(1) actually reports true
+
+	g.checkAIFactionDefeats()
+	if g.advisorVisible == nil || g.advisorVisible.Kind != advisor.KindFactionDefeated {
+		t.Fatalf("advisorVisible = %+v, want a queued KindFactionDefeated tip", g.advisorVisible)
+	}
+	if g.advisorVisible.VictorOwner != 2 {
+		t.Fatalf("VictorOwner = %d, want 2 (recorded as the last real attacker) -- not a geography guess", g.advisorVisible.VictorOwner)
 	}
 }
 

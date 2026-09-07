@@ -269,13 +269,13 @@ func (g *Game) opposingSoldiersFor(c *soldier.Controller) []*soldier.Soldier {
 // g.ais. Shared by opposingIntruderTargetsFor and its Soldier twin below.
 func (g *Game) intruderTargetsForOwner(owner int) []sentry.IntruderTarget {
 	if owner == 0 {
-		return intruderTargetsFrom(g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.soldiers)
+		return intruderTargetsFrom(owner, g.logi, g.vills, g.jacks, g.fishers, g.quarry, g.builders, g.miners, g.soldiers)
 	}
 	f := g.factionByOwner(owner)
 	if f == nil {
 		return nil
 	}
-	return intruderTargetsFrom(f.logi, f.vills, f.jacks, f.fishers, f.quarry, f.builders, f.miners, f.soldiers)
+	return intruderTargetsFrom(owner, f.logi, f.vills, f.jacks, f.fishers, f.quarry, f.builders, f.miners, f.soldiers)
 }
 
 // opposingIntruderTargetsFor returns c's cross-faction Sentry targets --
@@ -327,6 +327,7 @@ func (g *Game) opposingIntruderTargetsForSoldiers(c *soldier.Controller) []comba
 // stays correct even though every one of these controllers may reorder
 // or shrink its own slice on its next Tick.
 func intruderTargetsFrom(
+	owner int,
 	logi *logistics.Controller,
 	vills *villagers.Controller,
 	jacks *lumberjack.Controller,
@@ -339,31 +340,31 @@ func intruderTargetsFrom(
 	var out []sentry.IntruderTarget
 	for _, s := range logi.Serfs {
 		s := s
-		out = append(out, sentry.IntruderTarget{X: s.X, Y: s.Y, Alive: s.Alive, Kill: s.Kill})
+		out = append(out, sentry.IntruderTarget{X: s.X, Y: s.Y, Alive: s.Alive, Kill: s.Kill, Owner: owner})
 	}
 	for _, v := range vills.Villagers {
 		v := v
-		out = append(out, sentry.IntruderTarget{X: v.X, Y: v.Y, Alive: v.Alive, Kill: v.Kill})
+		out = append(out, sentry.IntruderTarget{X: v.X, Y: v.Y, Alive: v.Alive, Kill: v.Kill, Owner: owner})
 	}
 	for _, j := range jacks.Lumberjacks {
 		j := j
-		out = append(out, sentry.IntruderTarget{X: j.X, Y: j.Y, Alive: j.Alive, Kill: j.Kill})
+		out = append(out, sentry.IntruderTarget{X: j.X, Y: j.Y, Alive: j.Alive, Kill: j.Kill, Owner: owner})
 	}
 	for _, f := range fishers.Fishermen {
 		f := f
-		out = append(out, sentry.IntruderTarget{X: f.X, Y: f.Y, Alive: f.Alive, Kill: f.Kill})
+		out = append(out, sentry.IntruderTarget{X: f.X, Y: f.Y, Alive: f.Alive, Kill: f.Kill, Owner: owner})
 	}
 	for _, q := range quarry.Quarrymen {
 		q := q
-		out = append(out, sentry.IntruderTarget{X: q.X, Y: q.Y, Alive: q.Alive, Kill: q.Kill})
+		out = append(out, sentry.IntruderTarget{X: q.X, Y: q.Y, Alive: q.Alive, Kill: q.Kill, Owner: owner})
 	}
 	for _, b := range builders.Builders {
 		b := b
-		out = append(out, sentry.IntruderTarget{X: b.X, Y: b.Y, Alive: b.Alive, Kill: b.Kill})
+		out = append(out, sentry.IntruderTarget{X: b.X, Y: b.Y, Alive: b.Alive, Kill: b.Kill, Owner: owner})
 	}
 	for _, m := range miners.Miners {
 		m := m
-		out = append(out, sentry.IntruderTarget{X: m.X, Y: m.Y, Alive: m.Alive, Kill: m.Kill})
+		out = append(out, sentry.IntruderTarget{X: m.X, Y: m.Y, Alive: m.Alive, Kill: m.Kill, Owner: owner})
 	}
 	for _, sd := range soldiers.Soldiers {
 		sd := sd
@@ -380,7 +381,8 @@ func intruderTargetsFrom(
 			// one-hit kill against an armoured Archer/Swordsman, so this
 			// applies the same per-hit damage a rival soldier's own
 			// factionTarget.hit() would, not an instant kill.
-			Kill: func() { sd.HP = combat.ApplyDamage(sd.HP, combat.UnitDamagePerHit) },
+			Kill:  func() { sd.HP = combat.ApplyDamage(sd.HP, combat.UnitDamagePerHit) },
+			Owner: owner,
 		})
 	}
 	return out
@@ -434,6 +436,8 @@ func (g *Game) tickAIFaction(f *faction, grid *world.Grid) {
 	// blocked by an opponent's walls/gates, which means those need to be
 	// in the obstacle list at all.
 	soldierResult := f.soldiers.Tick(grid, g.buildings, g.opposingBuildingsFor(f.soldiers), g.opposingSoldiersFor(f.soldiers), g.opposingIntruderTargetsForSoldiers(f.soldiers))
+	g.recordLastAttacker(f.owner, soldierResult.KillOwners)
+	g.recordLastAttacker(f.owner, sentryResult.KillOwners)
 
 	f.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryResult.Deaths + soldierResult.Deaths
 	f.pop.UnitsDismissed += serfResult.Dismissed

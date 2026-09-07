@@ -322,6 +322,23 @@ type Game struct {
 	// un-defeats, so unlike advisorCooldowns this never expires.
 	aiDefeatedAnnounced map[int]bool
 
+	// lastAttackerOwner maps a defending faction's Owner to whoever most
+	// recently landed a real combat kill against it (a building, soldier
+	// or any other unit) -- recordLastAttacker updates this every tick
+	// from soldier.TickResult/sentry.TickResult's own KillOwners. Used by
+	// checkAIFactionDefeats/nearestSurvivingFactionTo to credit a
+	// faction's eventual defeat to whoever actually did it, per the
+	// user's own explicit request ("измени механику кто кого разгромил:
+	// разгромил не тот кто ближе, а тот, кто нанес последний урон после
+	// которого противника не стало") -- confirmed wrong twice in one
+	// session by the old geography-only heuristic ("Красные разгромили
+	// синих", "Зелёные разгромили красных", neither matching who the
+	// player had actually just killed with their own hands). Overwritten
+	// on every hit, not just a killing blow -- whatever value is present
+	// at the moment a faction is noticed as newly defeated is, by
+	// construction, whoever hit it last.
+	lastAttackerOwner map[int]int
+
 	camera         *render.Camera
 	palette        *ui.Palette
 	layout         ui.Layout
@@ -680,6 +697,8 @@ func (g *Game) tickOnce() {
 		// pathfind.FindLandPathForFaction. opposingBuildingsFor still
 		// supplies the enemy's buildings separately for targeting.
 		soldierResult := g.soldiers.Tick(g.grid, g.buildings, g.opposingBuildingsFor(g.soldiers), g.opposingSoldiersFor(g.soldiers), g.opposingIntruderTargetsForSoldiers(g.soldiers))
+		g.recordLastAttacker(0, soldierResult.KillOwners)
+		g.recordLastAttacker(0, sentryResult.KillOwners)
 		g.pop.Deaths += serfResult.Deaths + villagerDeaths + sentryResult.Deaths + soldierResult.Deaths
 		g.pop.UnitsDismissed += serfResult.Dismissed
 		// Real cross-faction kills/building destructions -- see
@@ -3226,23 +3245,62 @@ func (g *Game) checkAIFactionDefeats() {
 			continue
 		}
 		g.aiDefeatedAnnounced[f.owner] = true
-		// f.logi.Warehouse itself is never nil (every faction starts with
-		// one) and, though pruneDestroyedBuildings has by now removed it
-		// from g.buildings, the struct itself is untouched -- its X/Y
-		// still marks where this faction's territory was, the reference
-		// point nearestSurvivingFactionTo needs.
-		victor := g.nearestSurvivingFactionTo(f.logi.Warehouse.X, f.logi.Warehouse.Y, f.owner)
+		victor := g.creditFactionDefeat(f.owner)
 		g.queueAdvisorTip(advisor.Tip{Kind: advisor.KindFactionDefeated, DefeatedOwner: f.owner, VictorOwner: victor})
 	}
+}
+
+// recordLastAttacker updates lastAttackerOwner for every entry in
+// defenderOwners (one per real kill this tick -- see soldier.TickResult/
+// sentry.TickResult's own KillOwners) to credit attackerOwner. Called
+// once per faction's own combat tick (the player's in Update, each AI's
+// in tickAIFaction), for both its soldiers' and its sentries' results.
+func (g *Game) recordLastAttacker(attackerOwner int, defenderOwners []int) {
+	if len(defenderOwners) == 0 {
+		return
+	}
+	if g.lastAttackerOwner == nil {
+		g.lastAttackerOwner = make(map[int]int)
+	}
+	for _, defender := range defenderOwners {
+		g.lastAttackerOwner[defender] = attackerOwner
+	}
+}
+
+// creditFactionDefeat decides who gets credit for defeating owner --
+// whoever recordLastAttacker most recently logged a real kill against
+// them for, if any, per the user's own explicit request ("измени
+// механику кто кого разгромил: разгромил не тот кто ближе, а тот, кто
+// нанес последний урон после которого противника не стало"). Falls back
+// to nearestSurvivingFactionTo's geography guess only when nothing was
+// ever recorded at all -- e.g. razeHopelessFactions auto-defeating a
+// faction that simply starved out economically, with no specific final
+// blow from anyone to credit.
+func (g *Game) creditFactionDefeat(owner int) int {
+	if g.lastAttackerOwner != nil {
+		if attacker, ok := g.lastAttackerOwner[owner]; ok {
+			return attacker
+		}
+	}
+	// f.logi.Warehouse itself is never nil (every faction starts with
+	// one) and, though pruneDestroyedBuildings has by now removed it
+	// from g.buildings, the struct itself is untouched -- its X/Y still
+	// marks where this faction's territory was, the reference point
+	// nearestSurvivingFactionTo needs.
+	f := g.factionByOwner(owner)
+	if f == nil {
+		return -1
+	}
+	return g.nearestSurvivingFactionTo(f.logi.Warehouse.X, f.logi.Warehouse.Y, owner)
 }
 
 // nearestSurvivingFactionTo heuristically credits a faction's elimination
 // to whichever other still-living faction (the player, Owner 0, included)
 // has the nearest warehouse to (x, y) -- typically the just-defeated
-// faction's own last warehouse position. Not a real kill-attribution
-// system (nothing tracks who actually landed the last hit on a faction as
-// a whole) -- just a reasonable "who was closest to have done this"
-// guess, good enough for a flavor notification. Returns -1 if no other
+// faction's own last warehouse position. Only ever used by
+// creditFactionDefeat as a last resort, when no real kill was ever
+// recorded against this faction at all (see recordLastAttacker) --
+// otherwise a real kill-attribution always wins. Returns -1 if no other
 // faction is currently alive (should be unreachable in practice: the
 // match isn't over, or checkAIFactionDefeats wouldn't still be running --
 // see Update's early return on g.duelResult -- so some other faction must
@@ -5177,10 +5235,8 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 	return nil
 }
 
-// pruneDestroyedBuildings removes any building (other than Road/
-// StoneWall/Gate, matching the "1×1 против ИИ" win condition's own
-// exclusion -- see factionDefeated) whose HP has been brought to 0
-// through combat. Applies in every mode, not just duels: previously
+// pruneDestroyedBuildings removes any building whose HP has been brought
+// to 0 through combat. Applies in every mode, not just duels: previously
 // nothing in this game ever actually removed a building at 0 HP (only
 // the repairable-damage path existed), which is otherwise harmless in
 // the ordinary single-player game but would have made the "все здания
@@ -5190,6 +5246,25 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 // NewConstructionSite, the duel map's starting buildings, roads -- see
 // duel.go's comment on that), so this can never misfire on one of those.
 //
+// Road alone is exempted regardless of HP -- it is never a combat
+// target at all (opposingBuildingsFor/ownedBuildings always exclude
+// Kind==Road), so its HP never legitimately reaches 0 through play; the
+// exemption is only a defensive guard against a save/legacy tile with an
+// unset HP field. StoneWall and Gate are NOT exempted, despite
+// factionDefeated/the win condition also excluding them from counting
+// as "real" buildings -- that is a separate concern (a pile of wall
+// rubble shouldn't keep a faction "alive"), not a reason to leave an
+// actually-destroyed wall segment sitting on the map forever. A real
+// bug found from an actual playtest report ("это чужая стена с чужими
+// воротами, я должен иметь возможность её уничтожить"): before this,
+// EVERY StoneWall/Gate was covered by the same blanket exemption as
+// Road, so a wall combat had already reduced to 0 HP simply never
+// disappeared -- permanently blocking movement through that tile (see
+// pathfind's occupancy checks, which never look at HP either) while
+// also becoming permanently unattackable (opposingBuildingAt skips any
+// HP<=0 candidate) -- an unbreachable, unremovable ghost exactly where
+// the player had just finished breaking through.
+//
 // Natural resource nodes (Tree/Fish/StoneDeposit/CoalDeposit/
 // GoldOreDeposit/IronOreDeposit) are also represented as *building.
 // Building for convenience, but were NEVER given a real HP value --
@@ -5197,8 +5272,7 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 // removeDeposit), not combat. A real bug found by simulating the duel
 // map: without this exemption, every tree/fish/deposit on the whole map
 // (615 of 619 starting buildings) had HP==0 and was wiped out on the
-// very first tick this function ever ran. They're exempted here exactly
-// like Road/StoneWall/Gate, which never disappear at HP<=0 either.
+// very first tick this function ever ran.
 // razeHopelessFactions auto-defeats an AI faction that has fallen into a
 // state it can structurally never recover from on its own: zero living
 // units of any profession AND less gold banked than a single hire costs.
@@ -5220,6 +5294,19 @@ func (g *Game) hoveredOrSelectedWatchTower(tx, ty int) *building.Building {
 // path verbatim, instead of a second, parallel removal path -- and
 // leaves checkAIFactionDefeats to notice and announce the elimination
 // exactly as it already does for a combat kill.
+//
+// StoneWall/Gate are razed too, not just "real" buildings -- a
+// follow-up to the same report, once the player found exactly this
+// leftover scenario in play ("у стен должен быть хозяин... после того
+// как противник уничтожен - его стены также уничтожаются автоматически
+// если у него нет возможности восстановиться"): a hopeless faction's
+// own fortifications are exactly as abandoned as everything else it
+// owned, and leaving them standing was what originally let a wall end
+// up belonging to a faction with no g.ais entry at all (see
+// nearestAnyBuildingOwnedBy's own doc comment on the reload-side half of
+// that same bug). Road is still exempt -- it stays shared, neutral
+// infrastructure regardless of whose territory it was originally built
+// in.
 func (g *Game) razeHopelessFactions() {
 	for _, f := range g.ais {
 		if g.factionDefeated(f.owner) {
@@ -5229,11 +5316,7 @@ func (g *Game) razeHopelessFactions() {
 			continue
 		}
 		for _, b := range g.buildings {
-			if b.Owner != f.owner || isNaturalResourceKind(b.Kind) {
-				continue
-			}
-			switch b.Kind {
-			case building.Road, building.StoneWall, building.Gate:
+			if b.Owner != f.owner || isNaturalResourceKind(b.Kind) || b.Kind == building.Road {
 				continue
 			}
 			b.HP = 0
@@ -5246,8 +5329,7 @@ func (g *Game) pruneDestroyedBuildings() {
 	changed := false
 	var lostLastWarehouseOwners []int
 	for _, b := range g.buildings {
-		switch b.Kind {
-		case building.Road, building.StoneWall, building.Gate:
+		if b.Kind == building.Road {
 			alive = append(alive, b)
 			continue
 		}

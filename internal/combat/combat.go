@@ -66,4 +66,11 @@ type IntruderTarget struct {
 	X, Y  int
 	Alive func() bool
 	Kill  func()
+
+	// Owner is the faction this unit belongs to -- set by whichever
+	// cmd/game helper builds the target list (see intruderTargetsFrom),
+	// which already knows which faction it's reading from. Lets a
+	// killing blow be credited to the right attacker (see cmd/game's
+	// lastAttackerOwner) instead of only ever guessed at by geography.
+	Owner int
 }

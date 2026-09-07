@@ -307,6 +307,13 @@ func (c *Controller) MaxWaitingHunger() int {
 type TickResult struct {
 	Deaths, Kills int
 	KillPositions []pathfind.Point
+
+	// KillOwners is KillPositions' own parallel slice (same order, same
+	// length) naming which faction owned whatever the stone just killed
+	// -- see cmd/game's lastAttackerOwner, which credits a faction's
+	// eventual defeat to whoever actually landed the last real blow on
+	// it instead of guessing by geography.
+	KillOwners []int
 }
 
 // Tick advances hunger, movement and combat for every Sentry. Call once
@@ -324,6 +331,7 @@ func (c *Controller) Tick(buildings []*building.Building, intruders []IntruderTa
 				// The stone has visually arrived -- this is when it
 				// actually kills, not when it was thrown. See
 				// shotPendingIntruder's doc comment.
+				result.KillOwners = append(result.KillOwners, s.shotPendingIntruder.Owner)
 				s.shotPendingIntruder.Kill()
 				s.shotPendingIntruder = nil
 				result.Kills++
