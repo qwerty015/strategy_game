@@ -28,9 +28,12 @@ const (
 	// WatchTowerRange is how far (in tiles, a plain square radius -- not
 	// line of sight) a Sentry can hit a target from its tower. Per the
 	// user's explicit request this ignores walls in between: "можно
-	// стрелять через стену". Lowered from the original 5 to 2 -- the
-	// user tried 5 in-game and found it too far.
-	WatchTowerRange = 2
+	// стрелять через стену". Was lowered from the original 5 to 2 (the
+	// user tried 5 in-game and found it too far), then raised to 3 to
+	// match soldier.ArcherRange exactly -- the user's own explicit
+	// combat rebalance request ("приравнять дальность действия лучников
+	// и сторожевой башни... пусть это будет 3 клетки вокруг").
+	WatchTowerRange = 3
 
 	// ShotCooldownTicks paces fire so a Sentry can't empty its tower's
 	// whole stone buffer in an instant once an enemy is in range.
@@ -383,7 +386,7 @@ func (c *Controller) tickWorking(s *Sentry, buildings []*building.Building, intr
 //
 // Per the user's explicit request ("1 попадание камня в противника его
 // убивает"), a hit is a kill -- unlike a building, which still takes
-// combat.DamagePerHit (10%) per hit from the same stone. A stone sling is
+// combat.DamagePerHit (5%) per hit from the same stone. A stone sling is
 // lethal to a person but only chips a wall. The kill itself, though,
 // lands only once the stone visually arrives (see shotPendingIntruder and
 // Controller.Tick), not the instant it's thrown here -- a real bug the

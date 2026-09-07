@@ -374,14 +374,21 @@ func intruderTargetsFrom(
 		out = append(out, sentry.IntruderTarget{
 			X: sd.X, Y: sd.Y,
 			Alive: sd.Alive,
-			// Soldier has no Kill() of its own (soldiers die from combat.
-			// ApplyDamage reducing HP, not a single external kill call --
-			// see combat.UnitDamagePerHit) -- a sling stone lethal to an
-			// unarmed worker in one hit is not obviously also a clean
-			// one-hit kill against an armoured Archer/Swordsman, so this
-			// applies the same per-hit damage a rival soldier's own
-			// factionTarget.hit() would, not an instant kill.
-			Kill:  func() { sd.HP = combat.ApplyDamage(sd.HP, combat.UnitDamagePerHit) },
+			// Instant kill regardless of the soldier's current HP -- the
+			// user's own explicit combat rebalance request ("удар башни
+			// по юниту - 100% хп"), same one-hit rule a WatchTower's
+			// stone already applies to every unarmed intruder via its
+			// own Kill(). Safe to make this unconditional even though
+			// this same wrapped IntruderTarget list is also handed to a
+			// rival Soldier's own opposingIntruders (see
+			// opposingIntruderTargetsForSoldiers): a live rival soldier
+			// always also appears in that Soldier's direct
+			// opposingSoldiers list at the identical tile distance, and
+			// nearestFactionTarget's tie-break (strictly-less, first
+			// match wins) always prefers that direct entry -- soldier-vs-
+			// soldier combat never actually reaches this Kill closure in
+			// practice, only a WatchTower's engage() does.
+			Kill:  func() { sd.HP = 0 },
 			Owner: owner,
 		})
 	}

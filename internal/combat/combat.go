@@ -13,17 +13,19 @@ package combat
 const MaxHP = 100
 
 // DamagePerHit is how much HP a single hit removes from a *structure*
-// (building or wall) -- the user's explicit "один удар мечом(луком) -
-// 10%" rule.
-const DamagePerHit = 10
+// (building or wall) -- rebalanced from the original 10% to 5% per the
+// user's own explicit request ("1 удар юнита в здание снимает... 5%
+// хп"), twenty hits to bring one down instead of ten.
+const DamagePerHit = 5
 
-// UnitDamagePerHit is how much HP a single hit removes from a *unit* --
-// the user's explicit "один удар мечом/стрелой лука - 50% ХП юниту" rule
-// (two hits kill), used by package soldier's Archer/Swordsman against the
-// debug Enemy. Deliberately not used the other way around yet: the debug
-// Enemy still only attacks buildings (DamagePerHit), not soldiers -- see
-// AGENTS.md's notes on this round's scope.
-const UnitDamagePerHit = 50
+// UnitDamagePerHit is how much HP a single hit removes from a *unit* in
+// direct soldier-vs-soldier combat -- rebalanced from the original 50%
+// (two hits kill) to 20% per the user's own explicit request ("удар
+// одним юнитом другого - 20% хп"), five hits to kill instead of two. Not
+// used for a WatchTower's own shot against a unit -- see cmd/game's
+// intruderTargetsFrom, which always kills outright per the user's
+// separate "удар башни по юниту - 100% хп" rule.
+const UnitDamagePerHit = 20
 
 // ApplyDamage subtracts amount from hp, clamped to [0, MaxHP].
 func ApplyDamage(hp, amount int) int {

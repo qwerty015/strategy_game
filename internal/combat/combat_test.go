@@ -11,31 +11,35 @@ func TestApplyDamageClampsAtZero(t *testing.T) {
 	}
 }
 
-func TestTenHitsDestroyAFullHealthBuilding(t *testing.T) {
+// TestTwentyHitsDestroyAFullHealthBuilding covers the user's own combat
+// rebalance request ("1 удар юнита в здание снимает... 5% хп"): twenty
+// hits at 5% each destroy a full-health building.
+func TestTwentyHitsDestroyAFullHealthBuilding(t *testing.T) {
 	hp := MaxHP
-	for i := range 10 {
+	for i := range 20 {
 		if IsDestroyed(hp) {
-			t.Fatalf("destroyed after only %d hits, want exactly 10", i)
+			t.Fatalf("destroyed after only %d hits, want exactly 20", i)
 		}
 		hp = ApplyDamage(hp, DamagePerHit)
 	}
 	if !IsDestroyed(hp) {
-		t.Fatalf("hp = %d after 10 hits, want destroyed", hp)
+		t.Fatalf("hp = %d after 20 hits, want destroyed", hp)
 	}
 }
 
-// TestTwoHitsKillAFullHealthUnit covers the user's explicit unit-damage
-// rule (50% per hit, unlike a structure's 10%): two hits kill.
-func TestTwoHitsKillAFullHealthUnit(t *testing.T) {
+// TestFiveHitsKillAFullHealthUnit covers the user's own combat rebalance
+// request ("удар одним юнитом другого - 20% хп"): five hits at 20% each
+// kill a full-health unit.
+func TestFiveHitsKillAFullHealthUnit(t *testing.T) {
 	hp := MaxHP
-	for i := range 2 {
+	for i := range 5 {
 		if IsDestroyed(hp) {
-			t.Fatalf("destroyed after only %d hits, want exactly 2", i)
+			t.Fatalf("destroyed after only %d hits, want exactly 5", i)
 		}
 		hp = ApplyDamage(hp, UnitDamagePerHit)
 	}
 	if !IsDestroyed(hp) {
-		t.Fatalf("hp = %d after 2 hits, want destroyed", hp)
+		t.Fatalf("hp = %d after 5 hits, want destroyed", hp)
 	}
 }
 

@@ -45,16 +45,16 @@ const (
 	ArcherRange    = 3
 	SwordsmanRange = 1
 
-	// ArcherCooldownTicks/SwordsmanCooldownTicks pace attacks -- zero, per
-	// the user's explicit combat-rebalance request ("за 1 тик юнит
-	// наносит 1 удар. 2 удара == 2 тика"): a soldier in range lands a hit
-	// every single simulation tick, so two hits (combat.UnitDamagePerHit
-	// each) kill in exactly two ticks. Previously 20/15 (paced like
-	// sentry.ShotCooldownTicks); kept as named constants rather than
-	// inlined zeros so cooldownTicks/the doc comments explaining the
-	// rule stay in one place if it's ever tuned again.
-	ArcherCooldownTicks    = 0
-	SwordsmanCooldownTicks = 0
+	// ArcherCooldownTicks/SwordsmanCooldownTicks pace attacks -- 1, per
+	// the user's own explicit combat-rebalance request ("интенсивность
+	// ударов юнитов - 1 удар в 2 тика"). tickFactionCombat's own cooldown
+	// bookkeeping (set right after a hit, counted down before the next
+	// one's allowed) makes the actual gap between hits cooldownTicks+1
+	// simulation ticks -- 1 here means a hit, then one skipped tick,
+	// then the next hit, exactly the requested 2-tick interval. Was 0
+	// (a hit every single tick, no gap at all) before this.
+	ArcherCooldownTicks    = 1
+	SwordsmanCooldownTicks = 1
 )
 
 // FactionEngageRange mirrors EngageRange for cross-faction auto-combat --
@@ -122,9 +122,9 @@ func (t factionTarget) pos() (int, int) {
 	}
 }
 
-// hit applies one blow: combat.DamagePerHit (10%, the same rate every
+// hit applies one blow: combat.DamagePerHit (5%, the same rate every
 // other structure-damaging attack in the game uses) against a building,
-// combat.UnitDamagePerHit (50%, two hits kill) against a rival soldier --
+// combat.UnitDamagePerHit (20%, five hits kill) against a rival soldier --
 // matching the unit-damage rule already established for every other
 // soldier-vs-unit fight in this package. An intruder (any other opposing
 // unit) is a one-hit kill via its own Kill callback, the same convention
