@@ -913,18 +913,36 @@ func (g *Game) aiHasBuildingNear(f *faction, kind building.Kind, x, y, radius in
 // gets there first wins the tile race, the same as two players trying to
 // build on the same free tile would) already sits on the line.
 func (g *Game) aiFortifyIsthmus(f *faction, rect image.Rectangle) {
-	horizontal := rect.Dx() >= rect.Dy()
+	// The wall must span the crossing's SHORT axis in full, at one
+	// fixed point along its LONG axis -- the long axis is the
+	// direction someone actually walks THROUGH the crossing (its
+	// width, duelWaterStripWidth), and the short axis is how many
+	// parallel rows/columns are available to walk through side by side
+	// (duelIsthmusWidth) -- every one of those must be blocked, or
+	// someone just steps around the wall through a row/column it
+	// doesn't occupy. A real bug found from an actual playtest
+	// screenshot ("боты строят стену вертикально там где нужно
+	// горизонтально и наоборот"): this used to build ALONG the long
+	// axis instead (a wall parallel to the direction of travel, which
+	// blocks nothing at all -- every one of the short axis's other
+	// rows/columns stayed wide open beside it).
 	var from, to building.Point
-	if horizontal {
-		midY := rect.Min.Y + rect.Dy()/2
-		from = building.Point{X: rect.Min.X, Y: midY}
-		to = building.Point{X: rect.Max.X - 1, Y: midY}
-	} else {
+	var horizontalLine bool
+	if rect.Dx() >= rect.Dy() {
+		// Wide crossing (north/south, wide in X) -- the short axis is
+		// Y, so the wall runs vertically (fixed X, Y sweeps the rect).
 		midX := rect.Min.X + rect.Dx()/2
 		from = building.Point{X: midX, Y: rect.Min.Y}
 		to = building.Point{X: midX, Y: rect.Max.Y - 1}
+	} else {
+		// Tall crossing (west/east, tall in Y) -- the short axis is X,
+		// so the wall runs horizontally (fixed Y, X sweeps the rect).
+		midY := rect.Min.Y + rect.Dy()/2
+		from = building.Point{X: rect.Min.X, Y: midY}
+		to = building.Point{X: rect.Max.X - 1, Y: midY}
+		horizontalLine = true
 	}
-	path := wallPath(from, to, horizontal)
+	path := wallPath(from, to, horizontalLine)
 	if len(path) == 0 {
 		return
 	}

@@ -104,7 +104,14 @@ func TestAIConsiderAttack_KeepsHuntingAfterTheWarehouseFalls(t *testing.T) {
 		t.Fatal("test setup: opponent's warehouse should be gone")
 	}
 
-	f.brain.tick(g, f, g.grid)
+	// aiConsiderAttack directly, not the full f.brain.tick -- tick also
+	// runs aiBuildDefenses now, which (correctly) walls off this same
+	// faction's own isthmus crossings the instant it places them, even
+	// before a Gate exists to let its own soldiers back out. These
+	// tests are specifically about aiConsiderAttack's own targeting/
+	// garrison logic, not an interaction with a wall built the very
+	// same tick.
+	f.brain.aiConsiderAttack(g, f)
 
 	for _, s := range f.soldiers.Soldiers {
 		path := s.RemainingPath()
@@ -134,7 +141,14 @@ func TestAIConsiderAttack_WithholdsGarrisonBeforeMarching(t *testing.T) {
 		f.soldiers.Spawn(soldier.Archer, f.logi.Warehouse.X, f.logi.Warehouse.Y)
 	}
 
-	f.brain.tick(g, f, g.grid)
+	// aiConsiderAttack directly, not the full f.brain.tick -- tick also
+	// runs aiBuildDefenses now, which (correctly) walls off this same
+	// faction's own isthmus crossings the instant it places them, even
+	// before a Gate exists to let its own soldiers back out. These
+	// tests are specifically about aiConsiderAttack's own targeting/
+	// garrison logic, not an interaction with a wall built the very
+	// same tick.
+	f.brain.aiConsiderAttack(g, f)
 
 	for _, s := range f.soldiers.Soldiers {
 		if len(s.RemainingPath()) != 0 || s.HasFactionTarget() {
@@ -155,7 +169,14 @@ func TestAIConsiderAttack_MarchesOnlyTheSurplusAboveGarrison(t *testing.T) {
 		f.soldiers.Spawn(soldier.Archer, f.logi.Warehouse.X, f.logi.Warehouse.Y)
 	}
 
-	f.brain.tick(g, f, g.grid)
+	// aiConsiderAttack directly, not the full f.brain.tick -- tick also
+	// runs aiBuildDefenses now, which (correctly) walls off this same
+	// faction's own isthmus crossings the instant it places them, even
+	// before a Gate exists to let its own soldiers back out. These
+	// tests are specifically about aiConsiderAttack's own targeting/
+	// garrison logic, not an interaction with a wall built the very
+	// same tick.
+	f.brain.aiConsiderAttack(g, f)
 
 	marching := 0
 	for _, s := range f.soldiers.Soldiers {
@@ -235,6 +256,43 @@ func TestAiBuildDefenses_FortifiesBothOfItsOwnCrossings(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("crossing %v was not fortified with a wall", rect)
+		}
+	}
+}
+
+// TestAiFortifyIsthmus_WallSpansTheCrossingsShortAxis is the regression
+// test for a real playtest report ("боты строят стену вертикально там
+// где нужно горизонтально и наоборот"): the wall must fully span the
+// crossing's SHORT axis (duelIsthmusWidth's own dry-row/column count) at
+// one fixed point along the LONG axis (duelWaterStripWidth, the
+// direction someone actually walks through it) -- a wall running the
+// other way instead sits PARALLEL to the direction of travel and blocks
+// nothing at all, since every other row/column of the short axis stays
+// wide open right beside it. TestAiBuildDefenses_FortifiesBothOfItsOwnCrossings
+// above only checked "a wall exists somewhere in the rect", which the
+// original, backwards orientation also satisfied -- too weak to have
+// caught this.
+func TestAiFortifyIsthmus_WallSpansTheCrossingsShortAxis(t *testing.T) {
+	g := newDuelGame([]aiDifficulty{AIEasy})
+	f := g.ais[0]
+	q := quadrantAssignmentOrder[f.owner]
+	for _, idx := range duelIsthmusIndicesFor(q) {
+		rect := g.duelIsthmuses[idx]
+		g.aiFortifyIsthmus(f, rect)
+
+		xs, ys := map[int]bool{}, map[int]bool{}
+		for _, b := range g.buildings {
+			if b.Owner == f.owner && b.Kind == building.StoneWall && (image.Point{X: b.X, Y: b.Y}).In(rect) {
+				xs[b.X] = true
+				ys[b.Y] = true
+			}
+		}
+		wantSpan, gotSpan, axis := rect.Dy(), len(ys), "Y"
+		if rect.Dx() < rect.Dy() {
+			wantSpan, gotSpan, axis = rect.Dx(), len(xs), "X"
+		}
+		if gotSpan != wantSpan {
+			t.Fatalf("crossing %v: wall covers %d distinct %s positions, want %d (the full short axis) -- it must block every row/column of the crossing, not run parallel to the direction of travel through it", rect, gotSpan, axis, wantSpan)
 		}
 	}
 }
