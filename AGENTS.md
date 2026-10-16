@@ -5254,7 +5254,7 @@ soldier_test.go`: `TestFeed_RestoresHPToFull`. `cmd/game/main_test.go`:
 
 По запросу пользователя ("перенести в Blender, полноценное 3D, анимации") —
 арт делается **скриптами на Python в Blender**, без ручного моделирования.
-Blender: `M:lender-5.2.3-candidate+...lender.exe` (портативный, без установки).
+Blender: `M:\blender-5.2.3-candidate+...\blender.exe` (портативный, без установки) — полный путь в `new_gen_game/run.ps1`.
 Подробности и соглашения — `new_gen_game/README.md`; кратко:
 
 - `blender/lib.py` (сцена, свет, камера 35° с +X/−Y, материалы, `Builder`,
