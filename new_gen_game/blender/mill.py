@@ -46,7 +46,7 @@ M = {
         [(0.0, (0.02, 0.024, 0.04)), (0.5, (0.045, 0.052, 0.08)), (0.66, (0.05, 0.056, 0.07)), (0.74, (0.08, 0.11, 0.02))],
         scale=2.2, rough=0.55, bump=0.1,
     ),
-    "canvas": lib.mat_noise("canvas", [(0.3, (0.42, 0.27, 0.12)), (0.7, (0.62, 0.44, 0.22))], scale=25, rough=0.95, bump=0.15),
+    "canvas": lib.mat_noise("canvas", [(0.3, (0.62, 0.50, 0.32)), (0.7, (0.80, 0.70, 0.50))], scale=25, rough=0.95, bump=0.15),
     "iron": lib.mat_flat("iron", (0.04, 0.04, 0.045), rough=0.45, metallic=0.85),
     "dirt": lib.mat_noise("dirt", [(0.3, (0.22, 0.13, 0.05)), (0.72, (0.42, 0.28, 0.12))], scale=3.5, rough=1.0, bump=0.3),
     "pebble": lib.mat_noise("pebble", [(0.3, (0.17, 0.155, 0.13)), (0.7, (0.33, 0.30, 0.25))], scale=12, rough=0.9, bump=0.2),
@@ -72,8 +72,8 @@ FACE = math.radians(-30)          # sails/shaft face this way (camera sits at -4
 D = Vector((math.cos(FACE), math.sin(FACE), 0))
 TILT = math.radians(6)
 AXIS = Vector((D.x * math.cos(TILT), D.y * math.cos(TILT), math.sin(TILT)))
-HUB = Vector((0, 0, CAP0 + 0.28)) + AXIS * 1.28
-SAIL_LEN = 1.85
+HUB = Vector((0, 0, CAP0 + 0.28)) + AXIS * 1.42
+SAIL_LEN = 2.2
 DOOR_ANG = math.radians(-50)      # door faces the camera
 
 
@@ -111,11 +111,11 @@ WINDOWS = [(math.radians(-10), 1.62, 1.98, 0.17), (math.radians(-85), 2.18, 2.5,
 
 # ------------------------------------------------------------- ground
 GC = Vector((0.15, -0.25, 0))
-b.blob_disc("dirt", 2.45, 0.04)
+b.blob_disc("dirt", 2.1, 0.04)
 for v in b.bms["dirt"].verts:
     v.co += GC
 for _ in range(80):
-    a, r = rng.uniform(0, math.tau), rng.uniform(1.2, 2.3)
+    a, r = rng.uniform(0, math.tau), rng.uniform(1.2, 2.0)
     x, y = GC.x + math.cos(a) * r, GC.y + math.sin(a) * r
     b.sphere("pebble", (x, y, 0.0), rng.uniform(0.03, 0.07), scale=(1.2, 1, 0.45), segments=8, tint=props._shade(rng, 0.75, 1.25))
 # path of flagstones from the door outward
@@ -130,7 +130,7 @@ for row in range(6):
         b.box("pebble", (p.x, p.y, 0.012), (0.14 * s, 0.13 * s, 0.04), Matrix.Rotation(DOOR_ANG + rng.uniform(-0.3, 0.3), 3, "Z"),
               tint=props._shade(rng, 0.8, 1.2))
 for _ in range(130):
-    a, r = rng.uniform(0, math.tau), rng.uniform(1.2, 2.45)
+    a, r = rng.uniform(0, math.tau), rng.uniform(1.2, 2.1)
     x, y = GC.x + math.cos(a) * r, GC.y + math.sin(a) * r
     if abs((a - DOOR_ANG + math.pi) % math.tau - math.pi) < 0.35 and r < 2.0:
         continue
@@ -272,9 +272,8 @@ ms_c = ms_dir * (BASE_R + 0.12) + Vector((0, 0, 0.33))
 ms_rot = ms_dir.to_track_quat("Z", "Y").to_matrix() @ Matrix.Rotation(math.radians(-12), 3, "X")
 b.cylinder("block", ms_c, 0.33, 0.33, 0.1, segments=28, rot=ms_rot, tint=(1.15, 1.12, 1.08))
 b.cylinder("mortar", ms_c + ms_dir * 0.052, 0.06, 0.06, 0.012, segments=16, rot=ms_rot)
-props.cart(b, tuple(door_n * 1.95 + side * 0.95), yaw=math.atan2(-side.y, -side.x) + 0.4)
+props.cart(b, tuple(door_n * 1.6 + side * 0.85), yaw=math.atan2(-side.y, -side.x) + 0.4)
 props.barrel(b, *(door_n * (BASE_R + 0.25) - side * 0.45)[:2])
-props.fence(b, tuple(door_n * 0.6 + side * -1.55), tuple(door_n * 1.9 + side * -1.45))
 
 # ------------------------------------------------------------- sails (separate rotating rig)
 rig = bpy.data.objects.new("sail_axis", None)
