@@ -508,3 +508,108 @@ class Builder:
             objs.append(obj)
         self.bms.clear()
         return objs
+
+
+# ---------------------------------------------------------------- smoke
+
+
+def smoke_material(color=(0.62, 0.62, 0.64), density=9.0, name="smoke"):
+    """Soft volumetric puff: noise inside a sphere, fading toward the rim.
+
+    The object's colour alpha (obj.color[3]) scales the density, so each puff
+    fades in/out by keyframing that one value.
+    """
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    vol = nt.nodes.new("ShaderNodeVolumePrincipled")
+    vol.inputs["Color"].default_value = (*color, 1)
+    vol.inputs["Anisotropy"].default_value = 0.3
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    info = nt.nodes.new("ShaderNodeObjectInfo")
+    length = nt.nodes.new("ShaderNodeVectorMath")
+    length.operation = "LENGTH"
+    nt.links.new(tc.outputs["Object"], length.inputs[0])
+    falloff = nt.nodes.new("ShaderNodeMapRange")
+    falloff.inputs["From Min"].default_value = 0.35
+    falloff.inputs["From Max"].default_value = 1.0
+    falloff.inputs["To Min"].default_value = 1.0
+    falloff.inputs["To Max"].default_value = 0.0
+    nt.links.new(length.outputs["Value"], falloff.inputs["Value"])
+    noise = nt.nodes.new("ShaderNodeTexNoise")
+    noise.noise_dimensions = "4D"
+    noise.inputs["Scale"].default_value = 2.2
+    noise.inputs["Detail"].default_value = 4.0
+    nt.links.new(tc.outputs["Object"], noise.inputs["Vector"])
+    w = nt.nodes.new("ShaderNodeMath")
+    w.operation = "MULTIPLY"
+    w.inputs[1].default_value = 37.0
+    nt.links.new(info.outputs["Random"], w.inputs[0])
+    nt.links.new(w.outputs["Value"], noise.inputs["W"])
+    shape = nt.nodes.new("ShaderNodeMapRange")       # puffy, not foggy
+    shape.inputs["From Min"].default_value = 0.3
+    shape.inputs["From Max"].default_value = 0.6
+    nt.links.new(noise.outputs["Fac"], shape.inputs["Value"])
+    m1 = nt.nodes.new("ShaderNodeMath")
+    m1.operation = "MULTIPLY"
+    nt.links.new(falloff.outputs["Result"], m1.inputs[0])
+    nt.links.new(shape.outputs["Result"], m1.inputs[1])
+    m2 = nt.nodes.new("ShaderNodeMath")
+    m2.operation = "MULTIPLY"
+    nt.links.new(m1.outputs["Value"], m2.inputs[0])
+    nt.links.new(info.outputs["Alpha"], m2.inputs[1])
+    m3 = nt.nodes.new("ShaderNodeMath")
+    m3.operation = "MULTIPLY"
+    m3.inputs[1].default_value = density
+    nt.links.new(m2.outputs["Value"], m3.inputs[0])
+    nt.links.new(m3.outputs["Value"], vol.inputs["Density"])
+    nt.links.new(vol.outputs[0], out.inputs["Volume"])
+    return mat
+
+
+def add_smoke(origin, frames, puffs=7, rise=1.7, drift=(0.45, 0.2), r0=0.1, r1=0.38, start=1, density=9.0,
+              color=(0.62, 0.62, 0.64)):
+    """Looping chimney smoke keyframed over `frames` frames from `start`.
+
+    Every puff walks the same path with an evenly spaced phase, so frame
+    start+frames equals frame start: the cycle loops without a seam.
+    Returns the puff objects (hide/holdout them per render pass).
+    """
+    mat = smoke_material(color, density)
+    origin = Vector(origin)
+    objs = []
+    for i in range(puffs):
+        mesh = bpy.data.meshes.new(f"smoke_{i}")
+        bm = bmesh.new()
+        bmesh.ops.create_icosphere(bm, subdivisions=3, radius=1.0)
+        bm.to_mesh(mesh)
+        bm.free()
+        obj = bpy.data.objects.new(f"smoke_{i}", mesh)
+        bpy.context.scene.collection.objects.link(obj)
+        obj.data.materials.append(mat)
+        for f in range(frames + 1):
+            t = ((f / frames) + i / puffs) % 1.0
+            ease = t ** 0.85
+            sway = 0.06 * math.sin(t * math.tau * 1.3 + i)
+            obj.location = origin + Vector((drift[0] * t ** 1.4 + sway, drift[1] * t ** 1.4, rise * ease))
+            r = r0 + (r1 - r0) * t ** 0.7
+            obj.scale = (r, r, r * 0.9)
+            obj.rotation_euler = (0, 0, i * 1.7 + t * 1.2)
+            fade = min(1.0, t / 0.12) * (1.0 - t) ** 1.6
+            obj.color = (1, 1, 1, fade)
+            for path in ("location", "scale", "rotation_euler", "color"):
+                obj.keyframe_insert(path, frame=start + f)
+        objs.append(obj)
+    return objs
+
+
+def set_holdout(objs, value):
+    for o in objs:
+        o.is_holdout = value
+
+
+def hide(objs, value):
+    for o in objs:
+        o.hide_render = value
