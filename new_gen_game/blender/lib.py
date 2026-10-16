@@ -57,7 +57,7 @@ def setup_render(resolution=1024, samples=192):
     # Standard keeps the saturated, "painted" colours game art wants; AgX
     # desaturates toward photographic and made the first test look washed out.
     scene.view_settings.view_transform = "Standard"
-    scene.view_settings.exposure = -0.25
+    scene.view_settings.exposure = 0.1
 
 
 def setup_world(color=(0.55, 0.62, 0.78), strength=0.55):
@@ -114,6 +114,99 @@ def frame_camera(cam, margin=1.04):
     cam.data.ortho_scale = size
     cam.data.shift_x = (max(xs) + min(xs)) / 2 / size
     cam.data.shift_y = (max(ys) + min(ys)) / 2 / size
+
+
+def enable_outline(thickness=1.3, color=(0.05, 0.03, 0.018), alpha=0.8, crease_deg=140):
+    """Freestyle ink lines: ties the 3D render to the hand-drawn look of the game."""
+    scene = bpy.context.scene
+    try:
+        scene.render.use_freestyle = True
+        scene.render.line_thickness_mode = "ABSOLUTE"
+        scene.render.line_thickness = thickness
+        vl = bpy.context.view_layer
+        vl.use_freestyle = True
+        fs = vl.freestyle_settings
+        fs.crease_angle = math.radians(crease_deg)
+        ls = fs.linesets[0] if len(fs.linesets) else fs.linesets.new("outline")
+        ls.select_by_visibility = True
+        ls.visibility = "VISIBLE"
+        ls.select_by_edge_types = True
+        ls.select_silhouette = True
+        ls.select_border = True
+        ls.select_crease = True
+        if ls.linestyle is None:
+            ls.linestyle = bpy.data.linestyles.new("ink")
+        st = ls.linestyle
+        st.color = color
+        st.alpha = alpha
+        st.thickness = thickness
+    except Exception as exc:  # Freestyle missing in this build: render without lines
+        print("[lib] outline disabled:", exc)
+
+
+def outline_material(color=(0.035, 0.02, 0.012), name="ink"):
+    """Inverted-hull ink: a flipped shell seen only past the silhouette.
+
+    Front-facing shell faces and every non-camera ray (shadows, bounces) see
+    a transparent surface, so the shell draws lines without casting shadows.
+    """
+    if name in bpy.data.materials:
+        return bpy.data.materials[name]
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    geo = nt.nodes.new("ShaderNodeNewGeometry")
+    lp = nt.nodes.new("ShaderNodeLightPath")
+    # Flipped shell: its far side faces the camera (Backfacing = 0) and only
+    # peeks out past the silhouette -- that is the line we keep.
+    front = nt.nodes.new("ShaderNodeMath")
+    front.operation = "SUBTRACT"
+    front.inputs[0].default_value = 1.0
+    nt.links.new(geo.outputs["Backfacing"], front.inputs[1])
+    mul = nt.nodes.new("ShaderNodeMath")
+    mul.operation = "MULTIPLY"
+    nt.links.new(front.outputs["Value"], mul.inputs[0])
+    nt.links.new(lp.outputs["Is Camera Ray"], mul.inputs[1])
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    nt.links.new(mul.outputs["Value"], mix.inputs["Fac"])
+    nt.links.new(nt.nodes.new("ShaderNodeBsdfTransparent").outputs[0], mix.inputs[1])
+    em = nt.nodes.new("ShaderNodeEmission")
+    em.inputs["Color"].default_value = (*color, 1)
+    nt.links.new(em.outputs[0], mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def shingles(b, key, eave_mid, up, n, half_len, length, sw=0.16, sl=0.21, step=0.11, lift=0.07, skip=None, tilt_deg=7):
+    """Overlapping rows of tiles on a roof plane.
+
+    eave_mid: middle of the eave line; up: unit vector eave->ridge; n: outward
+    normal; the row axis is up x n. `skip(center)` drops tiles that would poke
+    through something sitting on the roof (dormer, chimney).
+    """
+    up, n = Vector(up).normalized(), Vector(n).normalized()
+    xdir = up.cross(n)
+    base = Matrix((xdir, up, n)).transposed()
+    rng = b.rng
+    row = 0
+    while row * step + sl <= length + 0.03:
+        t = row * step + sl / 2
+        u = -half_len - (sw / 2 if row % 2 else 0)
+        while u < half_len:
+            left, right = max(u, -half_len), min(u + sw, half_len)
+            u += sw
+            if right - left < 0.04:
+                continue
+            c = Vector(eave_mid) + xdir * ((left + right) / 2 + rng.uniform(-0.008, 0.008)) + up * t + n * (lift + 0.004 * rng.random())
+            if skip and skip(c):
+                continue
+            r = base @ Matrix.Rotation(rng.uniform(-0.05, 0.05), 3, "Z") @ Matrix.Rotation(math.radians(-tilt_deg), 3, "X")
+            g = rng.uniform(0.68, 1.28)
+            b.box(key, c, (right - left - 0.012, sl, 0.03), r, tint=(g, g, g * rng.uniform(0.95, 1.08)))
+        row += 1
+    return base
 
 
 def save_outputs(models_dir, name):
@@ -372,7 +465,13 @@ class Builder:
 
     # -- output
 
-    def build(self, bevel=0.012, no_bevel=()):
+    def build(self, bevel=0.012, no_bevel=(), outline=0.0, no_outline=()):
+        """Turn the collected primitives into objects.
+
+        outline > 0 adds an inverted-hull ink line of that world-space width
+        around every part (see outline_material); keys in no_outline skip it.
+        """
+        ink = outline_material() if outline else None
         objs = []
         for key, bm in self.bms.items():
             mesh = bpy.data.meshes.new(key)
@@ -387,6 +486,14 @@ class Builder:
                 mod.segments = 2
                 mod.limit_method = "ANGLE"
                 mod.angle_limit = math.radians(40)
+            if ink and key not in no_outline:
+                obj.data.materials.append(ink)
+                mod = obj.modifiers.new("ink", "SOLIDIFY")
+                mod.thickness = outline
+                mod.offset = 1.0
+                mod.use_flip_normals = True
+                mod.use_rim = False
+                mod.material_offset = 1
             objs.append(obj)
         self.bms.clear()
         return objs
