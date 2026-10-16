@@ -215,11 +215,18 @@ func DrawBuildings(screen *ebiten.Image, grid *world.Grid, buildings []*building
 			drawBuildingBody(screen, b, assets.CarpentryWorkshop, sx, sy, tilePixels)
 
 		case building.Mill:
-			drawStandingAtScale(screen, assets.MillFrames[(animFrame/12)%len(assets.MillFrames)], sx, sy, visualBuildingHeight(b.Kind), tilePixels)
+			if visual, ok := assets.BuildingVisualFor(b.Kind); ok && len(visual.BodyFrames) > 0 {
+				drawBuildingBody(screen, b, assets.MillFrames[0], sx, sy, tilePixels)
+			} else {
+				drawStandingAtScale(screen, assets.MillFrames[(animFrame/12)%len(assets.MillFrames)], sx, sy, visualBuildingHeight(b.Kind), tilePixels)
+			}
 
 		case building.Bakery:
 			drawBuildingBody(screen, b, assets.Bakery, sx, sy, tilePixels)
-			drawFire(screen, sx+17*tilePixels/TileSize, sy+4*tilePixels/TileSize, tilePixels)
+			if visual, ok := assets.BuildingVisualFor(b.Kind); !ok || !visual.Native {
+				// Positioned for the legacy sprite's oven; new art has its own fire and smoke.
+				drawFire(screen, sx+17*tilePixels/TileSize, sy+4*tilePixels/TileSize, tilePixels)
+			}
 
 		case building.Warehouse:
 			drawBuildingBody(screen, b, assets.Warehouse, sx, sy, tilePixels)
@@ -432,9 +439,29 @@ func drawWalls(screen *ebiten.Image, buildings []*building.Building, cam *Camera
 // drawBuildingBody resolves a building's body from the art manifest. Existing
 // PNG exports remain fallbacks, while a future buildings/<id>/body.png is used
 // immediately without introducing a rendering switch case or changing saves.
+// Animation speed of native art, in render frames per animation frame: the
+// mill's 8 sail poses cover a quarter turn; smoke loops over 16 frames.
+// Smoke is phase-shifted per building so neighbouring chimneys don't puff
+// in lockstep.
+const (
+	bodyFrameTicks  = 5
+	smokeFrameTicks = 6
+)
+
 func drawBuildingBody(screen *ebiten.Image, b *building.Building, fallback *ebiten.Image, sx, sy, tilePixels float64) {
 	if visual, ok := assets.BuildingVisualFor(b.Kind); ok && visual.Body.Image != nil {
-		drawVisualLayerAtScale(screen, visual.Body, sx, sy, float64(building.Types[b.Kind].Footprint), tilePixels)
+		footprint := float64(building.Types[b.Kind].Footprint)
+		body := visual.Body
+		if n := len(visual.BodyFrames); n > 0 {
+			body.Image = visual.BodyFrames[(animFrame/bodyFrameTicks)%n]
+		}
+		drawVisualLayerAtScale(screen, body, sx, sy, footprint, tilePixels)
+		if n := len(visual.Smoke); n > 0 {
+			smoke := body
+			smoke.Image = visual.Smoke[(animFrame/smokeFrameTicks+b.X*7+b.Y*3)%n]
+			smoke.TilesTall = visual.SmokeTilesTall
+			drawVisualLayerAtScale(screen, smoke, sx, sy, footprint, tilePixels)
+		}
 		return
 	}
 	drawStandingAtScale(screen, fallback, sx, sy, buildingHeight, tilePixels)

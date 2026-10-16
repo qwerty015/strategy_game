@@ -3,3 +3,4 @@ models/*.glb
 models/*.blend1
 __pycache__/
 renders/*_frames/
+renders/*_game/

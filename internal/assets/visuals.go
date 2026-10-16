@@ -1,6 +1,7 @@
 package assets
 
 import (
+	"fmt"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -54,6 +55,21 @@ type VisualLayer struct {
 type BuildingVisual struct {
 	Body  VisualLayer
 	Front VisualLayer
+
+	// BodyFrames, when present, animate Body (e.g. the mill's sails):
+	// buildings/<slug>/body_00.png, body_01.png, ... all cropped to one
+	// shared box, so each frame is drawn exactly like Body.
+	BodyFrames []*ebiten.Image
+	// Smoke is a looping overlay (buildings/<slug>/smoke_NN.png) drawn over
+	// the body. Its canvas shares the body's bottom edge and horizontal
+	// centre (see new_gen_game/export_game.py), so only its height differs:
+	// SmokeTilesTall is derived from the pixel-height ratio.
+	Smoke          []*ebiten.Image
+	SmokeTilesTall float64
+	// Native is true when the body comes from a dedicated buildings/<slug>/
+	// file rather than the legacy fallback; renderer-side decorations tuned
+	// to the old sprites (the bakery's drawn flame) are skipped for it.
+	Native bool
 }
 
 // BuildingVisualFor returns the visual definition for a gameplay building kind.
@@ -184,11 +200,28 @@ func roadVisual() BuildingVisual {
 func standardBuildingVisual(slug string, body *ebiten.Image, tilesTall float64) BuildingVisual {
 	// body.png is optional during the migration. Once a dedicated natural-size
 	// sprite is present it replaces the legacy 64px fallback automatically.
-	body = loadNativeIfPresent(filepath.Join("buildings", slug, "body.png"), body)
+	native := loadNativeIfPresent(filepath.Join("buildings", slug, "body.png"), nil)
+	frames := loadFramesIfPresent(filepath.Join("buildings", slug, "body"))
+	if native == nil && len(frames) > 0 {
+		native = frames[0]
+	}
+	if native != nil {
+		body = native
+	}
 	bodyLayer := standingLayer(body, tilesTall, color.RGBA{255, 255, 255, 255})
 
+	smoke := loadFramesIfPresent(filepath.Join("buildings", slug, "smoke"))
+	smokeTall := 0.0
+	if len(smoke) > 0 && body != nil {
+		smokeTall = tilesTall * float64(smoke[0].Bounds().Dy()) / float64(body.Bounds().Dy())
+	}
+
 	return BuildingVisual{
-		Body: bodyLayer,
+		Body:           bodyLayer,
+		BodyFrames:     frames,
+		Smoke:          smoke,
+		SmokeTilesTall: smokeTall,
+		Native:         native != nil,
 		Front: standingLayer(
 			loadNativeIfPresent(filepath.Join("buildings", slug, "front.png"), nil),
 			tilesTall,
@@ -203,6 +236,19 @@ func standingLayer(image *ebiten.Image, tilesTall float64, tint color.RGBA) Visu
 
 func footprintLayer(image *ebiten.Image, tint color.RGBA) VisualLayer {
 	return VisualLayer{Image: image, Mode: LayerFootprint, Tint: tint}
+}
+
+// loadFramesIfPresent loads prefix_00.png, prefix_01.png, ... until the first
+// missing index. No files means nil: the building simply isn't animated.
+func loadFramesIfPresent(prefix string) []*ebiten.Image {
+	var frames []*ebiten.Image
+	for i := 0; ; i++ {
+		img := loadNativeIfPresent(fmt.Sprintf("%s_%02d.png", prefix, i), nil)
+		if img == nil {
+			return frames
+		}
+		frames = append(frames, img)
+	}
 }
 
 // loadNativeIfPresent keeps the runtime tolerant while an art pack is being
