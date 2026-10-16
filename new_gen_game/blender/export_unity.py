@@ -1,6 +1,12 @@
 """Export a saved scene to FBX for Unity, with procedural materials baked.
 
-    blender -b new_gen_game/models/<name>.blend --python new_gen_game/blender/export_unity.py -- <out.fbx> [max_texture]
+    blender -b new_gen_game/models/<name>.blend --python new_gen_game/blender/export_unity.py -- <out.fbx> [max_texture] [--game]
+
+--game (what the Unity game uses): bevel modifiers are dropped (they multiply
+triangles ~9x), grass/flowers/ivy leaves are removed, and all meshes sharing a
+parent are joined into ONE object with ONE baked texture -- one draw call per
+building instead of ~20. Moving parts (mill sails under sail_spin) keep their
+own object because they have a different parent.
 
 Unity can't run Blender's node materials, so every mesh gets its own UV
 layout (Smart UV Project) and its material colour -- noise, wood grain,
@@ -21,6 +27,8 @@ import bpy
 from mathutils import Vector
 
 args = sys.argv[sys.argv.index("--") + 1:]
+GAME = "--game" in args
+args = [a for a in args if a != "--game"]
 OUT = os.path.abspath(args[0])
 MAX_TEX = int(args[1]) if len(args) > 1 else 1024
 TEX_DIR = os.path.join(os.path.dirname(OUT), "textures")
@@ -75,6 +83,33 @@ def area(obj):
 # pilot only needs the default look, so hidden parts are simply dropped.
 for o in [o for o in scene.objects if o.type == "MESH" and (o.hide_get() or o.hide_viewport or o.hide_render)]:
     bpy.data.objects.remove(o, do_unlink=True)
+if GAME:
+    for o in [o for o in scene.objects if o.type == "MESH" and o.name.split(".")[0] in ("grass", "flower", "leaf")]:
+        bpy.data.objects.remove(o, do_unlink=True)
+    for o in scene.objects:
+        for mod in [m for m in o.modifiers if m.type == "BEVEL"]:
+            o.modifiers.remove(mod)
+    groups = {}
+    for o in scene.objects:
+        if o.type == "MESH":
+            groups.setdefault((o.parent.name if o.parent else "", o.parent_bone if o.parent else ""), []).append(o)
+    for (parent, _), objs in groups.items():
+        if len(objs) < 2:
+            continue
+        for o in objs:
+            for mod in [m for m in o.modifiers if m.type == "SOLIDIFY"]:
+                o.modifiers.remove(mod)
+            if o.data.users > 1:
+                o.data = o.data.copy()
+        bpy.ops.object.select_all(action="DESELECT")
+        for o in objs:
+            o.select_set(True)
+        bpy.context.view_layer.objects.active = objs[0]
+        bpy.ops.object.join()
+        joined = bpy.context.view_layer.objects.active
+        joined.name = (NAME + "_" + parent) if parent else NAME
+        print(f"[export_unity] joined {len(objs)} parts under '{parent or 'root'}' -> {joined.name}")
+
 meshes = [o for o in scene.objects if o.type == "MESH"]
 for obj in meshes:
     for mod in [m for m in obj.modifiers if m.type == "SOLIDIFY"]:
@@ -96,11 +131,13 @@ for obj in meshes:
     obj.data.uv_layers.new(name="UVMap")
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.004)
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.002 if GAME else 0.004)
     bpy.ops.object.mode_set(mode="OBJECT")
 
     a = area(obj)
     size = 256 if a < 0.5 else 512 if a < 3 else 1024 if a < 12 else 2048
+    if GAME:
+        size = 512 if a < 3 else MAX_TEX
     size = min(size, MAX_TEX)
     tex_name = f"{NAME}_{obj.name.replace('.', '_')}"
     img = bpy.data.images.new(tex_name, size, size, alpha=False)
@@ -116,6 +153,17 @@ for obj in meshes:
     img.save()
 
     glow = any(m.name.split(".")[0] in GLOW for m in obj.data.materials)
+    emit_img = None
+    if GAME and glow and len(obj.data.materials) > 1:
+        # A joined building: only the glowing parts may glow, so bake an
+        # emission mask of its own instead of lighting the whole texture.
+        emit_img = bpy.data.images.new(tex_name + "_emit", size, size, alpha=False)
+        for m, node in nodes:
+            node.image = emit_img
+        bpy.ops.object.bake(type="EMIT")
+        emit_img.filepath_raw = os.path.join(TEX_DIR, tex_name + "_emit.png")
+        emit_img.file_format = "PNG"
+        emit_img.save()
     rough = obj.data.materials[0].node_tree.nodes.get("Principled BSDF")
     rough = rough.inputs["Roughness"].default_value if rough else 0.8
     baked = bpy.data.materials.new(tex_name + ("_glow" if glow else ""))
@@ -128,7 +176,13 @@ for obj in meshes:
     tex.image = img
     baked.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
     bsdf.inputs["Roughness"].default_value = rough
-    if glow:
+    if emit_img is not None:
+        etex = nt.nodes.new("ShaderNodeTexImage")
+        etex.image = emit_img
+        nt.links.new(etex.outputs["Color"], bsdf.inputs["Emission Color"])
+        bsdf.inputs["Emission Strength"].default_value = 1.0
+        baked.name = tex_name                       # the mask, not the name, says what glows
+    elif glow:
         baked.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Emission Color"])
         bsdf.inputs["Emission Strength"].default_value = 3.0
     obj.data.materials.clear()
