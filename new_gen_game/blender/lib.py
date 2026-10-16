@@ -94,11 +94,27 @@ def add_game_camera(elevation_deg=35.0, azimuth_deg=45.0, distance=30.0):
     return cam
 
 
-def frame_camera(cam, margin=1.04):
-    """Fit the ortho frame tightly around every mesh in the scene."""
+def frame_camera(cam, margin=1.04, frames=None):
+    """Fit the ortho frame tightly around every mesh in the scene.
+
+    frames: animation frames to union over, so moving parts (mill sails)
+    never leave a fixed frame -- one scale for a whole sprite sheet.
+    """
+    scene = bpy.context.scene
+    xs, ys = [], []
+    for f in frames or [scene.frame_current]:
+        scene.frame_set(f)
+        _collect_extents(cam, xs, ys)
+    w, h = max(xs) - min(xs), max(ys) - min(ys)
+    size = max(w, h) * margin
+    cam.data.ortho_scale = size
+    cam.data.shift_x = (max(xs) + min(xs)) / 2 / size
+    cam.data.shift_y = (max(ys) + min(ys)) / 2 / size
+
+
+def _collect_extents(cam, xs, ys):
     bpy.context.view_layer.update()
     inv = cam.matrix_world.inverted()
-    xs, ys = [], []
     # Real vertices, not bounding boxes: a round ground patch's AABB corners
     # stick far outside the visible silhouette from a 45-degree view.
     for obj in bpy.context.scene.objects:
@@ -109,11 +125,6 @@ def frame_camera(cam, margin=1.04):
             p = mw @ v.co
             xs.append(p.x)
             ys.append(p.y)
-    w, h = max(xs) - min(xs), max(ys) - min(ys)
-    size = max(w, h) * margin
-    cam.data.ortho_scale = size
-    cam.data.shift_x = (max(xs) + min(xs)) / 2 / size
-    cam.data.shift_y = (max(ys) + min(ys)) / 2 / size
 
 
 def enable_outline(thickness=1.3, color=(0.05, 0.03, 0.018), alpha=0.8, crease_deg=140):

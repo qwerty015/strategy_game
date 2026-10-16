@@ -64,10 +64,12 @@ def crate(b, c, size, yaw=0.0):
                c + n * h + t * (h - 0.03) + Vector((0, 0, h - 0.03)), 0.04, 0.02, n)
 
 
-def sack(b, x, y, z=0.0, size=0.15, yaw=0.0, lean=0.0):
+def sack(b, x, y, z=0.0, size=0.15, yaw=0.0, lean=0.0, tint=None):
+    """Tied sack; tint ~ (1.6, 1.6, 1.55) reads as a flour sack."""
     rng = b.rng
     rot = Matrix.Rotation(yaw, 3, "Z") @ Matrix.Rotation(lean, 3, "X")
-    b.sphere("burlap", (x, y, z + size * 0.9), size, scale=(0.9, 0.75, 1.0), segments=14, rot=rot, tint=_shade(rng))
+    t = tint if tint is not None else _shade(rng)
+    b.sphere("burlap", (x, y, z + size * 0.9), size, scale=(0.9, 0.75, 1.0), segments=14, rot=rot, tint=t)
     top = Vector((x, y, z + size * 0.9)) + rot @ Vector((0, 0, size * 0.95))
     b.cylinder("burlap", top, size * 0.28, size * 0.12, size * 0.35, segments=8, rot=rot, tint=_shade(rng, 0.7, 0.85))
 
@@ -196,3 +198,21 @@ def lantern(b, wall_point, normal, out=0.2):
             b.box("iron", c + Vector((ox * 0.06, oy * 0.06, 0)), (0.015, 0.015, 0.17))
     b.box("glow", c, (0.1, 0.1, 0.15))
     b.cylinder("iron", c + Vector((0, 0, 0.14)), 0.085, 0.0, 0.08, segments=4, rot=Matrix.Rotation(math.pi / 4, 3, "Z"))
+
+
+def sheaf(b, x, y, height=0.5, lean=0.0, yaw=0.0):
+    """Wheat sheaf: stalks fanning out above and below a tied waist."""
+    rng = b.rng
+    tilt = Matrix.Rotation(yaw, 3, "Z") @ Matrix.Rotation(lean, 3, "X")
+    waist = Vector((x, y, 0)) + tilt @ Vector((0, 0, height * 0.45))
+    for _ in range(26):
+        a = rng.uniform(0, math.tau)
+        r = rng.uniform(0.0, 0.06)
+        spread = Vector((math.cos(a), math.sin(a), 0))
+        bottom = Vector((x, y, 0)) + tilt @ (spread * (r + 0.06))
+        top = waist + tilt @ (spread * (r * 1.8 + 0.05) + Vector((0, 0, height * 0.55)))
+        g = rng.uniform(0.8, 1.2)
+        b.beam("grain", bottom, waist + tilt @ (spread * r * 0.4), 0.014, 0.014, spread, tint=(g, g, g))
+        b.beam("grain", waist + tilt @ (spread * r * 0.4), top, 0.014, 0.014, spread, tint=(g, g, g))
+        b.sphere("grain", top, 0.022, scale=(0.7, 0.7, 1.6), segments=6, tint=(g * 0.9, g * 0.85, g * 0.7))
+    b.cylinder("burlap", waist, 0.07, 0.07, 0.04, segments=12, rot=tilt, tint=(0.7, 0.6, 0.45))
