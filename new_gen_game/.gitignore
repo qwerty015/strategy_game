@@ -1,6 +1,0 @@
-# Regenerated from blender/*.py; big and not needed in git.
-models/*.glb
-models/*.blend1
-__pycache__/
-renders/*_frames/
-renders/*_game/
