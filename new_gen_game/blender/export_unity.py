@@ -8,7 +8,7 @@ per-tile tint and all -- is baked into a texture (DIFFUSE, colour pass only:
 lighting is Unity's job). Inverted-hull ink is dropped: it exists for the 2D
 sprites. Ground disc, smoke puffs, camera and lights are removed; markers
 for things Unity animates itself are added as empties:
-  smoke_origin   where chimney smoke starts (bakery, smeltery)
+  marker_smoke   where chimney smoke starts (bakery, smeltery)
   shaft_base     with sail_axis/sail_spin gives the mill's rotation axis
 Armatures and their actions (units) are exported as animation takes.
 """
@@ -45,7 +45,7 @@ if smoke:
     first = bpy.data.objects.get("smoke_0")
     if first is not None:
         origin = first.matrix_world.translation.copy()
-    marker = bpy.data.objects.new("smoke_origin", None)
+    marker = bpy.data.objects.new("marker_smoke", None)
     scene.collection.objects.link(marker)
     marker.location = origin
 if "sail_axis" in bpy.data.objects:
